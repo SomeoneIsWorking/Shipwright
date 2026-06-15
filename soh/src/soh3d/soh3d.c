@@ -1,6 +1,24 @@
-// SoH3D runtime toggle. See PROGRESS.md.
+// SoH3D runtime toggle + helpers. See repo-root PROGRESS.md.
 #include "soh3d.h"
 #include <stdlib.h>
+
+// Draw an OoT3D model at an actor's world position/yaw with an explicit world
+// scale. Builds its own MTXMODE_NEW matrix instead of inheriting the actor's
+// N64-tuned 0.01 scale: that inherited fixed-point matrix fails to render the
+// model at all (the OoT3D dlist needs SoH3D's own transform), and it would size
+// the full-res model wrongly besides.
+void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale) {
+    OPEN_DISPS(play->state.gfxCtx);
+
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    gSPDisplayList(POLY_OPA_DISP++, dlist);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
 
 int SoH3D_Enabled(void) {
     static int cached = -1;
@@ -28,40 +46,20 @@ int SoH3D_AutoWarpEntrance(void) {
     return ENTR_KAKARIKO_VILLAGE_FRONT_GATE;
 }
 
-static int SoH3D_DebugPotEnabled(void) {
-    static int cached = -1;
-    if (cached < 0) {
-        const char* v = getenv("SOH3D_DEBUGPOT");
-        cached = (v != NULL && v[0] == '1') ? 1 : 0;
-    }
-    return cached;
-}
-
-static float SoH3D_DrawScale(void) {
-    const char* v = getenv("SOH3D_SCALE");
-    if (v != NULL && v[0] != '\0') {
-        float f = (float)atof(v);
-        if (f > 0.0f) {
-            return f;
-        }
-    }
-    return 1.0f;
-}
-
 void SoH3D_DebugDrawPot(PlayState* play) {
-    Player* player;
-    float scale;
-
-    if (!SoH3D_DebugPotEnabled()) {
-        return;
+    // Verification: spawn one real Obj_Tsubo beside Link (env SOH3D_SPAWNPOT=1) so
+    // the actual ObjTsubo_Draw path runs. SOH3D=0 draws the N64 pot, SOH3D=1 the
+    // OoT3D model — a true same-scene comparison. params=0 is the
+    // gameplay_dangeon_keep pot variant (object loaded in any dungeon, e.g. Deku
+    // Tree / SOH3D_ENTRANCE=0).
+    const char* sp = getenv("SOH3D_SPAWNPOT");
+    static unsigned char spawned = 0;
+    if (sp != NULL && sp[0] == '1' && !spawned) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = p->actor.shape.rot.y + 0x4000; // Link's right (avoid the Deku entrance pit)
+        float fx = p->actor.world.pos.x + 60.0f * Math_SinS(yaw);
+        float fz = p->actor.world.pos.z + 60.0f * Math_CosS(yaw);
+        Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_TSUBO, fx, p->actor.world.pos.y, fz, 0, 0, 0, 0);
+        spawned = 1;
     }
-
-    player = GET_PLAYER(play);
-    scale = SoH3D_DrawScale();
-
-    // Place the model at Link's feet; Gfx_DrawDListOpa loads the current matrix
-    // stack top (MATRIX_NEWMTX) before emitting the dlist.
-    Matrix_Translate(player->actor.world.pos.x, player->actor.world.pos.y, player->actor.world.pos.z, MTXMODE_NEW);
-    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
-    Gfx_DrawDListOpa(play, soh3d_pot_model_dl);
 }

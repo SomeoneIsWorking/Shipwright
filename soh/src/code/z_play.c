@@ -1,5 +1,6 @@
 #include "global.h"
 #include "vt.h"
+#include "soh3d/soh3d.h"
 
 #include <string.h>
 
@@ -1646,6 +1647,10 @@ void Play_Draw(PlayState* play) {
         // Draw Enhancements that need to be placed in the world. This happens before the PostWorldDraw
         // so that they aren't drawn when the pause menu is up (e.g. collision viewer, actor name tags)
         GameInteractor_ExecuteOnPlayDrawEnd();
+
+        // SoH3D: debug-draw the OoT3D pot model at Link's position to verify the
+        // CMB->LUS render path in any scene (env SOH3D_DEBUGPOT=1).
+        SoH3D_DebugDrawPot(play);
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {

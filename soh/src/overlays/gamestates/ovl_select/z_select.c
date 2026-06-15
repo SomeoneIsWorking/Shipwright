@@ -10,6 +10,7 @@
 
 #include "soh/Enhancements/enhancementTypes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh3d/soh3d.h"
 #include "soh/Enhancements/randomizer/randomizer_entrance.h"
 #include "soh/Enhancements/randomizer/randomizer_grotto.h"
 #include "soh/OTRGlobals.h"
@@ -1792,6 +1793,14 @@ void Select_Draw(SelectContext* this) {
 
 void Select_Main(GameState* thisx) {
     SelectContext* this = (SelectContext*)thisx;
+
+    // SoH3D: headless auto-warp into a scene so pots are reachable without
+    // scripting title/file-select input. Runs once on the first Select frame.
+    if (SoH3D_AutoWarpEnabled()) {
+        gSaveContext.fileNum = 0xFF;
+        Select_LoadGame(this, SoH3D_AutoWarpEntrance());
+        return;
+    }
 
     if (this->isBetterWarp != CVarGetInteger(CVAR_DEVELOPER_TOOLS("BetterDebugWarpScreen"), 1)) {
         Select_SwitchBetterWarpMode(this, !this->isBetterWarp);

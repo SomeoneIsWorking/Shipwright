@@ -7,6 +7,7 @@
 #include "asset/ctr_rom.h"
 #include "asset/zar.h"
 #include "asset/cmb.h"
+#include "asset/csab.h"
 #include "asset/pica_texture.h"
 #include "fast/soh3d_gl.h"
 
@@ -82,7 +83,35 @@ LoadedModel* loadModel(int modelId) {
     SoH3D::Cmb cmb(zar.read(*cmbf));
     if (!cmb.ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", cmb.error().c_str()); return out; }
 
-    out->groups = cmb.buildDrawGroups();
+    // Optional CSAB skinning: SOH3D_ANIM=<csab base name> [SOH3D_FRAME=<float>].
+    // Loaded from the same zar; skin matrices applied once at this frame (the live
+    // per-frame in-game path is a later layer — this verifies a static deformed frame).
+    const char* animName = getenv("SOH3D_ANIM");
+    if (animName && *animName) {
+        std::string nm(animName);
+        std::string full = (nm.rfind("Anim/", 0) == 0) ? nm : ("Anim/" + nm + ".csab");
+        const SoH3D::ZarFile* af = nullptr;
+        for (const auto& f : zar.files()) if (f.name == full) { af = &f; break; }
+        if (af) {
+            SoH3D::Csab anim(zar.read(*af));
+            float frame = getenv("SOH3D_FRAME") ? (float)atof(getenv("SOH3D_FRAME")) : 0.0f;
+            if (anim.ok()) {
+                std::vector<std::array<float, 16>> sm;
+                anim.skinMatrices(cmb, frame, sm);
+                out->groups = cmb.buildDrawGroupsSkinned(sm.data(), sm.size());
+                fprintf(stderr, "[SoH3D] applied anim %s frame %.2f (%d bones, %d anods)\n",
+                        full.c_str(), frame, anim.boneCount(), anim.animNodeCount());
+            } else {
+                fprintf(stderr, "[SoH3D] Csab %s: %s\n", full.c_str(), anim.error().c_str());
+                out->groups = cmb.buildDrawGroups();
+            }
+        } else {
+            fprintf(stderr, "[SoH3D] anim not found: %s\n", full.c_str());
+            out->groups = cmb.buildDrawGroups();
+        }
+    } else {
+        out->groups = cmb.buildDrawGroups();
+    }
 
     // Decode every texture (index aligns with CMB texture index / materialTexture()).
     const auto& texs = cmb.textures();

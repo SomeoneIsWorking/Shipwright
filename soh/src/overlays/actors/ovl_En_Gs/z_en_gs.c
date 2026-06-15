@@ -9,6 +9,7 @@
 #include "overlays/actors/ovl_En_Elf/z_en_elf.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh3d/soh3d.h"
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_FRIENDLY | ACTOR_FLAG_UPDATE_DURING_OCARINA)
 
@@ -567,6 +568,14 @@ void EnGs_Draw(Actor* thisx, PlayState* play) {
     EnGs* this = (EnGs*)thisx;
     s32 tmp;
     u32 frames;
+
+    if (SoH3D_Enabled()) {
+        // SoH3D: draw the OoT3D multi-material Gossip Stone (2 materials / 2
+        // distinct opaque textures) at the actor's position with SoH3D's own
+        // world scale. Proves the multi-material/multi-texture converter path.
+        SoH3D_DrawModel(play, soh3d_gs_model_dl, thisx, SOH3D_GS_WORLD_SCALE);
+        return;
+    }
 
     if (!(this->unk_19E & 8)) {
         OPEN_DISPS(play->state.gfxCtx);

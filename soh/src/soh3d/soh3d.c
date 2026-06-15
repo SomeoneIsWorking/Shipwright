@@ -63,3 +63,22 @@ void SoH3D_DebugDrawPot(PlayState* play) {
         spawned = 1;
     }
 }
+
+void SoH3D_DebugDrawGs(PlayState* play) {
+    // Verification: spawn one real En_Gs (Gossip Stone) in front of Link
+    // (env SOH3D_SPAWNGS=1) so the actual EnGs_Draw path runs. SOH3D=0 draws the
+    // N64 Gossip Stone, SOH3D=1 the OoT3D multi-material one. Needs OBJECT_GS in
+    // the scene (a Gossip-Stone scene, e.g. the default Kakariko warp).
+    const char* sp = getenv("SOH3D_SPAWNGS");
+    static unsigned char spawned = 0;
+    if (sp != NULL && sp[0] == '1' && !spawned) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = p->actor.shape.rot.y; // in front of Link (where the camera looks)
+        float fx = p->actor.world.pos.x + 90.0f * Math_SinS(yaw);
+        float fz = p->actor.world.pos.z + 90.0f * Math_CosS(yaw);
+        // Face the Sheikah-eye front toward Link/camera.
+        s16 gsYaw = p->actor.shape.rot.y;
+        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_GS, fx, p->actor.world.pos.y, fz, 0, gsYaw, 0, 0);
+        spawned = 1;
+    }
+}

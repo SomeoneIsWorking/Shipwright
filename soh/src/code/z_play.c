@@ -1651,6 +1651,7 @@ void Play_Draw(PlayState* play) {
         // SoH3D: debug-draw the OoT3D pot model at Link's position to verify the
         // CMB->LUS render path in any scene (env SOH3D_DEBUGPOT=1).
         SoH3D_DebugDrawPot(play);
+        SoH3D_DebugDrawGs(play);
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {

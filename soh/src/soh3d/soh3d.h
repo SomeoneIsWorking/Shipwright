@@ -5,6 +5,7 @@
 
 #include "global.h"
 #include "soh3d_pot_model.h"
+#include "soh3d_gs_model.h"
 
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
@@ -21,6 +22,13 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // it at the N64 pot's height. See PROGRESS.md calibration.
 #define SOH3D_POT_WORLD_SCALE 0.12f
 
+// World scale for the OoT3D Gossip Stone (OoT3D model units -> N64 world units).
+// The model is ~485 units tall; calibrated against the N64 Gossip Stone via the
+// SOH3D_SPAWNGS A/B spawn. Second object proving the MULTI-MATERIAL pipeline:
+// 2 materials, 2 distinct fully-opaque textures (128x128 Sheikah-eye face +
+// 128x64 stone body), each drawn with its own texture in one display list.
+#define SOH3D_GS_WORLD_SCALE 0.13f
+
 // Headless verification: when env SOH3D_WARP is set, boot straight into the
 // debug Select overlay and auto-warp into a scene so pots are reachable without
 // scripting title/file-select input. Entrance defaults to Kakariko Village
@@ -33,5 +41,13 @@ int SoH3D_AutoWarpEntrance(void);
 // ObjTsubo_Draw path can be A/B'd (SOH3D=0 N64 pot vs SOH3D=1 OoT3D pot) in the
 // same scene. No-op otherwise.
 void SoH3D_DebugDrawPot(PlayState* play);
+
+// Verification helper, called each frame from Play_Draw. When env
+// SOH3D_SPAWNGS=1, spawns one real En_Gs (Gossip Stone) in front of Link so the
+// actual EnGs_Draw path runs. SOH3D=0 draws the N64 Gossip Stone, SOH3D=1 the
+// OoT3D multi-material one — a true same-scene comparison. Needs OBJECT_GS
+// loaded (a scene with Gossip Stones, e.g. the default Kakariko warp). No-op
+// otherwise.
+void SoH3D_DebugDrawGs(PlayState* play);
 
 #endif

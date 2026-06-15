@@ -6,6 +6,7 @@
 // the .3ds path comes from env SOH3D_3DS_ROM (never hardcoded — repo rule).
 #include "asset/ctr_rom.h"
 #include "asset/zar.h"
+#include "asset/zsi.h"
 #include "asset/cmb.h"
 #include "asset/csab.h"
 #include "asset/pica_texture.h"
@@ -32,6 +33,12 @@ const ModelSpec kModels[] = {
     { "/actor/zelda_ge1.zar", 0.011f },
 };
 
+// Scene-room models live in a SEPARATE id range so they never collide with the actor
+// table above. A room's geometry is a single embedded CMB inside a ZSI (no skeleton,
+// no animation), drawn at the world origin. Ids are allocated on demand by the game
+// (SoH3D_RoomModelId) keyed by the room's ZSI path. See soh3d.c's room-draw hook.
+const int kSceneModelBase = 1000;
+
 // Loaded CPU data for a model, kept alive so the renderer can upload from it and
 // so the provider can hand back stable pointers. The Zar + Cmb stay resident so the
 // animation layer can load CSABs and recompute skin matrices per frame on demand.
@@ -48,6 +55,11 @@ struct LoadedModel {
 
 std::unordered_map<int, std::unique_ptr<LoadedModel>> g_loaded;
 std::unique_ptr<SoH3D::CtrRom> g_rom;
+
+// Scene-room id allocation: ZSI path -> model id (>= kSceneModelBase), and the reverse
+// list so loadModel can recover the path from the id.
+std::unordered_map<std::string, int> g_sceneRoomIds;
+std::vector<std::string> g_sceneRoomPaths; // index = modelId - kSceneModelBase
 
 SoH3D::CtrRom* rom() {
     if (!g_rom) {
@@ -66,34 +78,14 @@ SoH3D::CtrRom* rom() {
     return g_rom.get();
 }
 
-LoadedModel* loadModel(int modelId) {
-    auto it = g_loaded.find(modelId);
-    if (it != g_loaded.end()) return it->second.get();
-
-    auto lm = std::make_unique<LoadedModel>();
-    LoadedModel* out = lm.get();
-    g_loaded[modelId] = std::move(lm);
-
-    if (modelId < 0 || modelId >= (int)(sizeof(kModels) / sizeof(kModels[0]))) return out;
-    SoH3D::CtrRom* r = rom();
-    if (!r) return out;
-
-    auto zarBytes = r->read(kModels[modelId].zarPath);
-    if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] zar not found: %s\n", kModels[modelId].zarPath); return out; }
-    out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
-    if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] Zar: %s\n", out->zar->error().c_str()); return out; }
-    const SoH3D::ZarFile* cmbf = out->zar->firstWithSuffix(".cmb");
-    if (!cmbf) { fprintf(stderr, "[SoH3D] no .cmb in %s\n", kModels[modelId].zarPath); return out; }
-    out->cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*cmbf));
-    if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", out->cmb->error().c_str()); return out; }
+// Decode an already-parsed CMB (out->cmb) into the renderer's CPU views: bind-pose
+// draw groups (model-space verts + bone bindings; GPU skinning applies the pose, or
+// identity = bind pose for skeleton-less scene rooms), decoded RGBA8 textures, and the
+// C-API group/texture views. Shared by the actor (ZAR) and scene-room (ZSI) paths.
+static void buildFromCmb(LoadedModel* out) {
     SoH3D::Cmb& cmb = *out->cmb;
-
-    // Always upload MODEL-space verts (bind pose) + per-vertex bone bindings; the
-    // animated pose is applied by GPU skinning (uBones uniform, set per frame via
-    // SoH3D_UpdateAnim). With no anim set, uBones=identity -> the bind pose renders.
     out->groups = cmb.buildDrawGroups();
 
-    // Decode every texture (index aligns with CMB texture index / materialTexture()).
     const auto& texs = cmb.textures();
     out->texRgba.resize(texs.size());
     out->cTexs.resize(texs.size());
@@ -103,7 +95,6 @@ LoadedModel* loadModel(int modelId) {
         out->cTexs[i] = { out->texRgba[i].data(), texs[i].width, texs[i].height };
     }
 
-    // Build the C-API group views.
     out->cGroups.reserve(out->groups.size());
     for (const auto& g : out->groups) {
         const SoH3D::CmbMaterial* mat =
@@ -120,8 +111,59 @@ LoadedModel* loadModel(int modelId) {
         out->cGroups.push_back(cg);
     }
     out->ok = true;
+}
+
+// Load a scene-room model: read its ZSI, extract the single embedded room CMB, and
+// build draw groups (no skeleton/animation — drawn at the world origin).
+static void loadSceneRoom(int modelId, LoadedModel* out) {
+    int idx = modelId - kSceneModelBase;
+    if (idx < 0 || idx >= (int)g_sceneRoomPaths.size()) return;
+    const std::string& path = g_sceneRoomPaths[idx];
+    SoH3D::CtrRom* r = rom();
+    if (!r) return;
+    auto bytes = r->read(path);
+    if (bytes.empty()) { fprintf(stderr, "[SoH3D] zsi not found: %s\n", path.c_str()); return; }
+    SoH3D::Zsi zsi(std::move(bytes));
+    if (!zsi.ok()) { fprintf(stderr, "[SoH3D] Zsi %s: %s\n", path.c_str(), zsi.error().c_str()); return; }
+    if (!zsi.hasGeometry()) { fprintf(stderr, "[SoH3D] no room geometry in %s\n", path.c_str()); return; }
+    out->cmb = std::make_unique<SoH3D::Cmb>(zsi.cmbBytes());
+    if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb %s: %s\n", path.c_str(), out->cmb->error().c_str()); return; }
+    buildFromCmb(out);
+    printf("[SoH3D] loaded scene-room model %d (%s): %zu groups, %zu textures\n", modelId, path.c_str(),
+           out->cGroups.size(), out->cTexs.size());
+}
+
+// Load an actor model: read its ZAR, find the .cmb, build groups (+ keep the ZAR/CMB
+// resident so the animation layer can load CSABs and recompute skin matrices).
+static void loadActorModel(int modelId, LoadedModel* out) {
+    SoH3D::CtrRom* r = rom();
+    if (!r) return;
+    auto zarBytes = r->read(kModels[modelId].zarPath);
+    if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] zar not found: %s\n", kModels[modelId].zarPath); return; }
+    out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
+    if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] Zar: %s\n", out->zar->error().c_str()); return; }
+    const SoH3D::ZarFile* cmbf = out->zar->firstWithSuffix(".cmb");
+    if (!cmbf) { fprintf(stderr, "[SoH3D] no .cmb in %s\n", kModels[modelId].zarPath); return; }
+    out->cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*cmbf));
+    if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", out->cmb->error().c_str()); return; }
+    buildFromCmb(out);
     printf("[SoH3D] loaded model %d (%s): %zu groups, %zu textures\n", modelId, kModels[modelId].zarPath,
            out->cGroups.size(), out->cTexs.size());
+}
+
+LoadedModel* loadModel(int modelId) {
+    auto it = g_loaded.find(modelId);
+    if (it != g_loaded.end()) return it->second.get();
+
+    auto lm = std::make_unique<LoadedModel>();
+    LoadedModel* out = lm.get();
+    g_loaded[modelId] = std::move(lm);
+
+    if (modelId >= kSceneModelBase) {
+        loadSceneRoom(modelId, out);
+    } else if (modelId >= 0 && modelId < (int)(sizeof(kModels) / sizeof(kModels[0]))) {
+        loadActorModel(modelId, out);
+    }
     return out;
 }
 
@@ -153,6 +195,21 @@ void SoH3D_EnsureModelProvider(void) {
 float SoH3D_ModelScaleById(int modelId) {
     if (modelId < 0 || modelId >= (int)(sizeof(kModels) / sizeof(kModels[0]))) return 1.0f;
     return kModels[modelId].worldScale;
+}
+
+// Get-or-allocate a stable model id for a scene room, keyed by its ZSI path
+// (/scene/<name>_<R>_info.zsi). The geometry loads lazily on first draw via the
+// provider. Returns -1 if sceneName is null/empty. The game calls this from its
+// room-draw hook with the OoT3D scene name (kSoH3dSceneNames) + room number.
+int SoH3D_RoomModelId(const char* sceneName, int roomNum) {
+    if (!sceneName || !*sceneName || roomNum < 0) return -1;
+    std::string path = "/scene/" + std::string(sceneName) + "_" + std::to_string(roomNum) + "_info.zsi";
+    auto it = g_sceneRoomIds.find(path);
+    if (it != g_sceneRoomIds.end()) return it->second;
+    int id = kSceneModelBase + (int)g_sceneRoomPaths.size();
+    g_sceneRoomPaths.push_back(path);
+    g_sceneRoomIds[path] = id;
+    return id;
 }
 
 } // extern "C"

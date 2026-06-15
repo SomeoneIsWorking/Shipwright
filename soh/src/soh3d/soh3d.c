@@ -56,6 +56,18 @@ static struct {
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
+// Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
+// the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
+int SoH3D_RoomModelId(const char* sceneName, int roomNum);
+
+// SoH sceneNum -> OoT3D scene folder name (kSoH3dSceneNames). Generated, names only.
+#include "soh3d_scene_names.inc"
+
+// Scene-geometry world transform (REPL-pokeable). OoT3D scene coords are already
+// WORLD-space at (apparently) the N64 unit scale, so the defaults are identity:
+// scale 1.0 at the world origin. Tunable live to confirm the unit/origin match.
+float gSoH3dSceneScale = 1.0f;
+float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 
 // Resolve the actor's CURRENT animation to a CSAB base name, by reading the actor's
 // live N64 state, so the OoT3D model plays the same animation the game logic chose
@@ -265,6 +277,54 @@ int SoH3D_Enabled(void) {
     return gSoH3dEnabled;
 }
 
+// OoT3D scene folder name for the current scene number, or NULL if unmapped (no OoT3D
+// equivalent — caller falls back to the N64 room).
+static const char* SoH3D_SceneName(PlayState* play) {
+    s32 n = play->sceneNum;
+    if (n < 0 || n >= (s32)ARRAY_COUNT(kSoH3dSceneNames)) {
+        return NULL;
+    }
+    return kSoH3dSceneNames[n];
+}
+
+// Direct-GL room draw: same dlist path as the character GL draw, but the model matrix
+// is IDENTITY (scene CMB verts are already world-space) — just an optional debug
+// offset + uniform scale. MP_matrix at opcode time is then model(identity)·view·proj =
+// the game camera, so the room lands at the world origin, depth-correct in the scene
+// pass. Tinted by the live scene ambient like the characters.
+static void SoH3D_DrawRoomGL(PlayState* play, int modelId) {
+    u8 tint[3];
+    OPEN_DISPS(play->state.gfxCtx);
+
+    SoH3D_EnsureModelProvider();
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    Matrix_Translate(gSoH3dSceneOffX, gSoH3dSceneOffY, gSoH3dSceneOffZ, MTXMODE_NEW);
+    Matrix_Scale(gSoH3dSceneScale, gSoH3dSceneScale, gSoH3dSceneScale, MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    SoH3D_SceneTint(play, tint);
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
+    const char* sceneName;
+    int modelId;
+    if (!SoH3D_Enabled() || room == NULL) {
+        return 0;
+    }
+    sceneName = SoH3D_SceneName(play);
+    if (sceneName == NULL) {
+        return 0; // scene has no OoT3D mapping -> N64 room
+    }
+    modelId = SoH3D_RoomModelId(sceneName, room->num);
+    if (modelId < 0) {
+        return 0;
+    }
+    SoH3D_DrawRoomGL(play, modelId);
+    return 1; // drew the OoT3D room -> caller skips the N64 mesh
+}
+
 int SoH3D_AutoWarpEnabled(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -400,7 +460,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     char cmd[32];
     char arg[64];
     char path[1024];
-    float f1, f2;
+    float f1, f2, f3;
     while (*line == ' ' || *line == '\t' || *line == '\r') {
         line++;
     }
@@ -468,6 +528,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "animdbg") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimDebug = (int)f1;
         SoH3D_ReplReply(outPath, "animdbg=%d", gSoH3dAnimDebug);
+    } else if (strcmp(cmd, "scenescale") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dSceneScale = f1;
+        SoH3D_ReplReply(outPath, "scenescale=%.4f", gSoH3dSceneScale);
+    } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
+        gSoH3dSceneOffX = f1;
+        gSoH3dSceneOffY = f2;
+        gSoH3dSceneOffZ = f3;
+        SoH3D_ReplReply(outPath, "sceneoff=(%.1f,%.1f,%.1f)", gSoH3dSceneOffX, gSoH3dSceneOffY, gSoH3dSceneOffZ);
     } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
         strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
         gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';

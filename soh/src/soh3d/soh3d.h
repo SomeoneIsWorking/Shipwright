@@ -25,6 +25,13 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
 // SoH3D controls the model's true world size. Emits into POLY_OPA.
 void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale);
 
+// Generalised per-room scene divert, called from Room_Draw. If SoH3D is enabled and
+// the current scene has an OoT3D mapping (kSoH3dSceneNames) with a room CMB for
+// room->num, draws that room geometry at the world origin (identity model matrix +
+// the game camera, depth-correct via the scene pass) and returns 1 so the caller
+// skips the N64 room mesh; returns 0 otherwise (caller draws the N64 room as normal).
+int SoH3D_TryDrawRoom(PlayState* play, Room* room);
+
 // World scale for the OoT3D pot (OoT3D model units -> N64 world units). Tuned by
 // matching the rendered height of the OoT3D pot to the N64 pot at the same spot
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands

@@ -11,6 +11,7 @@
 #include <libultraship/bridge/gfxbridge.h>
 #include "soh/OTRGlobals.h"
 #include "soh/ResourceManagerHelpers.h"
+#include "soh3d/soh3d.h"
 
 void func_80095AB4(PlayState* play, Room* room, u32 flags);
 void func_80095D04(PlayState* play, Room* room, u32 flags);
@@ -632,6 +633,13 @@ s32 func_800973FC(PlayState* play, RoomContext* roomCtx) {
 void Room_Draw(PlayState* play, Room* room, u32 flags) {
     if (room->segment != NULL) {
         gSegments[3] = VIRTUAL_TO_PHYSICAL(room->segment);
+        // SoH3D: if this scene has an OoT3D room model, draw it (world-origin GL path)
+        // in place of the N64 room mesh. One central divert — see soh3d.c. The opaque
+        // pass (flags bit 0) carries the geometry; mirror the N64 single-draw so the
+        // room isn't emitted twice across the opa/xlu passes.
+        if ((flags & 1) && SoH3D_TryDrawRoom(play, room)) {
+            return;
+        }
         assert(room->meshHeader->base.type < ARRAY_COUNTU(sRoomDrawHandlers));
         sRoomDrawHandlers[room->meshHeader->base.type](play, room, flags);
     }

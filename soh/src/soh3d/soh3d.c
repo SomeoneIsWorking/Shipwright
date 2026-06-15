@@ -27,6 +27,12 @@ float gSoH3dRotX = 0.0f;
 float gSoH3dRotY = 0.0f;
 float gSoH3dRotZ = 0.0f;
 
+// Direct-GL model path (soh3d_model.cpp bridge + libultraship SoH3D_GL_*). Models
+// flagged with glModelId>=0 in sModelTable render through this PC-native path
+// (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
+void SoH3D_EnsureModelProvider(void);
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale);
+
 // On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
 extern char gSoh3dDumpPath[1024];
 extern volatile int gSoh3dDumpPending;
@@ -88,6 +94,30 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// Direct-GL draw: same world matrix as SoH3D_DrawModel, but instead of a Fast3D
+// dlist it loads the modelview and emits the OTR_G_SOH3D_DRAW opcode. At dlist-exec
+// time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current MP_matrix
+// — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
+// N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale) {
+    u8 tint[3];
+    OPEN_DISPS(play->state.gfxCtx);
+
+    SoH3D_EnsureModelProvider();
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
+    if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    SoH3D_SceneTint(play, tint);
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 // Per-actor OoT3D model table. Maps an N64 actor id to the OoT3D model dlist that
 // replaces its N64 draw, plus that model's world scale. This is the generalised
 // divert: instead of editing each actor's Draw with an `if (SoH3D_Enabled())`
@@ -97,16 +127,17 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 typedef struct {
     s16 actorId;
     const char* name; // REPL handle for `scale <name>` / `spawn <name>`
-    Gfx* dlist;
+    Gfx* dlist;       // legacy Fast3D dlist (used when glModelId < 0)
     float worldScale; // live (REPL-pokeable)
+    int glModelId;    // >=0 = render via the direct-GL path with this asset id; -1 = legacy dlist
 } SoH3D_ModelEntry;
 
 // Non-const so the REPL can tune worldScale live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE },
-    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE },
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1 },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1 },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, -1 },
+    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0 },
 };
 
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
@@ -116,7 +147,11 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     }
     for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
         if (sModelTable[i].actorId == actor->id) {
-            SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
+            if (sModelTable[i].glModelId >= 0) {
+                SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale);
+            } else {
+                SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
+            }
             return 1;
         }
     }

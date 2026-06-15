@@ -63,6 +63,9 @@ class Cmb {
     const std::vector<CmbBone>& bones() const { return mBones; }
     const std::vector<CmbMaterial>& materials() const { return mMaterials; }
     const std::vector<CmbTexture>& textures() const { return mTextures; }
+    // Bind-pose world matrix per bone id (row-major flat 16-float). Used by CSAB
+    // skinning to form skinMatrix = animWorld . inverse(bindWorld).
+    const std::vector<std::array<float, 16>>& boneMatrices() const { return mBoneMatrix; }
 
     // Texture index used by a material's primary binding (0 if unknown/none).
     int materialTexture(int matIndex) const;
@@ -71,6 +74,14 @@ class Cmb {
 
     // Assemble all meshes into per-material draw groups (bind pose).
     std::vector<CmbDrawGroup> buildDrawGroups() const;
+
+    // Same, but with CSAB skinning applied: skinMats is indexed by bone id and is
+    // skinMatrix = animWorld . bindInverse for each bone (see asset/csab). Each
+    // vertex is taken to MODEL space exactly as buildDrawGroups() does (rigid:
+    // .bindWorld; smooth: raw), then transformed by the weighted blend of its bones'
+    // skinMats. skinMats == nullptr (n==0) is identity -> byte-identical to
+    // buildDrawGroups() (the bind pose). Mirrors tools/csab.py skinned_triangles.
+    std::vector<CmbDrawGroup> buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t n) const;
 
   private:
     bool mOk = false;

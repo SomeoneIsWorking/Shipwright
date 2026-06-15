@@ -1,4 +1,5 @@
 #include "cmb.h"
+#include "mat4.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -47,30 +48,7 @@ static const AttrDef ATTRS_MM3D[] = {
     { "boneIndices", 0 }, { "boneWeights", 0 }
 };
 
-// ---- 4x4 row-major matrix helpers (out_i = sum_j M[i][j]*v_j, v_3=1) ----
-typedef std::array<float, 16> Mat4;
-static Mat4 matId() { Mat4 m{}; for (int i = 0; i < 4; i++) m[i * 4 + i] = 1; return m; }
-static Mat4 matMul(const Mat4& A, const Mat4& B) {
-    Mat4 C{};
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 4; j++) {
-            float s = 0;
-            for (int k = 0; k < 4; k++) s += A[i * 4 + k] * B[k * 4 + j];
-            C[i * 4 + j] = s;
-        }
-    return C;
-}
-static Mat4 matT(float x, float y, float z) { Mat4 m = matId(); m[3] = x; m[7] = y; m[11] = z; return m; }
-static Mat4 matS(float x, float y, float z) { Mat4 m = matId(); m[0] = x; m[5] = y; m[10] = z; return m; }
-static Mat4 matRx(float a) { float c = cosf(a), s = sinf(a); Mat4 m = matId(); m[5] = c; m[6] = -s; m[9] = s; m[10] = c; return m; }
-static Mat4 matRy(float a) { float c = cosf(a), s = sinf(a); Mat4 m = matId(); m[0] = c; m[2] = s; m[8] = -s; m[10] = c; return m; }
-static Mat4 matRz(float a) { float c = cosf(a), s = sinf(a); Mat4 m = matId(); m[0] = c; m[1] = -s; m[4] = s; m[5] = c; return m; }
-static void matApplyPos(const Mat4& M, const float* p, float* out) {
-    for (int i = 0; i < 3; i++) out[i] = M[i * 4 + 0] * p[0] + M[i * 4 + 1] * p[1] + M[i * 4 + 2] * p[2] + M[i * 4 + 3];
-}
-static void matApplyDir(const Mat4& M, const float* v, float* out) {
-    for (int i = 0; i < 3; i++) out[i] = M[i * 4 + 0] * v[0] + M[i * 4 + 1] * v[1] + M[i * 4 + 2] * v[2];
-}
+// 4x4 row-major matrix helpers live in mat4.h (shared with csab.cpp).
 
 Cmb::Cmb(std::vector<uint8_t> data) : mData(std::move(data)) {
     const uint8_t* b = mData.data();
@@ -322,6 +300,10 @@ void Cmb::readAttr(const SepdAttr& attr, int attrSlot, uint32_t idx, int comps, 
 }
 
 std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
+    return buildDrawGroupsSkinned(nullptr, 0);
+}
+
+std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t nMats) const {
     const uint8_t* b = mData.data();
     int count = 0;
     const AttrDef* defs = Cmb_attrsDef(mVersion, &count);
@@ -334,6 +316,11 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
         else if (!strcmp(defs[i].name, "boneIndices")) slotBi = i;
         else if (!strcmp(defs[i].name, "boneWeights")) slotBw = i;
     }
+
+    auto skinOf = [&](int boneId) -> Mat4 {
+        if (skinMats && boneId >= 0 && (size_t)boneId < nMats) return skinMats[boneId];
+        return matId();
+    };
 
     // accumulate per material index
     std::vector<CmbDrawGroup> groups;
@@ -354,10 +341,16 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
             int boneId = prms.bone_table.empty() ? 0 : prms.bone_table[0];
             bool smooth = bd > 1 && slotBi >= 0 && slotBw >= 0 &&
                           sepd.attrs[slotBi].mode == 0 && sepd.attrs[slotBw].mode == 0;
+            // model-space bake: rigid verts come in bone-local space -> bound bone's
+            // bind world; smooth verts are already model space (identity).
             Mat4 M = smooth ? matId()
                             : (boneId < (int)mBoneMatrix.size() ? mBoneMatrix[boneId] : matId());
             int isz = dtSize(prm.index_type);
             size_t ibase = mIdxPtr + (size_t)prm.first * isz;
+            // per-vertex bone bindings (model-space terms): rigid -> single bound
+            // bone w=1; smooth -> boneIndices(local into bone_table)+boneWeights.
+            int biSz = (slotBi >= 0) ? dtSize(sepd.attrs[slotBi].data_type) : 1;
+            uint32_t biBase = (slotBi >= 0) ? mVatr[slotBi].off : 0;
             std::vector<CmbVertex> verts;
             verts.reserve(prm.count);
             for (uint16_t k = 0; k < prm.count; k++) {
@@ -366,9 +359,37 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
                 readAttr(sepd.attrs[slotPos], slotPos, idx, 3, pos);
                 if (hasNormal) readAttr(sepd.attrs[slotNrm], slotNrm, idx, 3, nrm);
                 if (slotUv0 >= 0 && sepd.attrs[slotUv0].present) readAttr(sepd.attrs[slotUv0], slotUv0, idx, 2, uv);
-                CmbVertex v;
-                matApplyPos(M, pos, v.pos);
-                matApplyDir(M, nrm, v.nrm);
+                // to model space (rigid bake / smooth identity)
+                float mp[3], mn[3];
+                matApplyPos(M, pos, mp);
+                matApplyDir(M, nrm, mn);
+                // gather (boneId, weight)
+                int ids[8]; float wts[8]; int nb = 0;
+                if (!smooth) {
+                    ids[0] = boneId; wts[0] = 1.0f; nb = 1;
+                } else {
+                    const SepdAttr& bia = sepd.attrs[slotBi];
+                    float wbuf[8] = {};
+                    readAttr(sepd.attrs[slotBw], slotBw, idx, bd, wbuf);
+                    uint32_t bioff = biBase + bia.start + idx * (uint32_t)bd * biSz;
+                    for (int e = 0; e < bd && e < 8; e++) {
+                        float w = wbuf[e];
+                        if (w <= 0) continue;
+                        int li = (int)dtRead(b, bioff + (size_t)e * biSz, bia.data_type);
+                        int gb = (li >= 0 && li < (int)prms.bone_table.size()) ? prms.bone_table[li] : boneId;
+                        ids[nb] = gb; wts[nb] = w; nb++;
+                    }
+                    if (nb == 0) { ids[0] = boneId; wts[0] = 1.0f; nb = 1; }
+                }
+                // weighted skin blend of the model-space vert
+                CmbVertex v{};
+                for (int e = 0; e < nb; e++) {
+                    Mat4 S = skinOf(ids[e]);
+                    float sp[3], sn[3];
+                    matApplyPos(S, mp, sp);
+                    matApplyDir(S, mn, sn);
+                    for (int c = 0; c < 3; c++) { v.pos[c] += wts[e] * sp[c]; v.nrm[c] += wts[e] * sn[c]; }
+                }
                 v.uv[0] = uv[0];
                 v.uv[1] = uv[1];
                 verts.push_back(v);

@@ -54,6 +54,37 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
+// Per-actor OoT3D model table. Maps an N64 actor id to the OoT3D model dlist that
+// replaces its N64 draw, plus that model's world scale. This is the generalised
+// divert: instead of editing each actor's Draw with an `if (SoH3D_Enabled())`
+// block, Actor_Draw consults this table once for every actor (SoH3D_TryDrawActor)
+// and, on a hit, draws the OoT3D model and skips the N64 draw. Add an object by
+// adding a row here — no actor-source edits.
+typedef struct {
+    s16 actorId;
+    Gfx* dlist;
+    float worldScale;
+} SoH3D_ModelEntry;
+
+static const SoH3D_ModelEntry sModelTable[] = {
+    { ACTOR_OBJ_TSUBO, soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE },
+    { ACTOR_EN_GS, soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE },
+};
+
+int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
+    s32 i;
+    if (!SoH3D_Enabled()) {
+        return 0;
+    }
+    for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
+        if (sModelTable[i].actorId == actor->id) {
+            SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int SoH3D_Enabled(void) {
     static int cached = -1;
     if (cached < 0) {

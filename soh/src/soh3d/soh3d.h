@@ -10,6 +10,13 @@
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
 
+// Generalised per-actor divert, called from Actor_Draw for every actor. If SoH3D
+// is enabled and the actor's id has an OoT3D model registered in the table, draws
+// that model (via SoH3D_DrawModel) and returns 1 so the caller skips the actor's
+// N64 draw; returns 0 otherwise (caller draws the N64 model as normal). Replaces
+// the old per-actor `if (SoH3D_Enabled())` edits in each actor's Draw.
+int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
+
 // Draws an OoT3D model display list at an actor's world position/yaw with an
 // explicit world scale (OoT3D model units -> N64 world units). Builds its own
 // MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so

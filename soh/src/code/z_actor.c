@@ -9,6 +9,7 @@
 #include "objects/object_bdoor/object_bdoor.h"
 #include "soh/ObjectExtension/ObjectExtension.h"
 #include "soh/ObjectExtension/ActorListIndex.h"
+#include "soh3d/soh3d.h"
 #include "soh/frame_interpolation.h"
 #include "soh/Enhancements/cosmetics/cosmeticsTypes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -2797,7 +2798,11 @@ void Actor_Draw(PlayState* play, Actor* actor) {
         }
     }
 
-    actor->draw(actor, play);
+    // SoH3D: if this actor has an OoT3D model registered, draw it instead of the
+    // N64 model. One central table-driven divert for all actors — see soh3d.c.
+    if (!SoH3D_TryDrawActor(play, actor)) {
+        actor->draw(actor, play);
+    }
 
     if (actor->colorFilterTimer != 0) {
         if (actor->colorFilterParams & 0x2000) {

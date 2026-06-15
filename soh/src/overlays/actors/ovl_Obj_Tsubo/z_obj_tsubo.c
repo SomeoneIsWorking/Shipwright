@@ -341,11 +341,7 @@ void ObjTsubo_Update(Actor* thisx, PlayState* play) {
 }
 
 void ObjTsubo_Draw(Actor* thisx, PlayState* play) {
-    if (SoH3D_Enabled()) {
-        // SoH3D: draw the OoT3D pot model at the actor's position with SoH3D's own
-        // world scale (NOT the actor's 0.01 N64 scale).
-        SoH3D_DrawModel(play, soh3d_pot_model_dl, thisx, SOH3D_POT_WORLD_SCALE);
-        return;
-    }
+    // SoH3D divert (OoT3D pot) is handled centrally in Actor_Draw via the model
+    // table in soh3d.c — no per-actor edit needed here.
     Gfx_DrawDListOpa(play, D_80BA1B84[(thisx->params >> 8) & 1]);
 }

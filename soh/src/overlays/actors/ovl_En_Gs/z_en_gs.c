@@ -569,14 +569,8 @@ void EnGs_Draw(Actor* thisx, PlayState* play) {
     s32 tmp;
     u32 frames;
 
-    if (SoH3D_Enabled()) {
-        // SoH3D: draw the OoT3D multi-material Gossip Stone (2 materials / 2
-        // distinct opaque textures) at the actor's position with SoH3D's own
-        // world scale. Proves the multi-material/multi-texture converter path.
-        SoH3D_DrawModel(play, soh3d_gs_model_dl, thisx, SOH3D_GS_WORLD_SCALE);
-        return;
-    }
-
+    // SoH3D divert (OoT3D Gossip Stone) is handled centrally in Actor_Draw via the
+    // model table in soh3d.c — no per-actor edit needed here.
     if (!(this->unk_19E & 8)) {
         OPEN_DISPS(play->state.gfxCtx);
 

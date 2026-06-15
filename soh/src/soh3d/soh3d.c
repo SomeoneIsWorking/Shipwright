@@ -93,6 +93,7 @@ static SoH3D_ModelEntry sModelTable[] = {
     { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE },
     { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE },
     { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE },
+    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE },
 };
 
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
@@ -293,10 +294,16 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         SoH3D_ReplReply(outPath, "dump -> %s (pending)", gSoh3dDumpPath);
     } else if (strcmp(cmd, "state") == 0) {
         u8 tint[3];
+        char scales[256];
+        s32 n = 0;
+        s32 k;
         SoH3D_SceneTint(play, tint);
-        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) scale: pot=%.4f gs=%.4f kibako=%.4f",
-                        SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2],
-                        sModelTable[0].worldScale, sModelTable[1].worldScale, sModelTable[2].worldScale);
+        for (k = 0; k < ARRAY_COUNT(sModelTable) && n < (s32)sizeof(scales) - 1; k++) {
+            n += snprintf(scales + n, sizeof(scales) - n, "%s%s=%.4f", k ? " " : "", sModelTable[k].name,
+                          sModelTable[k].worldScale);
+        }
+        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) scale: %s", SoH3D_Enabled(),
+                        gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], scales);
     } else {
         SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale spawn dump state)", line);
     }

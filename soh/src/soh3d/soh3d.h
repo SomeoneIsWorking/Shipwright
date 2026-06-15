@@ -7,6 +7,7 @@
 #include "soh3d_pot_model.h"
 #include "soh3d_gs_model.h"
 #include "soh3d_kibako_model.h"
+#include "soh3d_geldwoman_model.h"
 
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
@@ -42,6 +43,14 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // in Gerudo Valley (ENTR 0x117=279). Third object proving the table-driven divert:
 // adding it was one sModelTable[] row + this macro + the generated include.
 #define SOH3D_KIBAKO_WORLD_SCALE 0.10f
+
+// World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
+// model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
+// --ground), so it drops into the same Translate*RotateY*Scale path as the props
+// with no orientation special-casing. The model is ~6524 units tall; ~0.011 lands
+// it near the N64 Gerudo's height (INITIAL estimate — needs in-game A/B calibration
+// like the pot, via the REPL `scale geldwoman <f>` against the N64 En_Ge1).
+#define SOH3D_GELDWOMAN_WORLD_SCALE 0.011f
 
 // Headless verification: when env SOH3D_WARP is set, boot straight into the
 // debug Select overlay and auto-warp into a scene so pots are reachable without

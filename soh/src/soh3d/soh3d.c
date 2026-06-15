@@ -2,12 +2,42 @@
 #include "soh3d.h"
 #include <stdlib.h>
 
+// Flat scene-ambient tint for the unlit OoT3D dlist. The converter's unlit dlist
+// modulates its texture by the PRIMITIVE register (G_CC_MODULATERGBA_PRIM) rather
+// than vertex SHADE, so a single per-draw colour tints the whole model — it
+// darkens/colour-shifts with the room without the per-vertex banding that N64
+// lighting produces on these low-poly meshes.
+//
+// N64 shade = ambient + Σ diffuse·max(0, N·L). For one flat value we approximate
+// with ambient + a fraction of the scene's two (opposed) directional lights, read
+// LIVE from the interpolated scene light settings so it tracks time of day. The
+// diffuse fraction and an overall brightness are calibrated against the N64 model
+// in the same scene (see PROGRESS.md) and tunable via SOH3D_TINT_* for re-cal.
+static void SoH3D_SceneTint(PlayState* play, u8 out[3]) {
+    EnvLightSettings* ls = &play->envCtx.lightSettings;
+    static float frac = -1.0f, mul = -1.0f;
+    s32 i;
+    if (frac < 0.0f) {
+        const char* fv = getenv("SOH3D_TINT_DIFF");
+        const char* mv = getenv("SOH3D_TINT_MUL");
+        frac = (fv != NULL && fv[0] != '\0') ? (float)atof(fv) : 0.5f;
+        mul = (mv != NULL && mv[0] != '\0') ? (float)atof(mv) : 1.0f;
+    }
+    for (i = 0; i < 3; i++) {
+        float v = ((float)ls->ambientColor[i] +
+                   frac * ((float)ls->light1Color[i] + (float)ls->light2Color[i])) *
+                  mul;
+        out[i] = (v <= 0.0f) ? 0 : (v >= 255.0f) ? 255 : (u8)(v + 0.5f);
+    }
+}
+
 // Draw an OoT3D model at an actor's world position/yaw with an explicit world
 // scale. Builds its own MTXMODE_NEW matrix instead of inheriting the actor's
 // N64-tuned 0.01 scale: that inherited fixed-point matrix fails to render the
 // model at all (the OoT3D dlist needs SoH3D's own transform), and it would size
 // the full-res model wrongly besides.
 void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale) {
+    u8 tint[3];
     OPEN_DISPS(play->state.gfxCtx);
 
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
@@ -15,6 +45,10 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
     Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    // Flat scene tint -> PRIMITIVE; the unlit dlist's combiner is TEXEL0 * PRIM.
+    // Must be set before the dlist runs (the dlist deliberately sets no prim).
+    SoH3D_SceneTint(play, tint);
+    gDPSetPrimColor(POLY_OPA_DISP++, 0, 0, tint[0], tint[1], tint[2], 255);
     gSPDisplayList(POLY_OPA_DISP++, dlist);
 
     CLOSE_DISPS(play->state.gfxCtx);

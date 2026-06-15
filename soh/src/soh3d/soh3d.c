@@ -39,6 +39,18 @@ float gSoH3dAnimRate = 1.0f; // 0 = paused (hold current frame)
 int gSoH3dAnimLive = 1;
 int gSoH3dAnimDebug = 0; // REPL `animdbg 1`: log resolved csab/curFrame/phase each ~20 draws
 
+// Per-GL-model live playback state, so multiple DISTINCT GL characters animate
+// independently (gSoH3dAnimRate is the shared speed knob; the frame accumulator and
+// last-played CSAB are per model). Indexed by glModelId. NOTE: this is per MODEL, not
+// per actor instance — two instances of the same GL model still share one pose (the
+// skin matrices are uploaded per modelId); independent per-instance poses would need
+// per-actor bone buffers, out of scope here.
+#define SOH3D_GL_MODEL_MAX 16
+static struct {
+    float frame;
+    const char* lastCsab;
+} gSoH3dGlAnim[SOH3D_GL_MODEL_MAX];
+
 // Direct-GL model path (soh3d_model.cpp bridge + libultraship SoH3D_GL_*). Models
 // flagged with glModelId>=0 in sModelTable render through this PC-native path
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
@@ -132,21 +144,26 @@ static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float 
     // Live (gSoH3dAnimLive): the resolver picks WHICH CSAB by the actor's live N64
     // state (idle/talk/gate-open); the CSAB then free-runs at its own authored rate,
     // restarting from frame 0 whenever the selection changes (so a one-shot like the
-    // gate-open clap begins at its start). Scrub (live=0 or no resolver): free-running
-    // gSoH3dAnimFrame on the fixed table anim, so the REPL animframe/animrate knobs work.
-    static const char* sLiveCsab = NULL;
+    // gate-open clap begins at its start). Each GL model keeps its own frame accumulator
+    // (gSoH3dGlAnim[modelId]) so distinct characters don't share a playhead. Scrub
+    // (live=0 or no resolver): the global gSoH3dAnimFrame on the fixed table anim, so
+    // the REPL animframe/animrate knobs still work for debugging one model.
     const char* animToPlay = animName;
-    if (gSoH3dAnimLive && resolveAnim != NULL) {
+    float* frame = &gSoH3dAnimFrame; // scrub default
+    if (gSoH3dAnimLive && resolveAnim != NULL && modelId >= 0 && modelId < SOH3D_GL_MODEL_MAX) {
         const char* csab = resolveAnim(actor);
-        if (csab != sLiveCsab && (csab == NULL || sLiveCsab == NULL || strcmp(csab, sLiveCsab) != 0)) {
-            gSoH3dAnimFrame = 0.0f; // anim changed -> restart playback
-            sLiveCsab = csab;
+        const char* prev = gSoH3dGlAnim[modelId].lastCsab;
+        int changed = (prev == NULL || csab == NULL) ? (prev != csab) : (strcmp(prev, csab) != 0);
+        if (changed) {
+            gSoH3dGlAnim[modelId].frame = 0.0f; // anim changed -> restart playback
+            gSoH3dGlAnim[modelId].lastCsab = csab;
         }
         animToPlay = csab;
+        frame = &gSoH3dGlAnim[modelId].frame;
     }
     if (animToPlay != NULL) {
-        SoH3D_UpdateAnim(modelId, animToPlay, gSoH3dAnimFrame);
-        gSoH3dAnimFrame += gSoH3dAnimRate;
+        SoH3D_UpdateAnim(modelId, animToPlay, *frame);
+        *frame += gSoH3dAnimRate;
     }
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);

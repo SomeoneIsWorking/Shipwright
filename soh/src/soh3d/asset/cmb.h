@@ -39,11 +39,15 @@ struct CmbTexture {
     uint32_t glFormat() const { return ((uint32_t)data_type << 16) | fmt; }
 };
 
-// Interleaved render vertex: position (model space), normal, uv0.
+// Interleaved render vertex: position (model space), normal, uv0, and skinning
+// bindings (up to 4 bone ids + weights). MUST stay byte-compatible with
+// SoH3DGlVtx (soh3d_gl.h) — the bridge reinterpret_casts between them.
 struct CmbVertex {
     float pos[3];
     float nrm[3];
     float uv[2];
+    float boneIds[4] = { 0, 0, 0, 0 };
+    float weights[4] = { 0, 0, 0, 0 };
 };
 
 // One draw batch: all triangles that use a given material, as a triangle list.

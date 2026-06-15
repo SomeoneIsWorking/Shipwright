@@ -381,7 +381,8 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
                     }
                     if (nb == 0) { ids[0] = boneId; wts[0] = 1.0f; nb = 1; }
                 }
-                // weighted skin blend of the model-space vert
+                // weighted skin blend of the model-space vert (CPU). With identity
+                // skinMats this leaves pos/nrm in model space (= bind pose).
                 CmbVertex v{};
                 for (int e = 0; e < nb; e++) {
                     Mat4 S = skinOf(ids[e]);
@@ -392,6 +393,11 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
                 }
                 v.uv[0] = uv[0];
                 v.uv[1] = uv[1];
+                // record the (model-space) bone bindings for GPU skinning. The CPU
+                // blend above bakes the pose into pos/nrm; GPU skinning instead uploads
+                // these bindings + model-space pos (skinMats=identity) and applies the
+                // pose via the uBones uniform. Store up to 4 (max bone_dim seen = 3).
+                for (int e = 0; e < nb && e < 4; e++) { v.boneIds[e] = (float)ids[e]; v.weights[e] = wts[e]; }
                 verts.push_back(v);
             }
             // triangle list (matches cmb.py: groups of 3, drop trailing remainder)

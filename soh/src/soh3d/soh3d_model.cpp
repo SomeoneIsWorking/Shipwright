@@ -33,12 +33,16 @@ const ModelSpec kModels[] = {
 };
 
 // Loaded CPU data for a model, kept alive so the renderer can upload from it and
-// so the provider can hand back stable pointers.
+// so the provider can hand back stable pointers. The Zar + Cmb stay resident so the
+// animation layer can load CSABs and recompute skin matrices per frame on demand.
 struct LoadedModel {
     std::vector<SoH3D::CmbDrawGroup> groups;       // interleaved verts (CmbVertex == SoH3DGlVtx layout)
     std::vector<std::vector<uint8_t>> texRgba;     // decoded RGBA8 per CMB texture
     std::vector<SoH3DGlGroup> cGroups;             // C-API view
     std::vector<SoH3DGlTex> cTexs;                 // C-API view
+    std::unique_ptr<SoH3D::Zar> zar;               // resident archive (for CSAB lookup)
+    std::unique_ptr<SoH3D::Cmb> cmb;               // resident model (skeleton + bind matrices)
+    std::unordered_map<std::string, std::unique_ptr<SoH3D::Csab>> anims; // cached by full name
     bool ok = false;
 };
 
@@ -76,42 +80,18 @@ LoadedModel* loadModel(int modelId) {
 
     auto zarBytes = r->read(kModels[modelId].zarPath);
     if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] zar not found: %s\n", kModels[modelId].zarPath); return out; }
-    SoH3D::Zar zar(std::move(zarBytes));
-    if (!zar.ok()) { fprintf(stderr, "[SoH3D] Zar: %s\n", zar.error().c_str()); return out; }
-    const SoH3D::ZarFile* cmbf = zar.firstWithSuffix(".cmb");
+    out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
+    if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] Zar: %s\n", out->zar->error().c_str()); return out; }
+    const SoH3D::ZarFile* cmbf = out->zar->firstWithSuffix(".cmb");
     if (!cmbf) { fprintf(stderr, "[SoH3D] no .cmb in %s\n", kModels[modelId].zarPath); return out; }
-    SoH3D::Cmb cmb(zar.read(*cmbf));
-    if (!cmb.ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", cmb.error().c_str()); return out; }
+    out->cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*cmbf));
+    if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", out->cmb->error().c_str()); return out; }
+    SoH3D::Cmb& cmb = *out->cmb;
 
-    // Optional CSAB skinning: SOH3D_ANIM=<csab base name> [SOH3D_FRAME=<float>].
-    // Loaded from the same zar; skin matrices applied once at this frame (the live
-    // per-frame in-game path is a later layer — this verifies a static deformed frame).
-    const char* animName = getenv("SOH3D_ANIM");
-    if (animName && *animName) {
-        std::string nm(animName);
-        std::string full = (nm.rfind("Anim/", 0) == 0) ? nm : ("Anim/" + nm + ".csab");
-        const SoH3D::ZarFile* af = nullptr;
-        for (const auto& f : zar.files()) if (f.name == full) { af = &f; break; }
-        if (af) {
-            SoH3D::Csab anim(zar.read(*af));
-            float frame = getenv("SOH3D_FRAME") ? (float)atof(getenv("SOH3D_FRAME")) : 0.0f;
-            if (anim.ok()) {
-                std::vector<std::array<float, 16>> sm;
-                anim.skinMatrices(cmb, frame, sm);
-                out->groups = cmb.buildDrawGroupsSkinned(sm.data(), sm.size());
-                fprintf(stderr, "[SoH3D] applied anim %s frame %.2f (%d bones, %d anods)\n",
-                        full.c_str(), frame, anim.boneCount(), anim.animNodeCount());
-            } else {
-                fprintf(stderr, "[SoH3D] Csab %s: %s\n", full.c_str(), anim.error().c_str());
-                out->groups = cmb.buildDrawGroups();
-            }
-        } else {
-            fprintf(stderr, "[SoH3D] anim not found: %s\n", full.c_str());
-            out->groups = cmb.buildDrawGroups();
-        }
-    } else {
-        out->groups = cmb.buildDrawGroups();
-    }
+    // Always upload MODEL-space verts (bind pose) + per-vertex bone bindings; the
+    // animated pose is applied by GPU skinning (uBones uniform, set per frame via
+    // SoH3D_UpdateAnim). With no anim set, uBones=identity -> the bind pose renders.
+    out->groups = cmb.buildDrawGroups();
 
     // Decode every texture (index aligns with CMB texture index / materialTexture()).
     const auto& texs = cmb.textures();
@@ -173,6 +153,39 @@ void SoH3D_EnsureModelProvider(void) {
 float SoH3D_ModelScaleById(int modelId) {
     if (modelId < 0 || modelId >= (int)(sizeof(kModels) / sizeof(kModels[0]))) return 1.0f;
     return kModels[modelId].worldScale;
+}
+
+// Set the model's GPU skinning pose to `animName` (CSAB base name, e.g. "ge1_s_wait")
+// at `frame`. animName==NULL/"" resets to the bind pose. Loads the model + caches the
+// parsed CSAB on first use; recomputes skin matrices each call (cheap: <=32 bones).
+// Call once per game frame before the SoH3D draw. Safe to call repeatedly.
+void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
+    if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb || !lm->zar) return;
+
+    std::string nm(animName);
+    std::string full = (nm.rfind("Anim/", 0) == 0) ? nm : ("Anim/" + nm + ".csab");
+    auto it = lm->anims.find(full);
+    if (it == lm->anims.end()) {
+        const SoH3D::ZarFile* af = nullptr;
+        for (const auto& f : lm->zar->files()) if (f.name == full) { af = &f; break; }
+        std::unique_ptr<SoH3D::Csab> csab;
+        if (af) {
+            csab = std::make_unique<SoH3D::Csab>(lm->zar->read(*af));
+            if (!csab->ok()) { fprintf(stderr, "[SoH3D] Csab %s: %s\n", full.c_str(), csab->error().c_str()); csab.reset(); }
+        } else {
+            fprintf(stderr, "[SoH3D] anim not found: %s\n", full.c_str());
+        }
+        it = lm->anims.emplace(full, std::move(csab)).first;
+    }
+    SoH3D::Csab* anim = it->second.get();
+    if (!anim) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+
+    std::vector<std::array<float, 16>> sm;
+    anim->skinMatrices(*lm->cmb, frame, sm);
+    // vector<array<float,16>> is contiguous -> hand the renderer a flat float buffer.
+    SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }
 
 } // extern "C"

@@ -47,10 +47,21 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
 // model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
 // --ground), so it drops into the same Translate*RotateY*Scale path as the props
-// with no orientation special-casing. The model is ~6524 units tall; ~0.011 lands
-// it near the N64 Gerudo's height (INITIAL estimate — needs in-game A/B calibration
-// like the pot, via the REPL `scale geldwoman <f>` against the N64 En_Ge1).
+// with no orientation special-casing. The model is ~6358 units tall; 0.011 lands
+// it at the N64 Gerudo's height — CONFIRMED in-game A/B (Gerudo Fortress): the
+// OoT3D figure is 186 px tall vs the N64 En_Ge1's 187 px head->shadow. Pair with
+// SOH3D_GELDWOMAN_GROUND_OFFSET (vertical grounding). Re-tune via `scale geldwoman`.
 #define SOH3D_GELDWOMAN_WORLD_SCALE 0.011f
+
+// Vertical grounding offset for En_Ge1, in MODEL units, applied BEFORE the world
+// scale (so it scales together with SOH3D_GELDWOMAN_WORLD_SCALE — re-tuning scale
+// never desyncs grounding). The skinned ge1_s_wait model sits with its feet ~1000
+// model units (≈11 world units at scale 0.011) above the actor origin; this drops
+// the feet onto the actor's ground pos. CALIBRATED in-game (REPL `yoff geldwoman`):
+// -600 floats, -1000 grounds the soles on the actor's shadow, -1400 sinks to ankles.
+// Height itself is correct: at scale 0.011 the model is 186 px tall vs the N64
+// En_Ge1's 187 px in the same Gerudo-Fortress shot (head->shadow), so scale is kept.
+#define SOH3D_GELDWOMAN_GROUND_OFFSET -1000.0f
 
 // Headless verification: when env SOH3D_WARP is set, boot straight into the
 // debug Select overlay and auto-warp into a scene so pots are reachable without

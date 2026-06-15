@@ -155,15 +155,12 @@ float SoH3D_ModelScaleById(int modelId) {
     return kModels[modelId].worldScale;
 }
 
-// Set the model's GPU skinning pose to `animName` (CSAB base name, e.g. "ge1_s_wait")
-// at `frame`. animName==NULL/"" resets to the bind pose. Loads the model + caches the
-// parsed CSAB on first use; recomputes skin matrices each call (cheap: <=32 bones).
-// Call once per game frame before the SoH3D draw. Safe to call repeatedly.
-void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
-    if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
-    LoadedModel* lm = loadModel(modelId);
-    if (!lm || !lm->ok || !lm->cmb || !lm->zar) return;
+} // extern "C"
 
+// Get-or-load the parsed CSAB for `animName` (base name or full "Anim/<n>.csab"),
+// caching it on the model. Returns nullptr if missing/unparseable (logged once via
+// the cached null entry). Shared by the frame- and phase-based update entry points.
+static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
     std::string nm(animName);
     std::string full = (nm.rfind("Anim/", 0) == 0) ? nm : ("Anim/" + nm + ".csab");
     auto it = lm->anims.find(full);
@@ -179,7 +176,21 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
         }
         it = lm->anims.emplace(full, std::move(csab)).first;
     }
-    SoH3D::Csab* anim = it->second.get();
+    return it->second.get();
+}
+
+extern "C" {
+
+// Set the model's GPU skinning pose to `animName` (CSAB base name, e.g. "ge1_s_wait")
+// at `frame`. animName==NULL/"" resets to the bind pose. Loads the model + caches the
+// parsed CSAB on first use; recomputes skin matrices each call (cheap: <=32 bones).
+// Call once per game frame before the SoH3D draw. Safe to call repeatedly.
+void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
+    if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb || !lm->zar) return;
+
+    SoH3D::Csab* anim = getCsab(lm, animName);
     if (!anim) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
 
     std::vector<std::array<float, 16>> sm;

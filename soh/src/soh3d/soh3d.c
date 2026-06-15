@@ -1,5 +1,7 @@
 // SoH3D runtime toggle + helpers. See repo-root PROGRESS.md.
 #include "soh3d.h"
+#include "overlays/actors/ovl_En_Ge1/z_en_ge1.h" // EnGe1 (read live SkelAnime state)
+#include "objects/object_ge1/object_ge1.h"       // dgGerudoWhite*Anim OTR-path strings
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,13 +34,27 @@ float gSoH3dRotZ = 0.0f;
 // a free-running accumulator — the CSAB wraps it (REPEAT) internally.
 float gSoH3dAnimFrame = 0.0f;
 float gSoH3dAnimRate = 1.0f; // 0 = paused (hold current frame)
+// 1 = drive the CSAB from the actor's live N64 SkelAnime (correct anim + speed,
+// see SoH3D_AnimResolver); 0 = free-running gSoH3dAnimFrame for REPL scrubbing.
+int gSoH3dAnimLive = 1;
+int gSoH3dAnimDebug = 0; // REPL `animdbg 1`: log resolved csab/curFrame/phase each ~20 draws
 
 // Direct-GL model path (soh3d_model.cpp bridge + libultraship SoH3D_GL_*). Models
 // flagged with glModelId>=0 in sModelTable render through this PC-native path
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
-static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale, const char* animName);
+
+// Resolve the actor's CURRENT animation to a CSAB base name, by reading the actor's
+// live N64 state, so the OoT3D model plays the same animation the game logic chose
+// (idle/talk/gate-open). Returns the CSAB base name (NULL = bind pose). The CSAB is
+// then free-run at its own authored rate (see SoH3D_DrawModelGL) rather than locked to
+// the N64 SkelAnime frame: several N64 anims (notably En_Ge1's 2-frame idle stub, whose
+// life comes from procedural limb fidget, not keyframes) carry no frame motion to sync
+// to, so the OoT3D CSAB's own motion is the faithful source.
+typedef const char* (*SoH3D_AnimResolver)(Actor* actor);
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale,
+                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim);
 
 // On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
 extern char gSoh3dDumpPath[1024];
@@ -106,15 +122,30 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current MP_matrix
 // — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
 // N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
-static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale, const char* animName) {
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale,
+                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim) {
     u8 tint[3];
     OPEN_DISPS(play->state.gfxCtx);
 
     SoH3D_EnsureModelProvider();
-    // Advance + apply the skeletal animation for this model (GPU skinning). Runs once
-    // per Actor_Draw (per logic tick); the CSAB wraps the free-running frame.
-    if (animName != NULL) {
-        SoH3D_UpdateAnim(modelId, animName, gSoH3dAnimFrame);
+    // Apply this model's skeletal animation (GPU skinning), once per Actor_Draw.
+    // Live (gSoH3dAnimLive): the resolver picks WHICH CSAB by the actor's live N64
+    // state (idle/talk/gate-open); the CSAB then free-runs at its own authored rate,
+    // restarting from frame 0 whenever the selection changes (so a one-shot like the
+    // gate-open clap begins at its start). Scrub (live=0 or no resolver): free-running
+    // gSoH3dAnimFrame on the fixed table anim, so the REPL animframe/animrate knobs work.
+    static const char* sLiveCsab = NULL;
+    const char* animToPlay = animName;
+    if (gSoH3dAnimLive && resolveAnim != NULL) {
+        const char* csab = resolveAnim(actor);
+        if (csab != sLiveCsab && (csab == NULL || sLiveCsab == NULL || strcmp(csab, sLiveCsab) != 0)) {
+            gSoH3dAnimFrame = 0.0f; // anim changed -> restart playback
+            sLiveCsab = csab;
+        }
+        animToPlay = csab;
+    }
+    if (animToPlay != NULL) {
+        SoH3D_UpdateAnim(modelId, animToPlay, gSoH3dAnimFrame);
         gSoH3dAnimFrame += gSoH3dAnimRate;
     }
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
@@ -124,6 +155,9 @@ static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float 
     if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    // Ground offset: applied innermost (model space, pre-scale) so it scales with
+    // worldScale and brings the model's feet onto the actor's ground pos.
+    if (groundOffset != 0.0f) Matrix_Translate(0.0f, groundOffset, 0.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
@@ -137,21 +171,54 @@ static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float 
 // block, Actor_Draw consults this table once for every actor (SoH3D_TryDrawActor)
 // and, on a hit, draws the OoT3D model and skips the N64 draw. Add an object by
 // adding a row here — no actor-source edits.
+// En_Ge1 (white Gerudo): map her N64 animation -> the OoT3D CSAB, and phase-sync to her
+// SkelAnime clock. The N64 actor stores the current anim as an OTR-path string in
+// this->animation (SoH ALIGN_ASSET pattern), so identify it by strcmp. Mapping (by use
+// site in z_en_ge1.c): Idle->ge1_s_wait, Clap(open-gate)->ge1_mon_akeru, Dismissive
+// (post-talk reaction)->ge1_hanasi. ge1_matsu is unused by this actor's 3 N64 anims.
+static const char* SoH3D_ResolveAnim_EnGe1(Actor* actor) {
+    EnGe1* ge = (EnGe1*)actor;
+    const char* n64 = (const char*)ge->animation;
+    const char* csab = "ge1_s_wait"; // idle / unknown
+    if (n64 != NULL) {
+        if (strcmp(n64, dgGerudoWhiteClapAnim) == 0) {
+            csab = "ge1_mon_akeru";
+        } else if (strcmp(n64, dgGerudoWhiteDismissiveAnim) == 0) {
+            csab = "ge1_hanasi";
+        }
+    }
+    if (gSoH3dAnimDebug) {
+        static int dbg = 0;
+        if ((dbg++ % 20) == 0) {
+            printf("SOH3D anim: csab=%s curFrame=%.2f animLength=%.2f n64=%s\n",
+                   csab, ge->skelAnime.curFrame, ge->skelAnime.animLength, n64 ? n64 : "(null)");
+            fflush(stdout);
+        }
+    }
+    return csab;
+}
+
 typedef struct {
     s16 actorId;
     const char* name; // REPL handle for `scale <name>` / `spawn <name>`
     Gfx* dlist;       // legacy Fast3D dlist (used when glModelId < 0)
     float worldScale; // live (REPL-pokeable)
     int glModelId;    // >=0 = render via the direct-GL path with this asset id; -1 = legacy dlist
-    const char* anim; // CSAB base name to play on the GL path (NULL = bind pose / no anim)
+    const char* anim; // CSAB base name to play on the GL path (NULL = bind pose / no anim).
+                      // Used as the fallback when resolveAnim is NULL or scrubbing live=0.
+    float groundOffset; // model-space Y added BEFORE scale, so the model's feet land on
+                        // the actor's ground pos. Pre-scale => scales with worldScale, so
+                        // re-tuning scale does not desync grounding. REPL `yoff <name> <f>`.
+    SoH3D_AnimResolver resolveAnim; // NULL = no live anim state (use `anim` + free frame)
 } SoH3D_ModelEntry;
 
-// Non-const so the REPL can tune worldScale live.
+// Non-const so the REPL can tune worldScale/groundOffset live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1, NULL },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, -1, NULL },
-    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait" },
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1, NULL, 0.0f, NULL },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, -1, NULL, 0.0f, NULL },
+    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait",
+      SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1 },
 };
 
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
@@ -163,7 +230,7 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
         if (sModelTable[i].actorId == actor->id) {
             if (sModelTable[i].glModelId >= 0) {
                 SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
-                                  sModelTable[i].anim);
+                                  sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim);
             } else {
                 SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
             }
@@ -267,8 +334,12 @@ void SoH3D_DebugDrawKibako(PlayState* play) {
 // Commands (one per line):
 //   mul <f>            overall tint brightness          diff <f>  diffuse fraction
 //   tint <diff> <mul>  set both                         enable <0|1>  OoT3D render
-//   scale <name> <f>   live world scale for a model (pot|gs|kibako)
-//   spawn <name>       spawn that actor in front of Link
+//   scale <name> <f>   live world scale for a model (pot|gs|kibako|geldwoman)
+//   yoff <name> <f>    live ground offset (model-space Y, pre-scale) for a model
+//   rotx/roty/rotz <f> live debug orientation (deg) for the GL model
+//   animlive <0|1>     1=drive CSAB from the actor's SkelAnime; 0=scrub w/ animframe
+//   animrate <f>       free-running frames/draw (scrub mode)  animframe <f>  set frame
+//   spawn <name>       spawn that actor in front of Link (front-right, clears Link)
 //   dump <path.ppm>    capture the current frame to <path> (no exit)
 //   state              report all tunables + the current computed tint
 // ===========================================================================
@@ -286,8 +357,9 @@ static SoH3D_ModelEntry* SoH3D_FindModel(const char* name) {
 static Actor* SoH3D_SpawnInFront(PlayState* play, s16 actorId, float dist) {
     Player* p = GET_PLAYER(play);
     s16 yaw = p->actor.shape.rot.y;
-    float fx = p->actor.world.pos.x + dist * Math_SinS(yaw);
-    float fz = p->actor.world.pos.z + dist * Math_CosS(yaw);
+    s16 right = yaw + 0x4000; // Link's right, to clear his body so feet/ground are visible
+    float fx = p->actor.world.pos.x + dist * Math_SinS(yaw) + 55.0f * Math_SinS(right);
+    float fz = p->actor.world.pos.z + dist * Math_CosS(yaw) + 55.0f * Math_CosS(right);
     return Actor_Spawn(&play->actorCtx, play, actorId, fx, p->actor.world.pos.y, fz, 0, p->actor.shape.rot.y, 0, 0);
 }
 
@@ -342,6 +414,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "no model '%s'", arg);
         }
+    } else if (strcmp(cmd, "yoff") == 0 && sscanf(line, "%*s %63s %f", arg, &f1) == 2) {
+        SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
+        if (e != NULL) {
+            e->groundOffset = f1;
+            SoH3D_ReplReply(outPath, "yoff %s=%.1f", e->name, e->groundOffset);
+        } else {
+            SoH3D_ReplReply(outPath, "no model '%s'", arg);
+        }
     } else if (strcmp(cmd, "spawn") == 0 && sscanf(line, "%*s %63s", arg) == 1) {
         SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
         if (e != NULL) {
@@ -365,6 +445,12 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "animframe") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimFrame = f1;
         SoH3D_ReplReply(outPath, "animframe=%.1f (rate=%.3f)", gSoH3dAnimFrame, gSoH3dAnimRate);
+    } else if (strcmp(cmd, "animlive") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dAnimLive = (int)f1;
+        SoH3D_ReplReply(outPath, "animlive=%d (1=actor SkelAnime, 0=scrub animframe)", gSoH3dAnimLive);
+    } else if (strcmp(cmd, "animdbg") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dAnimDebug = (int)f1;
+        SoH3D_ReplReply(outPath, "animdbg=%d", gSoH3dAnimDebug);
     } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
         strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
         gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';
@@ -377,14 +463,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         s32 k;
         SoH3D_SceneTint(play, tint);
         for (k = 0; k < ARRAY_COUNT(sModelTable) && n < (s32)sizeof(scales) - 1; k++) {
-            n += snprintf(scales + n, sizeof(scales) - n, "%s%s=%.4f", k ? " " : "", sModelTable[k].name,
-                          sModelTable[k].worldScale);
+            n += snprintf(scales + n, sizeof(scales) - n, "%s%s=%.4f(yoff %.0f)", k ? " " : "",
+                          sModelTable[k].name, sModelTable[k].worldScale, sModelTable[k].groundOffset);
         }
-        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) anim(frame=%.1f rate=%.3f) scale: %s",
-                        SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimFrame,
-                        gSoH3dAnimRate, scales);
+        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) anim(live=%d frame=%.1f rate=%.3f) scale: %s",
+                        SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimLive,
+                        gSoH3dAnimFrame, gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale rotx roty rotz animrate animframe spawn dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn dump state)", line);
     }
 }
 

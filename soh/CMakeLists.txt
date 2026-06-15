@@ -186,7 +186,7 @@ endif()
 # }}}
 
 # src (decomp) {{{
-file(GLOB_RECURSE src__ RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "src/*.c" "src/*.h")
+file(GLOB_RECURSE src__ RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "src/*.c" "src/*.cpp" "src/*.h")
 set_source_files_properties(${src__} PROPERTIES COMPILE_OPTIONS "${WARNING_OVERRIDE}")
 
 list(APPEND src__ ${CMAKE_CURRENT_SOURCE_DIR}/Resource.rc)

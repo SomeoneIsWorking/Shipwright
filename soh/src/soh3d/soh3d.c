@@ -18,6 +18,15 @@ float gSoH3dTintDiff = 0.5f; // diffuse fraction in the flat scene tint
 float gSoH3dTintMul = 1.0f;  // overall tint brightness multiplier
 int gSoH3dEnabled = -1;      // -1 = uninit (read env), 0/1 = OoT3D render off/on
 
+// Live debug orientation (degrees) applied in SoH3D_DrawModel BEFORE the model
+// dlist, so the correct in-game rest->upright bake can be found over the REPL
+// without a rebuild. Once a value is confirmed in-game it gets baked into the
+// generated model via cmb_to_c --rotx/--roty/--rotz and these reset to 0.
+// (The harness is NOT a faithful orientation proxy — see PROGRESS.md.)
+float gSoH3dRotX = 0.0f;
+float gSoH3dRotY = 0.0f;
+float gSoH3dRotZ = 0.0f;
+
 // On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
 extern char gSoh3dDumpPath[1024];
 extern volatile int gSoh3dDumpPending;
@@ -65,6 +74,10 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
     Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
     Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
+    // Debug rest->upright orientation, found live then baked into the model (see above).
+    if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     // Flat scene tint -> PRIMITIVE; the unlit dlist's combiner is TEXEL0 * PRIM.
     // Must be set before the dlist runs (the dlist deliberately sets no prim).
@@ -287,6 +300,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "no model '%s'", arg);
         }
+    } else if (strcmp(cmd, "rotx") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dRotX = f1;
+        SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
+    } else if (strcmp(cmd, "roty") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dRotY = f1;
+        SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
+    } else if (strcmp(cmd, "rotz") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dRotZ = f1;
+        SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
     } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
         strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
         gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';
@@ -305,7 +327,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) scale: %s", SoH3D_Enabled(),
                         gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale spawn dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale rotx roty rotz spawn dump state)", line);
     }
 }
 

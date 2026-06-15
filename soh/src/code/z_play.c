@@ -1653,7 +1653,6 @@ void Play_Draw(PlayState* play) {
         SoH3D_DebugDrawPot(play);
         SoH3D_DebugDrawGs(play);
         SoH3D_DebugDrawKibako(play);
-        SoH3D_ReplPoll(play);
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {
@@ -1731,6 +1730,10 @@ void Play_Main(GameState* thisx) {
     if ((HREG(80) != 10) || (HREG(81) != 0)) {
         Play_Update(play);
     }
+
+    // SoH3D: poll the REPL command FIFO here (not in Play_Draw) so it stays
+    // responsive even when Play_Draw early-outs via a transition `goto`.
+    SoH3D_ReplPoll(play);
 
     PLAY_LOG(4583);
 

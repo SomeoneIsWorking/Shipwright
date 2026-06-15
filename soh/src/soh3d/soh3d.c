@@ -27,11 +27,18 @@ float gSoH3dRotX = 0.0f;
 float gSoH3dRotY = 0.0f;
 float gSoH3dRotZ = 0.0f;
 
+// Live CSAB animation playback (GPU skinning). gSoH3dAnimRate = anim-frames advanced
+// per draw (the OoT3D logic tick is ~20 fps; tune live over the REPL). The frame is
+// a free-running accumulator — the CSAB wraps it (REPEAT) internally.
+float gSoH3dAnimFrame = 0.0f;
+float gSoH3dAnimRate = 1.0f; // 0 = paused (hold current frame)
+
 // Direct-GL model path (soh3d_model.cpp bridge + libultraship SoH3D_GL_*). Models
 // flagged with glModelId>=0 in sModelTable render through this PC-native path
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
-static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale);
+void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale, const char* animName);
 
 // On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
 extern char gSoh3dDumpPath[1024];
@@ -99,11 +106,17 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current MP_matrix
 // — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
 // N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
-static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale) {
+static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale, const char* animName) {
     u8 tint[3];
     OPEN_DISPS(play->state.gfxCtx);
 
     SoH3D_EnsureModelProvider();
+    // Advance + apply the skeletal animation for this model (GPU skinning). Runs once
+    // per Actor_Draw (per logic tick); the CSAB wraps the free-running frame.
+    if (animName != NULL) {
+        SoH3D_UpdateAnim(modelId, animName, gSoH3dAnimFrame);
+        gSoH3dAnimFrame += gSoH3dAnimRate;
+    }
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
@@ -130,14 +143,15 @@ typedef struct {
     Gfx* dlist;       // legacy Fast3D dlist (used when glModelId < 0)
     float worldScale; // live (REPL-pokeable)
     int glModelId;    // >=0 = render via the direct-GL path with this asset id; -1 = legacy dlist
+    const char* anim; // CSAB base name to play on the GL path (NULL = bind pose / no anim)
 } SoH3D_ModelEntry;
 
 // Non-const so the REPL can tune worldScale live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1 },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1 },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, -1 },
-    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0 },
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1, NULL },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, -1, NULL },
+    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait" },
 };
 
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
@@ -148,7 +162,8 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
         if (sModelTable[i].actorId == actor->id) {
             if (sModelTable[i].glModelId >= 0) {
-                SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale);
+                SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
+                                  sModelTable[i].anim);
             } else {
                 SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
             }
@@ -344,6 +359,12 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "rotz") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dRotZ = f1;
         SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
+    } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dAnimRate = f1;
+        SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);
+    } else if (strcmp(cmd, "animframe") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dAnimFrame = f1;
+        SoH3D_ReplReply(outPath, "animframe=%.1f (rate=%.3f)", gSoH3dAnimFrame, gSoH3dAnimRate);
     } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
         strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
         gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';
@@ -359,10 +380,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             n += snprintf(scales + n, sizeof(scales) - n, "%s%s=%.4f", k ? " " : "", sModelTable[k].name,
                           sModelTable[k].worldScale);
         }
-        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) scale: %s", SoH3D_Enabled(),
-                        gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], scales);
+        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) anim(frame=%.1f rate=%.3f) scale: %s",
+                        SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimFrame,
+                        gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale rotx roty rotz spawn dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale rotx roty rotz animrate animframe spawn dump state)", line);
     }
 }
 

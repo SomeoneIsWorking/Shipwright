@@ -1652,6 +1652,8 @@ void Play_Draw(PlayState* play) {
         // CMB->LUS render path in any scene (env SOH3D_DEBUGPOT=1).
         SoH3D_DebugDrawPot(play);
         SoH3D_DebugDrawGs(play);
+        SoH3D_DebugDrawKibako(play);
+        SoH3D_ReplPoll(play);
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {

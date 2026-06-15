@@ -1,6 +1,26 @@
 // SoH3D runtime toggle + helpers. See repo-root PROGRESS.md.
 #include "soh3d.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+// --- Live tunables, pokeable at runtime via the REPL (SoH3D_ReplPoll) ---
+// All initialised from env on first use (back-compat with the old SOH3D_* env
+// flow), then overridable live over the control FIFO so experiments don't need a
+// rebuild/restart. See tools/soh3d_repl.py and PROGRESS.md.
+float gSoH3dTintDiff = 0.5f; // diffuse fraction in the flat scene tint
+float gSoH3dTintMul = 1.0f;  // overall tint brightness multiplier
+int gSoH3dEnabled = -1;      // -1 = uninit (read env), 0/1 = OoT3D render off/on
+
+// On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
+extern char gSoh3dDumpPath[1024];
+extern volatile int gSoh3dDumpPending;
 
 // Flat scene-ambient tint for the unlit OoT3D dlist. The converter's unlit dlist
 // modulates its texture by the PRIMITIVE register (G_CC_MODULATERGBA_PRIM) rather
@@ -15,18 +35,19 @@
 // in the same scene (see PROGRESS.md) and tunable via SOH3D_TINT_* for re-cal.
 static void SoH3D_SceneTint(PlayState* play, u8 out[3]) {
     EnvLightSettings* ls = &play->envCtx.lightSettings;
-    static float frac = -1.0f, mul = -1.0f;
+    static int init = 0;
     s32 i;
-    if (frac < 0.0f) {
+    if (!init) {
         const char* fv = getenv("SOH3D_TINT_DIFF");
         const char* mv = getenv("SOH3D_TINT_MUL");
-        frac = (fv != NULL && fv[0] != '\0') ? (float)atof(fv) : 0.5f;
-        mul = (mv != NULL && mv[0] != '\0') ? (float)atof(mv) : 1.0f;
+        if (fv != NULL && fv[0] != '\0') gSoH3dTintDiff = (float)atof(fv);
+        if (mv != NULL && mv[0] != '\0') gSoH3dTintMul = (float)atof(mv);
+        init = 1;
     }
     for (i = 0; i < 3; i++) {
         float v = ((float)ls->ambientColor[i] +
-                   frac * ((float)ls->light1Color[i] + (float)ls->light2Color[i])) *
-                  mul;
+                   gSoH3dTintDiff * ((float)ls->light1Color[i] + (float)ls->light2Color[i])) *
+                  gSoH3dTintMul;
         out[i] = (v <= 0.0f) ? 0 : (v >= 255.0f) ? 255 : (u8)(v + 0.5f);
     }
 }
@@ -62,13 +83,16 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // adding a row here — no actor-source edits.
 typedef struct {
     s16 actorId;
+    const char* name; // REPL handle for `scale <name>` / `spawn <name>`
     Gfx* dlist;
-    float worldScale;
+    float worldScale; // live (REPL-pokeable)
 } SoH3D_ModelEntry;
 
-static const SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE },
-    { ACTOR_EN_GS, soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE },
+// Non-const so the REPL can tune worldScale live.
+static SoH3D_ModelEntry sModelTable[] = {
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE },
 };
 
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
@@ -86,12 +110,11 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
 }
 
 int SoH3D_Enabled(void) {
-    static int cached = -1;
-    if (cached < 0) {
+    if (gSoH3dEnabled < 0) {
         const char* v = getenv("SOH3D");
-        cached = (v != NULL && v[0] == '1') ? 1 : 0;
+        gSoH3dEnabled = (v != NULL && v[0] == '1') ? 1 : 0;
     }
-    return cached;
+    return gSoH3dEnabled;
 }
 
 int SoH3D_AutoWarpEnabled(void) {
@@ -146,4 +169,184 @@ void SoH3D_DebugDrawGs(PlayState* play) {
         Actor_Spawn(&play->actorCtx, play, ACTOR_EN_GS, fx, p->actor.world.pos.y, fz, 0, gsYaw, 0, 0);
         spawned = 1;
     }
+}
+
+void SoH3D_DebugDrawKibako(PlayState* play) {
+    // Verification: spawn one real Obj_Kibako2 (large crate) in front of Link
+    // (env SOH3D_SPAWNKIBAKO=1). Needs OBJECT_KIBAKO2 in the scene (e.g. Gerudo
+    // Valley). Logs spawn success so scene-object presence can be confirmed from
+    // the log without interpreting pixels.
+    const char* sp = getenv("SOH3D_SPAWNKIBAKO");
+    static unsigned char spawned = 0;
+    if (sp != NULL && sp[0] == '1' && !spawned) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = p->actor.shape.rot.y;
+        float fx = p->actor.world.pos.x + 120.0f * Math_SinS(yaw);
+        float fz = p->actor.world.pos.z + 120.0f * Math_CosS(yaw);
+        Actor* a = Actor_Spawn(&play->actorCtx, play, ACTOR_OBJ_KIBAKO2, fx, p->actor.world.pos.y, fz, 0,
+                               p->actor.shape.rot.y, 0, 0);
+        printf("SOH3D: SPAWNKIBAKO Actor_Spawn(OBJ_KIBAKO2) -> %s\n", a != NULL ? "OK" : "FAILED (object not in scene)");
+        fflush(stdout);
+        spawned = 1;
+    }
+}
+
+// ===========================================================================
+// SoH3D REPL — interactive control of a long-lived headless instance.
+//
+// Tooling-first: instead of the env-flag -> rebuild -> 7-min headless render
+// loop, keep ONE soh.elf running and poke it live over a control FIFO. Iterating
+// on tint, world scale, model selection, spawns and on-demand frame dumps then
+// costs seconds, not a rebuild. Enabled by env SOH3D_REPL=<fifo path>; the C side
+// mkfifo()s it and replies to "<fifo>.out". Drive it with tools/soh3d_repl.py.
+//
+// Commands (one per line):
+//   mul <f>            overall tint brightness          diff <f>  diffuse fraction
+//   tint <diff> <mul>  set both                         enable <0|1>  OoT3D render
+//   scale <name> <f>   live world scale for a model (pot|gs|kibako)
+//   spawn <name>       spawn that actor in front of Link
+//   dump <path.ppm>    capture the current frame to <path> (no exit)
+//   state              report all tunables + the current computed tint
+// ===========================================================================
+
+static SoH3D_ModelEntry* SoH3D_FindModel(const char* name) {
+    s32 i;
+    for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
+        if (strcmp(sModelTable[i].name, name) == 0) {
+            return &sModelTable[i];
+        }
+    }
+    return NULL;
+}
+
+static Actor* SoH3D_SpawnInFront(PlayState* play, s16 actorId, float dist) {
+    Player* p = GET_PLAYER(play);
+    s16 yaw = p->actor.shape.rot.y;
+    float fx = p->actor.world.pos.x + dist * Math_SinS(yaw);
+    float fz = p->actor.world.pos.z + dist * Math_CosS(yaw);
+    return Actor_Spawn(&play->actorCtx, play, actorId, fx, p->actor.world.pos.y, fz, 0, p->actor.shape.rot.y, 0, 0);
+}
+
+static void SoH3D_ReplReply(const char* outPath, const char* fmt, ...) {
+    char msg[512];
+    va_list ap;
+    FILE* f;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+    printf("SOH3D REPL: %s\n", msg);
+    fflush(stdout);
+    f = fopen(outPath, "a");
+    if (f != NULL) {
+        fprintf(f, "%s\n", msg);
+        fclose(f);
+    }
+}
+
+static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
+    char cmd[32];
+    char arg[64];
+    char path[1024];
+    float f1, f2;
+    while (*line == ' ' || *line == '\t' || *line == '\r') {
+        line++;
+    }
+    if (*line == '\0' || *line == '#') {
+        return;
+    }
+    if (sscanf(line, "%31s", cmd) != 1) {
+        return;
+    }
+    if (strcmp(cmd, "mul") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dTintMul = f1;
+        SoH3D_ReplReply(outPath, "mul=%.3f", gSoH3dTintMul);
+    } else if (strcmp(cmd, "diff") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dTintDiff = f1;
+        SoH3D_ReplReply(outPath, "diff=%.3f", gSoH3dTintDiff);
+    } else if (strcmp(cmd, "tint") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        gSoH3dTintDiff = f1;
+        gSoH3dTintMul = f2;
+        SoH3D_ReplReply(outPath, "diff=%.3f mul=%.3f", gSoH3dTintDiff, gSoH3dTintMul);
+    } else if (strcmp(cmd, "enable") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dEnabled = (int)f1;
+        SoH3D_ReplReply(outPath, "enabled=%d", gSoH3dEnabled);
+    } else if (strcmp(cmd, "scale") == 0 && sscanf(line, "%*s %63s %f", arg, &f1) == 2) {
+        SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
+        if (e != NULL) {
+            e->worldScale = f1;
+            SoH3D_ReplReply(outPath, "scale %s=%.4f", e->name, e->worldScale);
+        } else {
+            SoH3D_ReplReply(outPath, "no model '%s'", arg);
+        }
+    } else if (strcmp(cmd, "spawn") == 0 && sscanf(line, "%*s %63s", arg) == 1) {
+        SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
+        if (e != NULL) {
+            Actor* a = SoH3D_SpawnInFront(play, e->actorId, 120.0f);
+            SoH3D_ReplReply(outPath, "spawn %s -> %s", e->name, a != NULL ? "OK" : "FAILED (object not in scene)");
+        } else {
+            SoH3D_ReplReply(outPath, "no model '%s'", arg);
+        }
+    } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
+        strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
+        gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';
+        gSoh3dDumpPending = 1;
+        SoH3D_ReplReply(outPath, "dump -> %s (pending)", gSoh3dDumpPath);
+    } else if (strcmp(cmd, "state") == 0) {
+        u8 tint[3];
+        SoH3D_SceneTint(play, tint);
+        SoH3D_ReplReply(outPath, "enabled=%d diff=%.3f mul=%.3f tint=(%d,%d,%d) scale: pot=%.4f gs=%.4f kibako=%.4f",
+                        SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2],
+                        sModelTable[0].worldScale, sModelTable[1].worldScale, sModelTable[2].worldScale);
+    } else {
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale spawn dump state)", line);
+    }
+}
+
+void SoH3D_ReplPoll(PlayState* play) {
+    static int fd = -2; // -2 uninit, -1 disabled
+    static char outPath[1100];
+    static char buf[8192];
+    static int buflen = 0;
+    char* start;
+    char* nl;
+    ssize_t n;
+    if (fd == -2) {
+        const char* p = getenv("SOH3D_REPL");
+        if (p == NULL || p[0] == '\0') {
+            fd = -1;
+            return;
+        }
+        mkfifo(p, 0666); // ignore EEXIST
+        fd = open(p, O_RDWR | O_NONBLOCK); // O_RDWR: we keep a writer so reads never EOF
+        snprintf(outPath, sizeof(outPath), "%s.out", p);
+        if (fd >= 0) {
+            FILE* f = fopen(outPath, "w");
+            if (f != NULL) {
+                fprintf(f, "SOH3D REPL ready (fifo=%s)\n", p);
+                fclose(f);
+            }
+        }
+    }
+    if (fd < 0) {
+        return;
+    }
+    for (;;) {
+        if (buflen >= (int)sizeof(buf) - 1) {
+            buflen = 0; // overflow guard: drop garbage
+        }
+        n = read(fd, buf + buflen, sizeof(buf) - 1 - buflen);
+        if (n <= 0) {
+            break;
+        }
+        buflen += (int)n;
+    }
+    buf[buflen] = '\0';
+    start = buf;
+    while ((nl = strchr(start, '\n')) != NULL) {
+        *nl = '\0';
+        SoH3D_ReplExec(play, start, outPath);
+        start = nl + 1;
+    }
+    buflen = (int)strlen(start);
+    memmove(buf, start, buflen + 1);
 }

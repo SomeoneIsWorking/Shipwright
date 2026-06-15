@@ -6,6 +6,7 @@
 #include "global.h"
 #include "soh3d_pot_model.h"
 #include "soh3d_gs_model.h"
+#include "soh3d_kibako_model.h"
 
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
@@ -36,6 +37,12 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // 128x64 stone body), each drawn with its own texture in one display list.
 #define SOH3D_GS_WORLD_SCALE 0.13f
 
+// World scale for the OoT3D large wooden crate (Obj_Kibako2). Model is ~600 units
+// wide; calibrated against the N64 large crate via the SOH3D_SPAWNKIBAKO A/B spawn
+// in Gerudo Valley (ENTR 0x117=279). Third object proving the table-driven divert:
+// adding it was one sModelTable[] row + this macro + the generated include.
+#define SOH3D_KIBAKO_WORLD_SCALE 0.10f
+
 // Headless verification: when env SOH3D_WARP is set, boot straight into the
 // debug Select overlay and auto-warp into a scene so pots are reachable without
 // scripting title/file-select input. Entrance defaults to Kakariko Village
@@ -56,5 +63,19 @@ void SoH3D_DebugDrawPot(PlayState* play);
 // loaded (a scene with Gossip Stones, e.g. the default Kakariko warp). No-op
 // otherwise.
 void SoH3D_DebugDrawGs(PlayState* play);
+
+// Verification helper, called each frame from Play_Draw. When env
+// SOH3D_SPAWNKIBAKO=1, spawns one real Obj_Kibako2 (large wooden crate) in front
+// of Link so the actual crate draw path runs (SOH3D=0 N64 crate vs SOH3D=1 OoT3D
+// crate). Needs OBJECT_KIBAKO2 loaded (a scene with large crates, e.g. Gerudo
+// Valley ENTR 0x117). Logs whether the spawn succeeded. No-op otherwise.
+void SoH3D_DebugDrawKibako(PlayState* play);
+
+// Interactive REPL poll, called once per frame from Play_Draw. When env
+// SOH3D_REPL=<fifo path> is set, reads control commands from that FIFO and applies
+// them live (tint, world scale, model spawn, on-demand frame dump) so a single
+// long-lived headless instance can be poked without a rebuild/restart. No-op when
+// SOH3D_REPL is unset. Drive it with tools/soh3d_repl.py.
+void SoH3D_ReplPoll(PlayState* play);
 
 #endif

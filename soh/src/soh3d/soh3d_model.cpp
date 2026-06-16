@@ -388,12 +388,19 @@ bool g_registered = false;
 constexpr float kWarpStep = 100.0f;   // grid spacing (world units)
 constexpr float kWarpReject = 120.0f; // |D| above this = structure, not ground -> hole-fill
 constexpr float kNoFloor = -31000.0f; // floorFn returns <= this when there is no floor
+// Height-aware blend: a vertex at/just above the local ground gets the FULL re-level; a
+// vertex high above it (wall, tree canopy, fence top) fades to NO correction, so structures
+// don't float/sink when the ground shifts. Validated offline (tools/soh3d_warp_proto.py):
+// vs the old unblended warp, floating structure verts dropped 168->10 (Kokiri) and 31->4
+// (Kakariko) with the walkable-ground correction unchanged. Full below H0, zero above H1.
+constexpr float kWarpBlendH0 = 60.0f;
+constexpr float kWarpBlendH1 = 400.0f;
 
 // Topmost-or-nearest upward-facing (floor) triangle Y at (x,z) over a room's draw groups;
 // returns false if no floor covers the point. If hasTarget, picks the floor hit closest
 // to target (isolates the same surface across datasets, avoiding roof-vs-ground mixups).
 static bool meshFloor(const std::vector<SoH3D::CmbDrawGroup>& groups, float x, float z, bool hasTarget,
-                      float target, float* outY) {
+                      float target, float* outY, bool lowest = false) {
     bool found = false;
     float best = 0.0f;
     for (const auto& g : groups) {
@@ -420,7 +427,7 @@ static bool meshFloor(const std::vector<SoH3D::CmbDrawGroup>& groups, float x, f
             if (!found) {
                 best = y;
                 found = true;
-            } else if (hasTarget ? (std::fabs(y - target) < std::fabs(best - target)) : (y > best)) {
+            } else if (lowest ? (y < best) : (hasTarget ? (std::fabs(y - target) < std::fabs(best - target)) : (y > best))) {
                 best = y;
             }
         }
@@ -499,10 +506,38 @@ static void warpRoomMesh(LoadedModel* lm, SoH3D_FloorFn floorFn) {
                cell(ix, iz + 1) * (1 - tx) * tz + cell(ix + 1, iz + 1) * tx * tz;
     };
 
+    // Local-ground grid: the LOWEST OoT3D floor per cell (the walkable ground, not a roof),
+    // for the height-aware blend. kNoFloor where no floor covers the cell.
+    std::vector<float> G((size_t)nx * nz, kNoFloor);
+    for (int j = 0; j < nz; j++)
+        for (int i = 0; i < nx; i++) {
+            float x = minx + i * kWarpStep, z = minz + j * kWarpStep, gy;
+            if (meshFloor(lm->groups, x, z, /*hasTarget=*/false, 0.0f, &gy, /*lowest=*/true))
+                G[(size_t)j * nx + i] = gy;
+        }
+    auto groundAt = [&](float x, float z) -> float {
+        int ix = (int)std::floor((x - minx) / kWarpStep + 0.5f);
+        int iz = (int)std::floor((z - minz) / kWarpStep + 0.5f);
+        ix = ix < 0 ? 0 : (ix >= nx ? nx - 1 : ix);
+        iz = iz < 0 ? 0 : (iz >= nz ? nz - 1 : iz);
+        return G[(size_t)iz * nx + ix];
+    };
+
     for (auto& g : lm->groups)
-        for (auto& v : g.verts)
-            v.pos[1] += sample(v.pos[0], v.pos[2]);
-    fprintf(stderr, "[SoH3D] terrain warp: %dx%d grid, %d ground cells, mesh re-leveled to N64\n", nx, nz, nValid);
+        for (auto& v : g.verts) {
+            float gy = groundAt(v.pos[0], v.pos[2]);
+            float f;
+            if (gy <= kNoFloor) {
+                f = 0.0f; // no ground below this column -> canopy/void: leave it put
+            } else {
+                float h = v.pos[1] - gy;
+                f = h <= kWarpBlendH0 ? 1.0f
+                    : (h >= kWarpBlendH1 ? 0.0f : (kWarpBlendH1 - h) / (kWarpBlendH1 - kWarpBlendH0));
+            }
+            v.pos[1] += sample(v.pos[0], v.pos[2]) * f;
+        }
+    fprintf(stderr, "[SoH3D] terrain warp: %dx%d grid, %d ground cells, height-blended re-level to N64\n",
+            nx, nz, nValid);
 }
 
 } // namespace

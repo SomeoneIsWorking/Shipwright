@@ -40,10 +40,12 @@ struct ModelSpec {
 //   0 = geldwoman (white Gerudo, En_Ge1)
 //   1 = large wooden crate (Obj_Kibako2) — pick the intact box, not the debris CMB
 //   2 = bush (En_Kusa) — the intact bush, not the smaller obj_kusa03 variant
+//   3 = pot (Obj_Tsubo) — the intact pot, not the tubo2_hahen debris CMB
 const ModelSpec kModels[] = {
     { "/actor/zelda_ge1.zar", 0.011f, nullptr },
     { "/actor/zelda_kibako2.zar", 0.10f, "CIkibako_model" },
     { "/actor/zelda_kusa.zar", 0.5f, "obj_kusa01_model" },
+    { "/actor/zelda_tsubo.zar", 0.12f, "tubo2_model" },
 };
 
 // Scene-room models live in a SEPARATE id range so they never collide with the actor

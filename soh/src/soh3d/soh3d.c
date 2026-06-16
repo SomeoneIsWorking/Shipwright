@@ -307,7 +307,7 @@ typedef struct {
 
 // Non-const so the REPL can tune worldScale/groundOffset live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, -1, NULL, 0.0f, NULL },
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL },
     { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL },
     { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL },
     { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL }, // bush (scale tuned live via REPL)

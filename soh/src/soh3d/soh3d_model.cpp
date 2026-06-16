@@ -567,6 +567,18 @@ float SoH3D_AutoModelHeight(int modelId) {
     return bboxHeight(lm->groups);
 }
 
+// Bind-pose local-space minimum Y of a model (its lowest vertex, i.e. the feet). The N64-anim
+// auto path uses groundOffset = -minY so the model's feet land on the actor's world Y (ground)
+// after scaling. Returns 0 if no geometry.
+float SoH3D_AutoModelMinY(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0.0f;
+    float mn = 1e30f;
+    for (const auto& g : lm->groups)
+        for (const auto& v : g.verts) mn = std::min(mn, v.pos[1]);
+    return (mn < 1e29f) ? mn : 0.0f;
+}
+
 // 1 if a loaded auto model is skinned (articulated skeleton -> the auto path leaves it to
 // N64 to avoid a frozen T-pose), else 0. Loads the model lazily; treats a load failure as
 // "skinned" (==skip) so a bad model never auto-replaces.
@@ -574,6 +586,16 @@ int SoH3D_AutoModelSkinned(int modelId) {
     LoadedModel* lm = loadModel(modelId);
     if (!lm || !lm->ok) return 1;
     return lm->skinned ? 1 : 0;
+}
+
+// Number of bones in a loaded model's OoT3D skeleton (0 if none/failed). The N64-anim retarget
+// maps N64 jointTable[i+1] -> OoT3D bone i, so a correct retarget needs the OoT3D bone count to
+// match the actor's N64 limb count; the auto path uses this to refuse mismatched rigs (which
+// would pose giant/malformed) and fall back to N64.
+int SoH3D_AutoModelBoneCount(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) return 0;
+    return (int)lm->cmb->bones().size();
 }
 
 // Render-mesh floor height at world (x,z) for a loaded scene-room model (the warped

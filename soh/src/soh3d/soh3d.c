@@ -77,6 +77,7 @@ static Actor* gSoH3dPendingActor = NULL;
 static int gSoH3dPendingModel = -1;
 static float gSoH3dPendingScale = 1.0f;
 static float gSoH3dPendingGroundOff = 0.0f;
+static int gSoH3dPendingAuto = 0; // 1 = auto-replaced (apply the rig-mismatch guard); 0 = hand-verified table entry
 
 // Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
 // the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
@@ -85,7 +86,9 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum);
 // (keyed by path), and the OoT3D model's local bbox diagonal (for auto-scale).
 int SoH3D_AutoModelId(const char* zarPath);
 float SoH3D_AutoModelHeight(int modelId);
+float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
+int SoH3D_AutoModelBoneCount(int modelId);
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
 static const char* SoH3D_SceneName(PlayState* play);
@@ -594,9 +597,11 @@ static int SoH3D_AutoMode(void) {
 typedef struct {
     float measuredH; // N64 world-space height from the measure pass (0 = none yet)
     float scale;     // derived worldScale (valid when state==2)
+    float groundOff; // model-local groundOffset (= -bind-pose minY) for skinned actors
     int modelId;     // allocated GL model id (0 = not yet allocated; ids are >= 2000)
     signed char state;
-    signed char tries; // measure attempts (cap so a never-drawn actor doesn't loop forever)
+    signed char tries;   // measure attempts (cap so a never-drawn actor doesn't loop forever)
+    signed char skinned; // 1 = articulated -> drive via the generic N64-anim SkelAnime hook
 } SoH3D_AutoEntry;
 static SoH3D_AutoEntry sAuto[ARRAY_COUNT(kSoH3dObjectZars)];
 static int sPendingMeasureKey = -1; // object id whose measure bracket is open this draw
@@ -658,16 +663,33 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
             e->state = 3;
             return 0;
         }
-        // Skinned characters render frozen (no anim) on the auto path, so skip them and
-        // leave the N64 model. Animated replacement via the N64 animation is a separate
-        // effort; calibrated/animated characters go through the explicit sModelTable.
+        // Skinned characters: drive the OoT3D skeleton from the actor's LIVE N64 SkelAnime
+        // joints via the generic SkelAnime hook (same mechanism as the calibrated sModelTable
+        // n64anim entries). Requires SOH3D_N64ANIM; otherwise a frozen bind pose looks like a
+        // T-pose, so skip -> N64. Grezzo mostly preserved the rigs (bone i <-> jointTable[i+1]),
+        // so this broadly works; characters whose rig doesn't correspond will pose wrong (add a
+        // per-objId skip if one shows up).
         if (SoH3D_AutoModelSkinned(e->modelId)) {
-            e->state = 3;
-            return 0;
+            if (!SoH3D_N64AnimEnabled() || !gSoH3dAnimLive) {
+                e->state = 3;
+                return 0;
+            }
+            e->skinned = 1;
+            e->groundOff = -SoH3D_AutoModelMinY(e->modelId); // feet -> actor world Y
         }
     }
     if (e->state == 2) {
-        // Ready: draw the OoT3D model at the measured scale. No anim (static prop).
+        if (e->skinned) {
+            // Defer to the actor's own Draw so the SkelAnime hook retargets the OoT3D skeleton
+            // from the live N64 jointTable (returns 0 -> actor->draw runs; the hook draws it).
+            gSoH3dPendingActor = actor;
+            gSoH3dPendingModel = e->modelId;
+            gSoH3dPendingScale = e->scale;
+            gSoH3dPendingGroundOff = e->groundOff;
+            gSoH3dPendingAuto = 1;
+            return 0;
+        }
+        // Ready static prop: draw the OoT3D model at the measured scale. No anim.
         SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL, NULL);
         return 1;
     }
@@ -678,9 +700,18 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
             e->scale = e->measuredH / modelH;
             e->state = 2;
             if (SoH3D_AutoMode() >= 1) {
-                printf("SOH3D AUTO: obj 0x%x %s -> scale=%.5f (n64h=%.1f modelh=%.1f)\n", objId, zar, e->scale,
-                       e->measuredH, modelH);
+                printf("SOH3D AUTO: obj 0x%x %s -> scale=%.5f (n64h=%.1f modelh=%.1f)%s\n", objId, zar, e->scale,
+                       e->measuredH, modelH, e->skinned ? " [n64anim]" : "");
                 fflush(stdout);
+            }
+            if (e->skinned) {
+                // Defer to the SkelAnime hook (drive the OoT3D skeleton from live N64 joints).
+                gSoH3dPendingActor = actor;
+                gSoH3dPendingModel = e->modelId;
+                gSoH3dPendingScale = e->scale;
+                gSoH3dPendingGroundOff = e->groundOff;
+                gSoH3dPendingAuto = 1;
+                return 0;
             }
             SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL, NULL);
             return 1;
@@ -719,6 +750,7 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
                     gSoH3dPendingModel = sModelTable[i].glModelId;
                     gSoH3dPendingScale = sModelTable[i].worldScale;
                     gSoH3dPendingGroundOff = sModelTable[i].groundOffset;
+                    gSoH3dPendingAuto = 0; // hand-verified entry -> skip the rig-mismatch guard
                     return 0;
                 }
                 if (sModelTable[i].glModelId >= 0) {
@@ -748,6 +780,18 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     }
     if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
         return 0; // no usable pose -> let the N64 skeleton draw
+    }
+    // Auto path: the retarget maps N64 jointTable[i+1] -> OoT3D bone i, so it only poses correctly
+    // when the OoT3D rig matches the N64 skeleton. If the bone count differs the rig doesn't
+    // correspond -> the pose comes out giant/malformed; refuse it and fall back to the N64 model.
+    // (Hand-verified sModelTable entries skip this guard: they're known-good even if a tail/extra
+    // helper bone makes the counts differ.)
+    if (gSoH3dPendingAuto) {
+        int bones = SoH3D_AutoModelBoneCount(gSoH3dPendingModel);
+        if (bones != skelAnime->limbCount) {
+            gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
+            return 0;
+        }
     }
     // Retarget the OoT3D skeleton from the live N64 jointTable (jointTable[0] is the root
     // translation, so the per-limb rotations start at [1]). SoH3D_UpdateAnimN64 falls back to

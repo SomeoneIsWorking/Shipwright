@@ -310,7 +310,14 @@ static void SoH3D_DrawRoomGL(PlayState* play, int modelId) {
 int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
     const char* sceneName;
     int modelId;
-    if (!SoH3D_Enabled() || room == NULL) {
+    // Debug isolation: SOH3D_SCENE=0 disables ONLY the scene/room divert (actors still
+    // divert), so a crash can be bisected room-divert vs actor-divert without a rebuild.
+    static int sceneDivert = -1;
+    if (sceneDivert < 0) {
+        const char* v = getenv("SOH3D_SCENE");
+        sceneDivert = (v != NULL && v[0] != '\0') ? atoi(v) : 1; // 0=off,1=draw,2=skip-only
+    }
+    if (sceneDivert == 0 || !SoH3D_Enabled() || room == NULL) {
         return 0;
     }
     sceneName = SoH3D_SceneName(play);
@@ -321,7 +328,11 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
     if (modelId < 0) {
         return 0;
     }
-    SoH3D_DrawRoomGL(play, modelId);
+    // Debug isolation: SOH3D_SCENE=2 skips the N64 room mesh but draws NOTHING (no GL),
+    // to bisect "skipping the N64 room corrupts state" vs "our GL draw corrupts state".
+    if (sceneDivert != 2) {
+        SoH3D_DrawRoomGL(play, modelId);
+    }
     return 1; // drew the OoT3D room -> caller skips the N64 mesh
 }
 

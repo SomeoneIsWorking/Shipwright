@@ -30,13 +30,18 @@ namespace {
 struct ModelSpec {
     const char* zarPath;
     float worldScale;
+    const char* cmbName; // substring to select the .cmb inside the ZAR (nullptr = first one).
+                         // Needed when a ZAR holds several CMBs (e.g. a main model + a debris
+                         // "hahen" variant) and firstWithSuffix would grab the wrong one.
 };
 
 // Registry keyed by modelId (the index). The actor->modelId mapping lives in
 // soh3d.c (which has the ACTOR_* ids); this stays pure-C++ / engine-agnostic.
 //   0 = geldwoman (white Gerudo, En_Ge1)
+//   1 = large wooden crate (Obj_Kibako2) — pick the intact box, not the debris CMB
 const ModelSpec kModels[] = {
-    { "/actor/zelda_ge1.zar", 0.011f },
+    { "/actor/zelda_ge1.zar", 0.011f, nullptr },
+    { "/actor/zelda_kibako2.zar", 0.10f, "CIkibako_model" },
 };
 
 // Scene-room models live in a SEPARATE id range so they never collide with the actor
@@ -166,7 +171,17 @@ static void loadActorModel(int modelId, LoadedModel* out) {
     if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] zar not found: %s\n", kModels[modelId].zarPath); return; }
     out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
     if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] Zar: %s\n", out->zar->error().c_str()); return; }
-    const SoH3D::ZarFile* cmbf = out->zar->firstWithSuffix(".cmb");
+    const SoH3D::ZarFile* cmbf = nullptr;
+    const char* want = kModels[modelId].cmbName;
+    if (want) {
+        for (const auto& f : out->zar->files())
+            if (f.name.find(want) != std::string::npos && f.name.size() >= 4 &&
+                f.name.compare(f.name.size() - 4, 4, ".cmb") == 0) {
+                cmbf = &f;
+                break;
+            }
+    }
+    if (!cmbf) cmbf = out->zar->firstWithSuffix(".cmb"); // fallback: single-CMB ZARs
     if (!cmbf) { fprintf(stderr, "[SoH3D] no .cmb in %s\n", kModels[modelId].zarPath); return; }
     out->cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*cmbf));
     if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", out->cmb->error().c_str()); return; }

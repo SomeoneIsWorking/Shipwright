@@ -66,6 +66,17 @@ void SoH3D_UpdateAnimN64(int modelId, const s16* jointRots, int rotCount);
 // animations onto the OoT3D skeleton) instead of a CSAB. Env SOH3D_N64ANIM (default OFF —
 // WIP, see SoH3D_N64AnimEnabled) + REPL `n64anim`. The CSAB path stays available for A/B.
 int gSoH3dN64Anim = -1;
+
+// N64-anim deferral state. When SoH3D_TryDrawActor sees an n64anim-flagged actor (and
+// SOH3D_N64ANIM is on) it records the actor + its OoT3D model here and returns 0, letting
+// the actor's own Draw run; the SkelAnime_Draw hook (SoH3D_SkelAnimeDraw) then retargets the
+// OoT3D model from the live jointTable and skips the N64 limb draw. Cleared in
+// SoH3D_AfterActorDraw. gSoH3dPendingModel = -1 means no pending replacement this actor.
+static Actor* gSoH3dPendingActor = NULL;
+static int gSoH3dPendingModel = -1;
+static float gSoH3dPendingScale = 1.0f;
+static float gSoH3dPendingGroundOff = 0.0f;
+
 // Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
 // the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
 int SoH3D_RoomModelId(const char* sceneName, int roomNum);
@@ -245,12 +256,33 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current MP_matrix
 // — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
 // N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
+// Emit the OoT3D model draw at an actor's world position/yaw/scale (+ground offset) into
+// POLY_OPA. Assumes the model's GPU pose (skin matrices) was already set this frame (via
+// SoH3D_UpdateAnim or SoH3D_UpdateAnimN64). Shared by the table/auto draw path and the
+// generic N64-anim SkelAnime hook.
+static void SoH3D_EmitModelDraw(PlayState* play, int modelId, Actor* actor, float worldScale,
+                                float groundOffset) {
+    u8 tint[3];
+    OPEN_DISPS(play->state.gfxCtx);
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
+    if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    // Ground offset: applied innermost (model space, pre-scale) so it scales with
+    // worldScale and brings the model's feet onto the actor's ground pos.
+    if (groundOffset != 0.0f) Matrix_Translate(0.0f, groundOffset, 0.0f, MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    SoH3D_SceneTint(play, tint);
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale,
                               const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim,
                               SoH3D_JointResolver resolveJoints) {
-    u8 tint[3];
-    OPEN_DISPS(play->state.gfxCtx);
-
     SoH3D_EnsureModelProvider();
     // N64-animation port: drive the OoT3D skeleton straight from the actor's live N64
     // SkelAnime joints (the pose the game logic computed this frame), so the replacement
@@ -290,21 +322,7 @@ static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float 
         *frame += gSoH3dAnimRate;
     }
 draw:
-    Gfx_SetupDL_25Opa(play->state.gfxCtx);
-    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
-    Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
-    if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    // Ground offset: applied innermost (model space, pre-scale) so it scales with
-    // worldScale and brings the model's feet onto the actor's ground pos.
-    if (groundOffset != 0.0f) Matrix_Translate(0.0f, groundOffset, 0.0f, MTXMODE_APPLY);
-    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
-    SoH3D_SceneTint(play, tint);
-    gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
-
-    CLOSE_DISPS(play->state.gfxCtx);
+    SoH3D_EmitModelDraw(play, modelId, actor, worldScale, groundOffset);
 }
 
 // Per-actor OoT3D model table. Maps an N64 actor id to the OoT3D model dlist that
@@ -366,19 +384,23 @@ typedef struct {
                         // the actor's ground pos. Pre-scale => scales with worldScale, so
                         // re-tuning scale does not desync grounding. REPL `yoff <name> <f>`.
     SoH3D_AnimResolver resolveAnim; // NULL = no live anim state (use `anim` + free frame)
-    SoH3D_JointResolver resolveJoints; // NULL = no N64-joint port (use CSAB path). When set
-                                       // and SOH3D_N64ANIM is on, drives the OoT3D skeleton
-                                       // from the actor's live N64 SkelAnime pose.
+    SoH3D_JointResolver resolveJoints; // NULL = no N64-joint port (use CSAB path). Legacy
+                                       // per-actor accessor; superseded by `n64anim` below.
+    int n64anim; // 1 = drive this model's OoT3D skeleton from the actor's LIVE N64 SkelAnime
+                 // joints via the generic SkelAnime_Draw hook (SoH3D_SkelAnimeDraw) when
+                 // SOH3D_N64ANIM is on — no per-actor jointTable accessor needed. The OoT3D
+                 // rig must correspond to the N64 one (bone i <- jointTable[i+1]); verify per
+                 // actor before setting. 0 = use the CSAB path (resolveAnim).
 } SoH3D_ModelEntry;
 
 // Non-const so the REPL can tune worldScale/groundOffset live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL, NULL },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL, NULL },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL, NULL },
-    { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL, NULL }, // bush (scale tuned live via REPL)
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL, NULL, 0 },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL, NULL, 0 },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL, NULL, 0 },
+    { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL, NULL, 0 }, // bush (scale tuned live via REPL)
     { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait",
-      SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1, SoH3D_Joints_EnGe1 },
+      SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1, SoH3D_Joints_EnGe1, 1 },
 };
 
 // ===========================================================================
@@ -523,6 +545,17 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     if (SoH3D_AutoMode() != 2) {
         for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
             if (sModelTable[i].actorId == actor->id) {
+                // N64-anim path: defer to the actor's own Draw so the generic SkelAnime hook
+                // (SoH3D_SkelAnimeDraw) can grab the live jointTable and retarget the OoT3D
+                // skeleton. Record the pending replacement; return 0 so actor->draw runs.
+                if (sModelTable[i].glModelId >= 0 && sModelTable[i].n64anim && SoH3D_N64AnimEnabled() &&
+                    gSoH3dAnimLive) {
+                    gSoH3dPendingActor = actor;
+                    gSoH3dPendingModel = sModelTable[i].glModelId;
+                    gSoH3dPendingScale = sModelTable[i].worldScale;
+                    gSoH3dPendingGroundOff = sModelTable[i].groundOffset;
+                    return 0;
+                }
                 if (sModelTable[i].glModelId >= 0) {
                     SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
                                       sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim,
@@ -540,11 +573,35 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     return 0;
 }
 
+// Generic N64-anim SkelAnime hook (declared in soh3d.h, called from z_skelanime.c's
+// SkelAnime_DrawSkeletonOpa / DrawSkeleton2). If the actor currently being drawn was deferred
+// for N64-anim replacement (gSoH3dPending* set by SoH3D_TryDrawActor), retarget its OoT3D
+// model from this live jointTable and draw it, returning 1 so the N64 limbs are skipped.
+int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
+    if (gSoH3dPendingModel < 0 || gSoH3dPendingActor == NULL) {
+        return 0; // no pending replacement for the current actor
+    }
+    if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
+        return 0; // no usable pose -> let the N64 skeleton draw
+    }
+    // Retarget the OoT3D skeleton from the live N64 jointTable (jointTable[0] is the root
+    // translation, so the per-limb rotations start at [1]). SoH3D_UpdateAnimN64 falls back to
+    // the CMB rest rotation for any OoT3D bone beyond limbCount, so a shorter N64 rig is safe.
+    SoH3D_UpdateAnimN64(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount);
+    SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
+    gSoH3dPendingModel = -1; // drawn once this actor; don't re-draw on a second SkelAnime call
+    return 1;
+}
+
 void SoH3D_AfterActorDraw(PlayState* play, Actor* actor) {
     if (sPendingMeasureKey >= 0) {
         SoH3D_EmitMeasure(play, sPendingMeasureKey, /*begin=*/0);
         sPendingMeasureKey = -1;
     }
+    // Clear any N64-anim deferral for this actor (whether or not the SkelAnime hook fired —
+    // if it didn't, the actor's N64 model drew as the fallback).
+    gSoH3dPendingActor = NULL;
+    gSoH3dPendingModel = -1;
 }
 
 int SoH3D_Enabled(void) {

@@ -5,6 +5,7 @@
 #include <assert.h>
 #include "soh/ResourceManagerHelpers.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh3d/soh3d.h"
 
 #define ANIM_INTERP 1
 
@@ -301,6 +302,11 @@ void SkelAnime_DrawLimbOpa(PlayState* play, s32 limbIndex, void** skeleton, Vec3
 // function...
 void SkelAnime_DrawSkeletonOpa(PlayState* play, SkelAnime* skelAnime, OverrideLimbDrawOpa overrideLimbDraw,
                                PostLimbDrawOpa postLimbDraw, void* arg) {
+    // SoH3D: if this actor is registered for N64-anim replacement, draw the OoT3D model
+    // driven by these live N64 joints and skip the N64 limb draw.
+    if (SoH3D_SkelAnimeDraw(play, skelAnime)) {
+        return;
+    }
     if (skelAnime->skeletonHeader->skeletonType == SKELANIME_TYPE_NORMAL) {
         SkelAnime_DrawOpa(play, skelAnime->skeleton, skelAnime->jointTable, overrideLimbDraw, postLimbDraw, arg);
     } else if (skelAnime->skeletonHeader->skeletonType == SKELANIME_TYPE_FLEX) {
@@ -312,6 +318,11 @@ void SkelAnime_DrawSkeletonOpa(PlayState* play, SkelAnime* skelAnime, OverrideLi
 
 Gfx* SkelAnime_DrawSkeleton2(PlayState* play, SkelAnime* skelAnime, OverrideLimbDrawOpa overrideLimbDraw,
                              PostLimbDrawOpa postLimbDraw, void* arg, Gfx* gfx) {
+    // SoH3D: N64-anim replacement (see SkelAnime_DrawSkeletonOpa). Skip the N64 limb draw if
+    // the OoT3D model was drawn for this actor.
+    if (SoH3D_SkelAnimeDraw(play, skelAnime)) {
+        return gfx;
+    }
     if (skelAnime->skeletonHeader->skeletonType == SKELANIME_TYPE_NORMAL) {
         return SkelAnime_Draw(play, skelAnime->skeleton, skelAnime->jointTable, overrideLimbDraw, postLimbDraw, arg,
                               gfx);

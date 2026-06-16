@@ -26,6 +26,15 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
 // a measurement was opened for this actor.
 void SoH3D_AfterActorDraw(PlayState* play, Actor* actor);
 
+// N64-animation port hook, called at the top of the common SkelAnime draw choke points
+// (SkelAnime_DrawSkeletonOpa / SkelAnime_DrawSkeleton2). When the actor currently being
+// drawn is registered for N64-anim replacement (sModelTable n64anim flag, enabled via
+// SOH3D_N64ANIM) this retargets the OoT3D model's skeleton from the live N64 jointTable and
+// draws it, returning 1 so the caller SKIPS the N64 limb draw. Returns 0 otherwise (the N64
+// skeleton draws as normal — also the fallback for actors whose draw path isn't hooked).
+// This is what makes N64-anim replacement generic: no per-actor jointTable accessor needed.
+int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime);
+
 // Draws an OoT3D model display list at an actor's world position/yaw with an
 // explicit world scale (OoT3D model units -> N64 world units). Builds its own
 // MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so

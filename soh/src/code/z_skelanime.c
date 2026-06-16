@@ -346,6 +346,11 @@ void SkelAnime_DrawOpa(PlayState* play, void** skeleton, Vec3s* jointTable, Over
     Vec3f pos;
     Vec3s rot;
 
+    // SoH3D: retarget at this choke point too (actors that call DrawOpa directly).
+    if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
+        return;
+    }
+
     if (skeleton == NULL) {
         osSyncPrintf(VT_FGCOL(RED));
         osSyncPrintf("Si2_draw():skelがNULLです。\n"); // "skel is NULL."
@@ -458,7 +463,15 @@ void SkelAnime_DrawFlexOpa(PlayState* play, void** skeleton, Vec3s* jointTable, 
     Gfx* limbDList;
     Vec3f pos;
     Vec3s rot;
-    Mtx* mtx = Graph_Alloc(play->state.gfxCtx, dListCount * sizeof(Mtx));
+    Mtx* mtx;
+
+    // SoH3D: many actors call this directly (no SkelAnime* at the DrawSkeletonOpa choke point);
+    // retarget here too so they get OoT3D replacement. No-op when nothing is pending.
+    if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
+        return;
+    }
+
+    mtx = Graph_Alloc(play->state.gfxCtx, dListCount * sizeof(Mtx));
 
     if (skeleton == NULL) {
         osSyncPrintf(VT_FGCOL(RED));
@@ -619,6 +632,11 @@ Gfx* SkelAnime_Draw(PlayState* play, void** skeleton, Vec3s* jointTable, Overrid
     Vec3f pos;
     Vec3s rot;
 
+    // SoH3D: retarget at this choke point too (non-flex gfx-returning draw).
+    if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
+        return gfx;
+    }
+
     if (skeleton == NULL) {
         osSyncPrintf(VT_FGCOL(RED));
         // "skel is NULL. Returns NULL."
@@ -726,7 +744,15 @@ Gfx* SkelAnime_DrawFlex(PlayState* play, void** skeleton, Vec3s* jointTable, s32
     Gfx* limbDList;
     Vec3f pos;
     Vec3s rot;
-    Mtx* mtx = Graph_Alloc(play->state.gfxCtx, dListCount * sizeof(*mtx));
+    Mtx* mtx;
+
+    // SoH3D: retarget here too (func_80034BA0/CC4 and DrawSkeleton2 route through this). The
+    // OoT3D draw is emitted into POLY_OPA; return gfx unchanged so the N64 limbs are skipped.
+    if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
+        return gfx;
+    }
+
+    mtx = Graph_Alloc(play->state.gfxCtx, dListCount * sizeof(*mtx));
 
     if (skeleton == NULL) {
         osSyncPrintf(VT_FGCOL(RED));

@@ -812,11 +812,11 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
 // are out of bounds (Boj: limbCount=16 but only limbs 0..14 are reachable) — blind indexing
 // reads OOB and crashes. Bounded by limbCount visits; null/out-of-range indices are skipped.
 typedef void (*SoH3D_LimbCb)(int limbIndex, StandardLimb* limb, void* ud);
-static void SoH3D_WalkN64Skeleton(SkelAnime* sk, SoH3D_LimbCb cb, void* ud) {
-    if (sk == NULL || sk->skeleton == NULL || sk->limbCount <= 0) {
+static void SoH3D_WalkN64Skeleton(void** skeleton, int limbCap, SoH3D_LimbCb cb, void* ud) {
+    if (skeleton == NULL || limbCap <= 0) {
         return;
     }
-    StandardLimb* root = (StandardLimb*)SEGMENTED_TO_VIRTUAL(sk->skeleton[0]);
+    StandardLimb* root = (StandardLimb*)SEGMENTED_TO_VIRTUAL(skeleton[0]);
     if (root == NULL || root->child == LIMB_DONE) {
         return;
     }
@@ -824,12 +824,12 @@ static void SoH3D_WalkN64Skeleton(SkelAnime* sk, SoH3D_LimbCb cb, void* ud) {
     int sp = 0;
     int visited = 0;
     stack[sp++] = root->child;
-    while (sp > 0 && visited <= sk->limbCount) {
+    while (sp > 0 && visited <= limbCap) {
         int idx = stack[--sp];
-        if (idx < 0 || idx >= sk->limbCount) {
+        if (idx < 0 || idx >= limbCap) {
             continue;
         }
-        StandardLimb* lb = (StandardLimb*)SEGMENTED_TO_VIRTUAL(sk->skeleton[idx]);
+        StandardLimb* lb = (StandardLimb*)SEGMENTED_TO_VIRTUAL(skeleton[idx]);
         if (lb == NULL) {
             continue;
         }
@@ -852,34 +852,39 @@ static void SoH3D_AccumBoneLen(int limbIndex, StandardLimb* lb, void* ud) {
 
 // Σ of N64 bone lengths (|jointPos| of every non-root reachable limb) — the rotation-invariant
 // N64 skeleton size, for the rest-pose scale derivation. See SoH3D_AutoModelBoneLenSum.
-static float SoH3D_N64SkelBoneLenSum(SkelAnime* sk) {
+static float SoH3D_N64SkelBoneLenSum(void** skeleton, int limbCap) {
     float sum = 0.0f;
-    SoH3D_WalkN64Skeleton(sk, SoH3D_AccumBoneLen, &sum);
+    SoH3D_WalkN64Skeleton(skeleton, limbCap, SoH3D_AccumBoneLen, &sum);
     return sum;
 }
 
+static void SoH3D_MaxLimbCb(int limbIndex, StandardLimb* lb, void* ud) {
+    (void)lb;
+    if (limbIndex > *(int*)ud) *(int*)ud = limbIndex;
+}
+
+// Derive a usable limbCount for a raw skeleton (no SkelAnime handy): the highest reachable limb
+// index + 1, so jointTable[limb+1] indexing stays in bounds. Capped at 64.
+static int SoH3D_CountN64Limbs(void** skeleton) {
+    int maxIdx = 0;
+    SoH3D_WalkN64Skeleton(skeleton, 64, SoH3D_MaxLimbCb, &maxIdx);
+    return maxIdx + 1;
+}
+
 static void SoH3D_DumpLimbCb(int limbIndex, StandardLimb* lb, void* ud) {
-    SkelAnime* sk = (SkelAnime*)ud;
-    Vec3s rot = sk->jointTable[limbIndex + 1]; // reachable limb -> jointTable slot is valid
+    Vec3s* jointTable = (Vec3s*)ud;
+    Vec3s rot = jointTable[limbIndex + 1]; // reachable limb -> jointTable slot is valid
     fprintf(stderr, "[SKELDUMP] N64 limb=%d jointPos=(%d,%d,%d) child=%d sibling=%d rot=(%d,%d,%d)\n", limbIndex,
             lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling, rot.x, rot.y, rot.z);
 }
 
-// Generic N64-anim SkelAnime hook (declared in soh3d.h, called from z_skelanime.c's
-// SkelAnime_DrawSkeletonOpa / DrawSkeleton2). If the actor currently being drawn was deferred
-// for N64-anim replacement (gSoH3dPending* set by SoH3D_TryDrawActor), retarget its OoT3D
-// model from this live jointTable and draw it, returning 1 so the N64 limbs are skipped.
-int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
-    if (gSoH3dPendingModel < 0 || gSoH3dPendingActor == NULL) {
-        return 0; // no pending replacement for the current actor
-    }
-    if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
-        return 0; // no usable pose -> let the N64 skeleton draw
-    }
-    // ORACLE DUMP (SOH3D_SKELDUMP=1): print the live N64 skeleton (rest jointPos hierarchy +
-    // current rotations) and the OoT3D skeleton for this actor ONCE per model, so the
-    // programmatic scale + bone-correspondence can be designed/verified offline. Fires before
-    // the rig-mismatch guard so broken rigs (roofman/soldier) get dumped too. See PROGRESS.
+// Core N64-anim retarget: given the live N64 skeleton + jointTable + limbCount for the actor
+// deferred for replacement (gSoH3dPending*), retarget its OoT3D model and draw it; return 1 so
+// the N64 limbs are skipped. Shared by the SkelAnime* wrapper and the raw (skeleton,jointTable)
+// wrapper so all the common draw choke points get coverage.
+static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable, int limbCount) {
+    // ORACLE DUMP (SOH3D_SKELDUMP=1): print the live N64 skeleton + the OoT3D skeleton once per
+    // model, for offline analysis. Tree walk is OOB-safe.
     {
         static int skeldump = -1;
         if (skeldump < 0) {
@@ -899,26 +904,20 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
                 dumped[nDumped++] = gSoH3dPendingModel;
                 Vec3f sc = gSoH3dPendingActor->scale;
                 fprintf(stderr, "[SKELDUMP] N64 actor=0x%x model=%d limbCount=%d actorScale=(%.5f,%.5f,%.5f)\n",
-                        gSoH3dPendingActor->id, gSoH3dPendingModel, skelAnime->limbCount, sc.x, sc.y, sc.z);
-                SoH3D_WalkN64Skeleton(skelAnime, SoH3D_DumpLimbCb, skelAnime); // tree walk (OOB-safe)
+                        gSoH3dPendingActor->id, gSoH3dPendingModel, limbCount, sc.x, sc.y, sc.z);
+                SoH3D_WalkN64Skeleton(skeleton, limbCount, SoH3D_DumpLimbCb, jointTable);
                 fflush(stderr);
                 SoH3D_DumpModelBones(gSoH3dPendingModel);
             }
         }
     }
-    // Auto path: the retarget maps N64 jointTable[i+1] -> OoT3D bone i, so it only poses correctly
-    // when the OoT3D rig matches the N64 skeleton. If the bone count differs the rig doesn't
-    // correspond -> the pose comes out giant/malformed; refuse it and fall back to the N64 model.
-    // (Hand-verified sModelTable entries skip this guard: they're known-good even if a tail/extra
-    // helper bone makes the counts differ.)
     const SoH3DBoneMap* bm = gSoH3dPendingBoneMap;
     if (gSoH3dPendingAuto) {
         int bones = SoH3D_AutoModelBoneCount(gSoH3dPendingModel);
         // With a precomputed map the bone/limb counts legitimately differ (OoT3D adds root/
         // reorient bones), so the map handles correspondence. WITHOUT a map we fall back to the
-        // identity assumption (bone i <- limb i), which is only valid when the counts match;
-        // otherwise skip to N64 to avoid a malformed pose.
-        if (bm == NULL && bones != skelAnime->limbCount) {
+        // identity assumption (bone i <- limb i), valid only when the counts match; else skip.
+        if (bm == NULL && bones != limbCount) {
             static int loggedSkip[64];
             static int nSkip = 0;
             int seen = 0;
@@ -927,7 +926,7 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
             if (!seen && nSkip < (int)ARRAY_COUNT(loggedSkip)) {
                 loggedSkip[nSkip++] = gSoH3dPendingModel;
                 printf("SOH3D RETARGET: model %d SKIP -> N64 (no map; oot3d bones=%d != n64 limbCount=%d)\n",
-                       gSoH3dPendingModel, bones, skelAnime->limbCount);
+                       gSoH3dPendingModel, bones, limbCount);
                 fflush(stdout);
             }
             gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
@@ -943,7 +942,7 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
             if (!seen && nDraw < (int)ARRAY_COUNT(loggedDraw)) {
                 loggedDraw[nDraw++] = gSoH3dPendingModel;
                 printf("SOH3D RETARGET: model %d DRAW OoT3D %s (bones=%d limbCount=%d)\n", gSoH3dPendingModel,
-                       bm ? "[mapped]" : "[identity]", bones, skelAnime->limbCount);
+                       bm ? "[mapped]" : "[identity]", bones, limbCount);
                 fflush(stdout);
             }
         }
@@ -952,26 +951,51 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
         if (bm != NULL) {
             gSoH3dPendingScale = gSoH3dPendingActor->scale.x * bm->scaleRatio;
         } else {
-            float n64sum = SoH3D_N64SkelBoneLenSum(skelAnime);
+            float n64sum = SoH3D_N64SkelBoneLenSum(skeleton, limbCount);
             float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
             if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
                 gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
             }
         }
     }
-    // Retarget the OoT3D skeleton from the live N64 jointTable (jointTable[0] is the root
-    // translation, so per-limb rotations start at [1]). With a precomputed map, OoT3D bone i takes
-    // N64 limb bm->boneToLimb[i]; without one, identity (bone i <- limb i).
     if (bm != NULL) {
-        SoH3D_UpdateAnimN64Mapped(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount,
-                                  bm->boneToLimb, bm->boneCount);
+        SoH3D_UpdateAnimN64Mapped(gSoH3dPendingModel, (const s16*)&jointTable[1], limbCount, bm->boneToLimb,
+                                  bm->boneCount);
     } else {
-        SoH3D_UpdateAnimN64(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount);
+        SoH3D_UpdateAnimN64(gSoH3dPendingModel, (const s16*)&jointTable[1], limbCount);
     }
     SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
     gSoH3dPendingModel = -1; // drawn once this actor; don't re-draw on a second SkelAnime call
     gSoH3dPendingBoneMap = NULL;
     return 1;
+}
+
+// Generic N64-anim hook (declared in soh3d.h). Two entry points so ALL the common draw choke
+// points are covered: this one takes a SkelAnime* (SkelAnime_DrawSkeletonOpa/DrawSkeleton2 and
+// func_80034BA0/CC4), and SoH3D_SkelAnimeDrawRaw takes the raw skeleton+jointTable
+// (SkelAnime_DrawFlexOpa/DrawOpa, which many actors call directly without a SkelAnime*).
+int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
+    if (gSoH3dPendingModel < 0 || gSoH3dPendingActor == NULL) {
+        return 0; // no pending replacement for the current actor
+    }
+    if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
+        return 0; // no usable pose -> let the N64 skeleton draw
+    }
+    return SoH3D_DoRetarget(play, skelAnime->skeleton, skelAnime->jointTable, skelAnime->limbCount);
+}
+
+int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable) {
+    if (gSoH3dPendingModel < 0 || gSoH3dPendingActor == NULL) {
+        return 0; // no pending replacement -> cheap early out (this fires for every limbed draw)
+    }
+    if (skeleton == NULL || jointTable == NULL) {
+        return 0;
+    }
+    int limbCount = SoH3D_CountN64Limbs(skeleton);
+    if (limbCount <= 0) {
+        return 0;
+    }
+    return SoH3D_DoRetarget(play, skeleton, jointTable, limbCount);
 }
 
 void SoH3D_AfterActorDraw(PlayState* play, Actor* actor) {

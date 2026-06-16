@@ -35,6 +35,12 @@ void SoH3D_AfterActorDraw(PlayState* play, Actor* actor);
 // This is what makes N64-anim replacement generic: no per-actor jointTable accessor needed.
 int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime);
 
+// Raw variant of the N64-anim hook for draw choke points that don't have a SkelAnime* on hand
+// (SkelAnime_DrawFlexOpa / SkelAnime_DrawOpa, called directly by many actors). Same effect as
+// SoH3D_SkelAnimeDraw; derives limbCount from the skeleton tree. Returns 1 if it drew the OoT3D
+// model (caller skips the N64 limbs).
+int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable);
+
 // Draws an OoT3D model display list at an actor's world position/yaw with an
 // explicit world scale (OoT3D model units -> N64 world units). Builds its own
 // MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so

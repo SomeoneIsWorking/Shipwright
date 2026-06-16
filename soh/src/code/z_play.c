@@ -1567,6 +1567,11 @@ void Play_Draw(PlayState* play) {
             func_800315AC(play, &play->actorCtx);
         }
 
+        // SoH3D: all 3D actors are drawn; emit the render-pass marker so the OoT3D content
+        // collected this frame (rooms + replaced actors) is drawn in one GL-state-bracketed
+        // pass, after Fast3D's opaque 3D and before the 2D/UI pass.
+        SoH3D_EmitRenderPass(play);
+
         if ((HREG(80) != 10) || (HREG(86) != 0)) {
             if (!play->envCtx.sunMoonDisabled) {
                 sp21C.x = play->view.eye.x + play->envCtx.sunPos.x;
@@ -1734,6 +1739,9 @@ void Play_Main(GameState* thisx) {
     // SoH3D: poll the REPL command FIFO here (not in Play_Draw) so it stays
     // responsive even when Play_Draw early-outs via a transition `goto`.
     SoH3D_ReplPoll(play);
+    // SoH3D: clear any draws left collected from a prior frame before this frame's display
+    // list is built (the render pass that drains them is emitted after the actor draw-all).
+    SoH3D_FrameBegin();
 
     PLAY_LOG(4583);
 

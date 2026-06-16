@@ -598,6 +598,45 @@ int SoH3D_AutoModelBoneCount(int modelId) {
     return (int)lm->cmb->bones().size();
 }
 
+// ORACLE DUMP (gated by the caller): print the OoT3D model's skeleton — per-bone rest
+// translation/rotation/scale + parent + world-space rest position (FK), plus mesh height and
+// the world rest extent (bone span). Used offline to design the programmatic N64<->OoT3D scale
+// and bone-correspondence (see PROGRESS "replace ALL characters"). stderr, parseable.
+void SoH3D_DumpModelBones(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) {
+        fprintf(stderr, "[SKELDUMP] OOT3D model %d: no cmb\n", modelId);
+        return;
+    }
+    const auto& bones = lm->cmb->bones();
+    const auto& bm = lm->cmb->boneMatrices();
+    float minY = 1e30f, maxY = -1e30f;
+    for (const auto& bn : bones) {
+        if (bn.id >= 0 && (size_t)bn.id < bm.size()) {
+            float wy = bm[bn.id][7];
+            minY = std::min(minY, wy);
+            maxY = std::max(maxY, wy);
+        }
+    }
+    float boneSpanY = (minY <= maxY) ? (maxY - minY) : 0.0f;
+    fprintf(stderr, "[SKELDUMP] OOT3D model %d: %zu bones meshH=%.2f boneSpanY=%.2f\n", modelId, bones.size(),
+            bboxHeight(lm->groups), boneSpanY);
+    for (const auto& bn : bones) {
+        float wx = 0, wy = 0, wz = 0;
+        if (bn.id >= 0 && (size_t)bn.id < bm.size()) {
+            wx = bm[bn.id][3];
+            wy = bm[bn.id][7];
+            wz = bm[bn.id][11];
+        }
+        fprintf(stderr,
+                "[SKELDUMP] OOT3D b id=%d parent=%d trans=(%.3f,%.3f,%.3f) rot=(%.4f,%.4f,%.4f) "
+                "scale=(%.3f,%.3f,%.3f) world=(%.2f,%.2f,%.2f)\n",
+                bn.id, bn.parent, bn.trans[0], bn.trans[1], bn.trans[2], bn.rot[0], bn.rot[1], bn.rot[2],
+                bn.scale[0], bn.scale[1], bn.scale[2], wx, wy, wz);
+    }
+    fflush(stderr);
+}
+
 // Render-mesh floor height at world (x,z) for a loaded scene-room model (the warped
 // geometry, since the warp runs in-place). Returns 0 and leaves *outY untouched if no
 // floor covers the point or the model is not a loaded scene room. For verifying that the

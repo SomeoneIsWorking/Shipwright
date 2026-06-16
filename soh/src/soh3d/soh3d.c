@@ -57,6 +57,7 @@ static struct {
 // flagged with glModelId>=0 in sModelTable render through this PC-native path
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
+void SoH3D_GL_FrameBegin(void); // drop any SoH3D draws left unrendered from a prior frame
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 // Retarget a live N64 SkelAnime pose onto the OoT3D skeleton (GPU skinning). jointRots =
 // &jointTable[1] (per-limb binang Vec3s; root translation jointTable[0] is skipped),
@@ -89,6 +90,7 @@ float SoH3D_AutoModelHeight(int modelId);
 float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
+void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
 static const char* SoH3D_SceneName(PlayState* play);
@@ -781,6 +783,47 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
         return 0; // no usable pose -> let the N64 skeleton draw
     }
+    // ORACLE DUMP (SOH3D_SKELDUMP=1): print the live N64 skeleton (rest jointPos hierarchy +
+    // current rotations) and the OoT3D skeleton for this actor ONCE per model, so the
+    // programmatic scale + bone-correspondence can be designed/verified offline. Fires before
+    // the rig-mismatch guard so broken rigs (roofman/soldier) get dumped too. See PROGRESS.
+    {
+        static int skeldump = -1;
+        if (skeldump < 0) {
+            const char* v = getenv("SOH3D_SKELDUMP");
+            skeldump = (v != NULL && v[0] == '1') ? 1 : 0;
+        }
+        if (skeldump) {
+            static int dumped[64];
+            static int nDumped = 0;
+            int already = 0;
+            for (int d = 0; d < nDumped; d++)
+                if (dumped[d] == gSoH3dPendingModel) {
+                    already = 1;
+                    break;
+                }
+            if (!already && nDumped < (int)ARRAY_COUNT(dumped)) {
+                dumped[nDumped++] = gSoH3dPendingModel;
+                Vec3f sc = gSoH3dPendingActor->scale;
+                fprintf(stderr, "[SKELDUMP] N64 actor=0x%x model=%d limbCount=%d actorScale=(%.5f,%.5f,%.5f)\n",
+                        gSoH3dPendingActor->id, gSoH3dPendingModel, skelAnime->limbCount, sc.x, sc.y, sc.z);
+                for (int k = 0; skelAnime->skeleton != NULL && k < skelAnime->limbCount; k++) {
+                    StandardLimb* lb = (StandardLimb*)SEGMENTED_TO_VIRTUAL(skelAnime->skeleton[k]);
+                    if (lb == NULL) {
+                        fprintf(stderr, "[SKELDUMP] N64 limb=%d <null>\n", k);
+                        continue;
+                    }
+                    Vec3s rot = skelAnime->jointTable[k + 1]; // live local rotation for limb k
+                    fprintf(stderr,
+                            "[SKELDUMP] N64 limb=%d jointPos=(%d,%d,%d) child=%d sibling=%d rot=(%d,%d,%d)\n", k,
+                            lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling, rot.x, rot.y,
+                            rot.z);
+                }
+                fflush(stderr);
+                SoH3D_DumpModelBones(gSoH3dPendingModel);
+            }
+        }
+    }
     // Auto path: the retarget maps N64 jointTable[i+1] -> OoT3D bone i, so it only poses correctly
     // when the OoT3D rig matches the N64 skeleton. If the bone count differs the rig doesn't
     // correspond -> the pose comes out giant/malformed; refuse it and fall back to the N64 model.
@@ -849,6 +892,30 @@ static void SoH3D_DrawRoomGL(PlayState* play, int modelId) {
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
 
     CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// Emit the once-per-frame SoH3D render-pass marker into POLY_OPA. When the interpreter reaches
+// it, every SoH3D draw collected this frame is rendered in ONE GL-state-bracketed pass
+// (libultraship SoH3D_GL_RenderPass) — so OoT3D content composites after Fast3D's opaque 3D and
+// before the 2D/UI pass, and our GL state never leaks into Fast3D's. Called from Play_Draw right
+// after the actor draw-all (func_800315AC).
+void SoH3D_EmitRenderPass(PlayState* play) {
+    if (!SoH3D_Enabled()) {
+        return;
+    }
+    OPEN_DISPS(play->state.gfxCtx);
+    gSPSoH3DRenderPass(POLY_OPA_DISP++);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// Per-frame, before the display list is built: drop any SoH3D draws left unrendered from a prior
+// frame (e.g. a scene-transition early-out that emitted draws but never reached the render pass)
+// so stale items can't double-draw next frame. Cheap no-op when the list is empty.
+void SoH3D_FrameBegin(void) {
+    if (!SoH3D_Enabled()) {
+        return;
+    }
+    SoH3D_GL_FrameBegin();
 }
 
 int SoH3D_TryDrawRoom(PlayState* play, Room* room) {

@@ -48,6 +48,13 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // skips the N64 room mesh; returns 0 otherwise (caller draws the N64 room as normal).
 int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 
+// Emit the once-per-frame SoH3D render-pass marker (drains all SoH3D draws collected this frame
+// in one GL-state-bracketed pass). Call from Play_Draw right after the actor draw-all.
+void SoH3D_EmitRenderPass(PlayState* play);
+// Per-frame, before the display list is built: drop any SoH3D draws left unrendered from a prior
+// frame. Call once per frame ahead of Play_Draw (e.g. alongside the REPL poll).
+void SoH3D_FrameBegin(void);
+
 // Floor-height callback: returns the N64 collision floor Y at world (x,z), or a value
 // <= -31000 if there is no floor. Provided by soh3d.c (it has the PlayState/colCtx).
 typedef float (*SoH3D_FloorFn)(float x, float z);

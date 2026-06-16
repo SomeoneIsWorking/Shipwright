@@ -1,6 +1,7 @@
 #include "global.h"
 #include "vt.h"
 #include "soh/ActorDB.h"
+#include "soh3d/soh3d.h"
 #include <assert.h>
 
 RomFile sNaviMsgFiles[];
@@ -228,6 +229,19 @@ void Scene_CommandCollisionHeader(PlayState* play, SceneCmd* cmd) {
     colHeader->surfaceTypeList = SEGMENTED_TO_VIRTUAL(colHeader->surfaceTypeList);
     colHeader->cameraDataList = SEGMENTED_TO_VIRTUAL(colHeader->cameraDataList);
     colHeader->waterBoxes = SEGMENTED_TO_VIRTUAL(colHeader->waterBoxes);
+
+    // SoH3D: drive gameplay collision from the OoT3D scene-collision mesh (one geometry for
+    // visuals + gameplay). When enabled and available, install the OoT3D header instead of the
+    // N64 one — every BgCheck query then runs on OoT3D geometry (the N64 header is passed so its
+    // waterboxes/camera regions carry over). NULL = fall through to N64. (Note: this build uses
+    // the OTR scene-command path in z_scene_otr.cpp; this mirror keeps the non-OTR path correct.)
+    {
+        CollisionHeader* oot3d = SoH3D_BuildSceneCollision(play, colHeader);
+        if (oot3d != NULL) {
+            BgCheck_Allocate(&play->colCtx, play, oot3d);
+            return;
+        }
+    }
 
     BgCheck_Allocate(&play->colCtx, play, colHeader);
 }

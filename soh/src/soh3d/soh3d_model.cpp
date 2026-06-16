@@ -7,6 +7,7 @@
 #include "asset/ctr_rom.h"
 #include "asset/zar.h"
 #include "asset/zsi.h"
+#include "asset/zcol.h"
 #include "asset/cmb.h"
 #include "asset/csab.h"
 #include "asset/mat4.h"
@@ -19,6 +20,7 @@
 #include <functional>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -728,3 +730,56 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 }
 
 } // extern "C"
+
+#include "soh3d_collision.h"
+
+extern "C" int SoH3D_LoadSceneCollisionRaw(const char* sceneName, SoH3D_RawCollision* out) {
+    if (!sceneName || !*sceneName || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    SoH3D::CtrRom* r = rom();
+    if (!r) return 0;
+    std::string path = "/scene/" + std::string(sceneName) + "_info.zsi";
+    auto bytes = r->read(path);
+    if (bytes.empty()) { fprintf(stderr, "[SoH3D] collision zsi not found: %s\n", path.c_str()); return 0; }
+    SoH3D::OoT3DCollision col(bytes);
+    if (!col.ok()) { fprintf(stderr, "[SoH3D] collision %s: %s\n", path.c_str(), col.error().c_str()); return 0; }
+    const auto& verts = col.verts();
+    const auto& polys = col.polys();
+    if (verts.empty() || polys.empty()) return 0;
+
+    out->numVerts = (int)verts.size();
+    out->numPolys = (int)polys.size();
+    out->verts = (int16_t*)malloc(sizeof(int16_t) * 3 * verts.size());
+    out->polyVtx = (uint16_t*)malloc(sizeof(uint16_t) * 3 * polys.size());
+    out->polyNrm = (int16_t*)malloc(sizeof(int16_t) * 3 * polys.size());
+    out->polyDist = (float*)malloc(sizeof(float) * polys.size());
+    if (!out->verts || !out->polyVtx || !out->polyNrm || !out->polyDist) {
+        SoH3D_FreeRawCollision(out);
+        return 0;
+    }
+    for (size_t i = 0; i < verts.size(); i++) {
+        out->verts[i * 3 + 0] = verts[i].x;
+        out->verts[i * 3 + 1] = verts[i].y;
+        out->verts[i * 3 + 2] = verts[i].z;
+    }
+    for (size_t k = 0; k < polys.size(); k++) {
+        out->polyVtx[k * 3 + 0] = polys[k].vA;
+        out->polyVtx[k * 3 + 1] = polys[k].vB;
+        out->polyVtx[k * 3 + 2] = polys[k].vC;
+        out->polyNrm[k * 3 + 0] = polys[k].nx;
+        out->polyNrm[k * 3 + 1] = polys[k].ny;
+        out->polyNrm[k * 3 + 2] = polys[k].nz;
+        out->polyDist[k] = polys[k].dist;
+    }
+    printf("[SoH3D] loaded scene collision %s: %d verts, %d polys\n", path.c_str(), out->numVerts, out->numPolys);
+    return 1;
+}
+
+extern "C" void SoH3D_FreeRawCollision(SoH3D_RawCollision* out) {
+    if (!out) return;
+    free(out->verts);
+    free(out->polyVtx);
+    free(out->polyNrm);
+    free(out->polyDist);
+    memset(out, 0, sizeof(*out));
+}

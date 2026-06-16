@@ -142,6 +142,18 @@ void SoH3D_DebugDrawGs(PlayState* play);
 // Valley ENTR 0x117). Logs whether the spawn succeeded. No-op otherwise.
 void SoH3D_DebugDrawKibako(PlayState* play);
 
+// OoT3D collision: build a SoH CollisionHeader from the current scene's OoT3D scene-collision
+// mesh, or NULL when disabled/unavailable (caller then uses the N64 collision). Called from
+// Scene_CommandCollisionHeader at scene load; if it returns non-NULL the engine installs that
+// header into play->colCtx via BgCheck_Allocate, so ALL gameplay collision (Link physics,
+// floor/wall/ceiling) runs on OoT3D geometry — one geometry for visuals + gameplay. The header
+// + arrays are kept resident for the scene lifetime (freed on the next build). Gated by
+// SoH3D_CollisionEnabled() (env SOH3D_COLLISION, default ON; REPL `collision`). `n64` is the
+// scene's N64 CollisionHeader (its waterboxes + camera regions are copied into the OoT3D header
+// since those sub-lists aren't REd yet; pass NULL to skip).
+CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64);
+int SoH3D_CollisionEnabled(void);
+
 // Interactive REPL poll, called once per frame from Play_Draw. When env
 // SOH3D_REPL=<fifo path> is set, reads control commands from that FIFO and applies
 // them live (tint, world scale, model spawn, on-demand frame dump) so a single

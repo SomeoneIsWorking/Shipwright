@@ -1,0 +1,36 @@
+// C-ABI bridge for OoT3D scene collision: the C++ asset side (soh3d_model.cpp, using the
+// CtrRom/zcol parsers) hands raw arrays across to the C engine side (soh3d.c), which converts
+// them into a SoH CollisionHeader and installs it into play->colCtx. Dep-free (stdint only) so
+// both the C++ and C translation units can include it.
+#ifndef SOH3D_COLLISION_H
+#define SOH3D_COLLISION_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Raw OoT3D collision, malloc'd by SoH3D_LoadSceneCollisionRaw. Vertices are N64-unit
+// world-space (same frame as the OoT3D render mesh); normals are unit*32767 (matches SoH
+// COLPOLY_SNORMAL); the plane is n.p == -dist.
+typedef struct {
+    int16_t* verts;     // 3*numVerts: x,y,z
+    int numVerts;
+    uint16_t* polyVtx;  // 3*numPolys: vA,vB,vC (already & 0x1FFF)
+    int16_t* polyNrm;   // 3*numPolys: nx,ny,nz
+    float* polyDist;    // numPolys
+    int numPolys;
+} SoH3D_RawCollision;
+
+// Load + parse <scene>_info.zsi collision for sceneName (the OoT3D folder name, e.g.
+// "spot04"). Fills *out (caller owns; free with SoH3D_FreeRawCollision). Returns 1 on
+// success, 0 if no ROM / no collision / parse error.
+int SoH3D_LoadSceneCollisionRaw(const char* sceneName, SoH3D_RawCollision* out);
+void SoH3D_FreeRawCollision(SoH3D_RawCollision* out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SOH3D_COLLISION_H

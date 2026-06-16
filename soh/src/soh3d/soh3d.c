@@ -1,5 +1,6 @@
 // SoH3D runtime toggle + helpers. See repo-root PROGRESS.md.
 #include "soh3d.h"
+#include "soh3d_collision.h" // C-ABI bridge for OoT3D scene collision (soh3d_model.cpp)
 #include "overlays/actors/ovl_En_Ge1/z_en_ge1.h" // EnGe1 (read live SkelAnime state)
 #include "objects/object_ge1/object_ge1.h"       // dgGerudoWhite*Anim OTR-path strings
 #include <stdlib.h>
@@ -86,6 +87,9 @@ int SoH3D_AutoModelId(const char* zarPath);
 float SoH3D_AutoModelHeight(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
 
+// SoH sceneNum -> OoT3D scene folder name (defined below).
+static const char* SoH3D_SceneName(PlayState* play);
+
 // SoH sceneNum -> OoT3D scene folder name (kSoH3dSceneNames). Generated, names only.
 #include "soh3d_scene_names.inc"
 // N64 object id -> OoT3D actor ZAR path (kSoH3dObjectZars). Generated, paths only.
@@ -129,7 +133,166 @@ static int SoH3D_TerrainWarpEnabled(void) {
         const char* v = getenv("SOH3D_TERRAIN_WARP");
         cached = (v != NULL && v[0] == '0') ? 0 : 1; // default ON
     }
-    return cached && gSoH3dTerrainWarp;
+    // The per-actor render Y-offset and OoT3D collision are mutually exclusive fixes for the
+    // same problem: once Link walks the OoT3D collision (== render) ground, offsetting actors
+    // onto the render floor would double-correct. Collision wins.
+    return cached && gSoH3dTerrainWarp && !SoH3D_CollisionEnabled();
+}
+
+// --- OoT3D collision: drive gameplay (BgCheck floors/walls) from the OoT3D scene collision
+// mesh so Link physically walks the OoT3D world (see PROGRESS.md "USE OoT3D COLLISION"). The
+// render mesh and the collision are then ONE geometry — fixes both floor height AND walls,
+// which no render-side Y-offset can. SoH3D_BuildSceneCollision converts the parsed OoT3D
+// collision into a SoH CollisionHeader; Scene_CommandCollisionHeader installs it instead of
+// the N64 one. Gate: SoH3D_Enabled() + env SOH3D_COLLISION (default ON; =0 for A/B) + REPL
+// `collision` (takes effect on next scene load / warp). ---
+int gSoH3dCollision = 1;
+
+int SoH3D_CollisionEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("SOH3D_COLLISION");
+        cached = (v != NULL && v[0] == '0') ? 0 : 1; // default ON
+    }
+    return SoH3D_Enabled() && cached && gSoH3dCollision;
+}
+
+// Build a SoH CollisionHeader from the current scene's OoT3D collision, or NULL when
+// disabled / unavailable (caller then uses the N64 collision). The header + its arrays are
+// malloc'd and kept resident for the scene lifetime; the previous build is freed here, so a
+// scene change / warp recycles it (BgCheck_Allocate stores the pointer and references the
+// arrays, so they must outlive the call). Verts are N64-unit world-space (same frame as the
+// render mesh), so no transform — direct copy. One generic SurfaceType (plain ground) backs
+// all polys; floor/wall/ceiling classification comes from each poly's normal, not the type.
+CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64) {
+    static CollisionHeader* sHeader = NULL;
+    static SurfaceType* sSurfaceTypes = NULL;
+    static CamData* sCamData = NULL;
+    static WaterBox* sWaterBoxes = NULL;
+    const char* sceneName;
+    SoH3D_RawCollision raw;
+    CollisionHeader* h;
+    Vec3s* vtx;
+    CollisionPoly* poly;
+    int i;
+    int camNormalIdx = 0; // camDataList index of a CAM_SET_NORMAL0 (follow) entry for floors
+    s16 minX, minY, minZ, maxX, maxY, maxZ;
+    size_t camLen = 1; // entries in sCamData (>=1: a dummy when no N64 list)
+
+    if (play == NULL || !SoH3D_CollisionEnabled()) {
+        return NULL;
+    }
+    sceneName = SoH3D_SceneName(play);
+    if (sceneName == NULL) {
+        return NULL; // scene has no OoT3D mapping -> N64 collision
+    }
+    if (!SoH3D_LoadSceneCollisionRaw(sceneName, &raw)) {
+        return NULL;
+    }
+
+    // Free the previous scene's build (its arrays were referenced by the old colCtx, which is
+    // being replaced now).
+    if (sHeader != NULL) {
+        free(sHeader->vtxList);
+        free(sHeader->polyList);
+        free(sHeader);
+    }
+    free(sSurfaceTypes);
+    free(sCamData);
+    free(sWaterBoxes);
+    sCamData = NULL;
+    sWaterBoxes = NULL;
+
+    h = (CollisionHeader*)calloc(1, sizeof(CollisionHeader));
+    vtx = (Vec3s*)malloc(sizeof(Vec3s) * raw.numVerts);
+    poly = (CollisionPoly*)calloc(raw.numPolys, sizeof(CollisionPoly));
+    sSurfaceTypes = (SurfaceType*)calloc(1, sizeof(SurfaceType));      // one generic ground type
+    if (h == NULL || vtx == NULL || poly == NULL || sSurfaceTypes == NULL) {
+        free(h); free(vtx); free(poly); free(sSurfaceTypes);
+        sHeader = NULL; sSurfaceTypes = NULL;
+        SoH3D_FreeRawCollision(&raw);
+        return NULL;
+    }
+
+    // Waterboxes + camera regions are gameplay volumes that actors index by [0]/by camId and
+    // DEREFERENCE (e.g. Bg_Spot01_Idomizu writes waterBoxes[0].ySurface -> NULL crash if absent).
+    // We have not REd those OoT3D sub-lists yet; copy them from the N64 header (same world space)
+    // so water/camera gameplay keeps working while floors+walls come from OoT3D. Deep-copy the
+    // arrays (the CamData entries keep their N64 camPosData pointers, which persist for the scene).
+    if (n64 != NULL && n64->numWaterBoxes > 0 && n64->waterBoxes != NULL) {
+        sWaterBoxes = (WaterBox*)malloc(sizeof(WaterBox) * n64->numWaterBoxes);
+        if (sWaterBoxes != NULL) {
+            memcpy(sWaterBoxes, n64->waterBoxes, sizeof(WaterBox) * n64->numWaterBoxes);
+        }
+    }
+    // Camera: every floor poly shares ONE generic SurfaceType, whose camDataIndex (data[0]&0xFF)
+    // selects cameraDataList[idx].cameraSType as the scene-follow camera setting. If that pointed
+    // at N64 camData[0] (often a FIXED/pivot cam), the camera would stop following Link. So make
+    // the generic floor use a CAM_SET_NORMAL0 (normal follow) entry: reuse one from the copied N64
+    // list if present, else append one. (Per-region cameras need the OoT3D surfaceType list, TODO.)
+    {
+        size_t n = (n64 != NULL && n64->cameraDataList != NULL && n64->cameraDataListLen > 0)
+                       ? (size_t)n64->cameraDataListLen : 0;
+        sCamData = (CamData*)calloc(n + 1, sizeof(CamData)); // +1 slot for an appended normal cam
+        if (sCamData != NULL) {
+            if (n > 0) memcpy(sCamData, n64->cameraDataList, sizeof(CamData) * n);
+            camNormalIdx = -1;
+            for (i = 0; i < (int)n; i++) {
+                if (sCamData[i].cameraSType == CAM_SET_NORMAL0) { camNormalIdx = i; break; }
+            }
+            if (camNormalIdx < 0) { // none in the N64 list -> use the appended entry
+                sCamData[n].cameraSType = CAM_SET_NORMAL0;
+                sCamData[n].numCameras = 0;
+                sCamData[n].camPosData = NULL;
+                camNormalIdx = (int)n;
+                camLen = n + 1;
+            } else {
+                camLen = n; // appended slot unused (still allocated, harmless)
+            }
+        }
+    }
+    if (sCamData == NULL) {
+        sCamData = (CamData*)calloc(1, sizeof(CamData)); // fallback (CAM_SET_NONE)
+        sCamData[0].cameraSType = CAM_SET_NORMAL0;
+        camLen = 1; camNormalIdx = 0;
+    }
+    sSurfaceTypes[0].data[0] = (u32)(camNormalIdx & 0xFF); // floors -> normal follow camera
+
+    minX = maxX = raw.verts[0]; minY = maxY = raw.verts[1]; minZ = maxZ = raw.verts[2];
+    for (i = 0; i < raw.numVerts; i++) {
+        s16 x = raw.verts[i * 3 + 0], y = raw.verts[i * 3 + 1], z = raw.verts[i * 3 + 2];
+        vtx[i].x = x; vtx[i].y = y; vtx[i].z = z;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    for (i = 0; i < raw.numPolys; i++) {
+        poly[i].type = 0; // index into the single SurfaceType
+        poly[i].flags_vIA = raw.polyVtx[i * 3 + 0] & 0x1FFF;
+        poly[i].flags_vIB = raw.polyVtx[i * 3 + 1] & 0x1FFF;
+        poly[i].vIC = raw.polyVtx[i * 3 + 2] & 0x1FFF;
+        poly[i].normal.x = raw.polyNrm[i * 3 + 0];
+        poly[i].normal.y = raw.polyNrm[i * 3 + 1];
+        poly[i].normal.z = raw.polyNrm[i * 3 + 2];
+        // SoH plane: normal.p + dist == 0; OoT3D plane: n.p == -dist -> SoH dist == OoT3D dist.
+        poly[i].dist = (s16)lrintf(raw.polyDist[i]);
+    }
+
+    h->minBounds.x = minX; h->minBounds.y = minY; h->minBounds.z = minZ;
+    h->maxBounds.x = maxX; h->maxBounds.y = maxY; h->maxBounds.z = maxZ;
+    h->numVertices = (u16)raw.numVerts;
+    h->vtxList = vtx;
+    h->numPolygons = (u16)raw.numPolys;
+    h->polyList = poly;
+    h->surfaceTypeList = sSurfaceTypes;
+    h->cameraDataList = sCamData;
+    h->cameraDataListLen = camLen;
+    h->numWaterBoxes = (sWaterBoxes != NULL && n64 != NULL) ? n64->numWaterBoxes : 0;
+    h->waterBoxes = sWaterBoxes;
+
+    SoH3D_FreeRawCollision(&raw);
+    sHeader = h;
+    return h;
 }
 
 // N64 collision floor height at world (x,z): raycast straight down through BgCheck from
@@ -961,6 +1124,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // scene, or use env SOH3D_TERRAIN_WARP=0 from launch, for a clean A/B).
         gSoH3dTerrainWarp = (int)f1;
         SoH3D_ReplReply(outPath, "terrainwarp=%d (applies to rooms loaded after this)", gSoH3dTerrainWarp);
+    } else if (strcmp(cmd, "collision") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // Toggle OoT3D-collision gameplay. The collision is built+installed at scene load, so
+        // this takes effect on the NEXT scene load / `warp` (the current colCtx stays as-is).
+        gSoH3dCollision = (int)f1;
+        SoH3D_ReplReply(outPath, "collision=%d (applies on next scene load / warp)", gSoH3dCollision);
     } else if (strcmp(cmd, "time") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         // Pin time-of-day (0x8000=noon, 0x4000=dawn, 0xC000=dusk, 0=midnight). Negative
         // releases the game clock. Accepts a raw u16 value.

@@ -318,10 +318,12 @@ void SkelAnime_DrawSkeletonOpa(PlayState* play, SkelAnime* skelAnime, OverrideLi
 
 Gfx* SkelAnime_DrawSkeleton2(PlayState* play, SkelAnime* skelAnime, OverrideLimbDrawOpa overrideLimbDraw,
                              PostLimbDrawOpa postLimbDraw, void* arg, Gfx* gfx) {
-    // SoH3D: N64-anim replacement (see SkelAnime_DrawSkeletonOpa). Skip the N64 limb draw if
-    // the OoT3D model was drawn for this actor.
+    // SoH3D: N64-anim replacement (see SkelAnime_DrawSkeletonOpa). Skip the N64 limb draw if the
+    // OoT3D model was drawn for this actor. Return the ADVANCED polyOpa.p (not the stale gfx) when
+    // this is an OPA draw, so the caller doesn't rewind over the emit. (See SkelAnime_Draw.)
+    Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
     if (SoH3D_SkelAnimeDraw(play, skelAnime)) {
-        return gfx;
+        return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }
     if (skelAnime->skeletonHeader->skeletonType == SKELANIME_TYPE_NORMAL) {
         return SkelAnime_Draw(play, skelAnime->skeleton, skelAnime->jointTable, overrideLimbDraw, postLimbDraw, arg,
@@ -632,9 +634,15 @@ Gfx* SkelAnime_Draw(PlayState* play, void** skeleton, Vec3s* jointTable, Overrid
     Vec3f pos;
     Vec3s rot;
 
-    // SoH3D: retarget at this choke point too (non-flex gfx-returning draw).
+    // SoH3D: retarget at this choke point too (non-flex gfx-returning draw). The hook emits the
+    // OoT3D model into POLY_OPA, advancing polyOpa.p. If THIS draw writes into POLY_OPA (gfx ==
+    // the opa pointer), return the ADVANCED pointer so the caller's
+    // `POLY_OPA_DISP = SkelAnime_Draw(...)` doesn't rewind over (clobber) the just-emitted
+    // commands — that rewind is what made hook-replaced actors render invisible. For an XLU /
+    // other-buffer caller the opa emit is independent of gfx, so return gfx unchanged.
+    Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
-        return gfx;
+        return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }
 
     if (skeleton == NULL) {
@@ -746,10 +754,14 @@ Gfx* SkelAnime_DrawFlex(PlayState* play, void** skeleton, Vec3s* jointTable, s32
     Vec3s rot;
     Mtx* mtx;
 
-    // SoH3D: retarget here too (func_80034BA0/CC4 and DrawSkeleton2 route through this). The
-    // OoT3D draw is emitted into POLY_OPA; return gfx unchanged so the N64 limbs are skipped.
+    // SoH3D: retarget here too (func_80034BA0/CC4 and DrawSkeleton2 route through this). The hook
+    // emits the OoT3D draw into POLY_OPA, advancing polyOpa.p. If this draw writes POLY_OPA (gfx ==
+    // the opa pointer) return the ADVANCED pointer so the caller's `POLY_OPA_DISP = SkelAnime_DrawFlex(...)`
+    // doesn't rewind over (clobber) it — the invisible-replacement bug. XLU caller: opa emit is
+    // independent of gfx, return gfx unchanged. (See SkelAnime_Draw for the full rationale.)
+    Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
-        return gfx;
+        return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }
 
     mtx = Graph_Alloc(play->state.gfxCtx, dListCount * sizeof(*mtx));

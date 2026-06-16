@@ -886,8 +886,34 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     if (gSoH3dPendingAuto) {
         int bones = SoH3D_AutoModelBoneCount(gSoH3dPendingModel);
         if (bones != skelAnime->limbCount) {
+            // Log once per model so it's clear which actors fall back to N64 (rig mismatch) vs
+            // actually render the OoT3D model. (Diagnostic for the char-replace correspondence.)
+            static int loggedSkip[64];
+            static int nSkip = 0;
+            int seen = 0;
+            for (int i = 0; i < nSkip; i++)
+                if (loggedSkip[i] == gSoH3dPendingModel) { seen = 1; break; }
+            if (!seen && nSkip < (int)ARRAY_COUNT(loggedSkip)) {
+                loggedSkip[nSkip++] = gSoH3dPendingModel;
+                printf("SOH3D RETARGET: model %d SKIP -> N64 (oot3d bones=%d != n64 limbCount=%d)\n",
+                       gSoH3dPendingModel, bones, skelAnime->limbCount);
+                fflush(stdout);
+            }
             gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
             return 0;
+        }
+        {
+            static int loggedDraw[64];
+            static int nDraw = 0;
+            int seen = 0;
+            for (int i = 0; i < nDraw; i++)
+                if (loggedDraw[i] == gSoH3dPendingModel) { seen = 1; break; }
+            if (!seen && nDraw < (int)ARRAY_COUNT(loggedDraw)) {
+                loggedDraw[nDraw++] = gSoH3dPendingModel;
+                printf("SOH3D RETARGET: model %d DRAW OoT3D (bones=%d == limbCount=%d)\n", gSoH3dPendingModel,
+                       bones, skelAnime->limbCount);
+                fflush(stdout);
+            }
         }
         // Derive the OoT3D->world scale from the REST skeletons' bone-length ratio instead of the
         // bbox measure (which over-measured articulated actors -> giant). N64 and OoT3D are the

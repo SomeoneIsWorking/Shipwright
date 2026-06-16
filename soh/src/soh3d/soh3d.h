@@ -19,6 +19,13 @@ int SoH3D_Enabled(void);
 // the old per-actor `if (SoH3D_Enabled())` edits in each actor's Draw.
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
 
+// Called from Actor_Draw immediately AFTER an actor's N64 draw (only when
+// SoH3D_TryDrawActor returned 0, i.e. the N64 model drew). Closes the auto-scale
+// measure bracket opened by SoH3D_TryDrawActor so the SOH3D_AUTO path can measure the
+// actor's drawn world size on this frame and derive its OoT3D model scale. No-op unless
+// a measurement was opened for this actor.
+void SoH3D_AfterActorDraw(PlayState* play, Actor* actor);
+
 // Draws an OoT3D model display list at an actor's world position/yaw with an
 // explicit world scale (OoT3D model units -> N64 world units). Builds its own
 // MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so

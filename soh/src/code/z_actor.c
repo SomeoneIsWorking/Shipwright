@@ -2802,6 +2802,7 @@ void Actor_Draw(PlayState* play, Actor* actor) {
     // N64 model. One central table-driven divert for all actors — see soh3d.c.
     if (!SoH3D_TryDrawActor(play, actor)) {
         actor->draw(actor, play);
+        SoH3D_AfterActorDraw(play, actor); // close any auto-scale measure bracket
     }
 
     if (actor->colorFilterTimer != 0) {

@@ -13,6 +13,7 @@
 #include "fast/soh3d_gl.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -54,6 +55,13 @@ const ModelSpec kModels[] = {
 // (SoH3D_RoomModelId) keyed by the room's ZSI path. See soh3d.c's room-draw hook.
 const int kSceneModelBase = 1000;
 
+// Auto-replaced actor models live in a THIRD id range (above scene rooms) so the
+// SOH3D_AUTO path can allocate ids for arbitrary actor ZARs (discovered at runtime
+// from the object id -> ZAR table) without colliding with the hand-listed actor
+// models (0..N) or scene rooms (1000..). Keyed by ZAR path; main CMB picked by the
+// "largest non-debris" heuristic. See SoH3D_AutoModelId / loadAutoModel.
+const int kAutoModelBase = 2000;
+
 // Loaded CPU data for a model, kept alive so the renderer can upload from it and
 // so the provider can hand back stable pointers. The Zar + Cmb stay resident so the
 // animation layer can load CSABs and recompute skin matrices per frame on demand.
@@ -66,7 +74,9 @@ struct LoadedModel {
     std::unique_ptr<SoH3D::Cmb> cmb;               // resident model (skeleton + bind matrices)
     std::unordered_map<std::string, std::unique_ptr<SoH3D::Csab>> anims; // cached by full name
     bool ok = false;
-    bool warped = false; // scene rooms: terrain Y already re-leveled to N64 collision
+    bool warped = false;  // scene rooms: terrain Y already re-leveled to N64 collision
+    bool skinned = false; // auto models: CMB has an articulated skeleton (>1 bone) -> the
+                          // auto path skips it (no anim => T-pose), leaving it to N64.
 };
 
 std::unordered_map<int, std::unique_ptr<LoadedModel>> g_loaded;
@@ -76,6 +86,11 @@ std::unique_ptr<SoH3D::CtrRom> g_rom;
 // list so loadModel can recover the path from the id.
 std::unordered_map<std::string, int> g_sceneRoomIds;
 std::vector<std::string> g_sceneRoomPaths; // index = modelId - kSceneModelBase
+
+// Auto-replaced actor id allocation: ZAR path -> model id (>= kAutoModelBase), and the
+// reverse list so loadAutoModel can recover the path from the id.
+std::unordered_map<std::string, int> g_autoModelIds;
+std::vector<std::string> g_autoModelPaths; // index = modelId - kAutoModelBase
 
 SoH3D::CtrRom* rom() {
     if (!g_rom) {
@@ -194,6 +209,99 @@ static void loadActorModel(int modelId, LoadedModel* out) {
            out->cGroups.size(), out->cTexs.size());
 }
 
+// Geometric bounding-box diagonal of a model's draw groups, in the model's own
+// local space. Used by the auto-scale path as a rotation-invariant size measure: the
+// world scale for an auto-replaced actor = (measured N64 world bbox diagonal) / (this
+// OoT3D model diagonal). Returns 0 if the model has no geometry.
+static float bboxDiag(const std::vector<SoH3D::CmbDrawGroup>& groups) {
+    float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+    bool any = false;
+    for (const auto& g : groups)
+        for (const auto& v : g.verts) {
+            any = true;
+            for (int k = 0; k < 3; k++) {
+                mn[k] = std::min(mn[k], v.pos[k]);
+                mx[k] = std::max(mx[k], v.pos[k]);
+            }
+        }
+    if (!any) return 0.0f;
+    float dx = mx[0] - mn[0], dy = mx[1] - mn[1], dz = mx[2] - mn[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// Local-space Y (height) extent of a model's draw groups. The auto-scale path matches
+// this against the N64 actor's measured world height (the dimension the manual scales
+// were calibrated on), so worldScale = N64_world_height / model_height. Returns 0 if no
+// geometry. OoT3D actor/prop models are authored Y-up.
+static float bboxHeight(const std::vector<SoH3D::CmbDrawGroup>& groups) {
+    float mn = 1e30f, mx = -1e30f;
+    for (const auto& g : groups)
+        for (const auto& v : g.verts) {
+            mn = std::min(mn, v.pos[1]);
+            mx = std::max(mx, v.pos[1]);
+        }
+    return (mn <= mx) ? (mx - mn) : 0.0f;
+}
+
+// Heuristic to pick a ZAR's MAIN model CMB when it holds several. OoT3D actor ZARs
+// often bundle debris/effect variants (a crate's "hahen" shards, a "modelT" effect
+// mesh) alongside the intact model. We skip those by name and, among the remainder,
+// pick the CMB with the largest geometry (the main body). Returns nullptr if none.
+static bool isDebrisCmbName(const std::string& n) {
+    static const char* kSkip[] = { "hahen", "modelt", "broke", "_bf", "kakera", "fragment" };
+    std::string lo = n;
+    for (auto& c : lo) c = (char)std::tolower((unsigned char)c);
+    for (const char* s : kSkip)
+        if (lo.find(s) != std::string::npos) return true;
+    return false;
+}
+
+// Load an auto-replaced actor model: read the ZAR at its registered path, pick the main
+// CMB (largest non-debris), build draw groups. No hand-tuned cmbName — the heuristic
+// generalizes the manual selection used by the explicit kModels[] table. Characters/props
+// are dynamically lit, so vertex color is forced white like loadActorModel.
+static void loadAutoModel(int modelId, LoadedModel* out) {
+    int idx = modelId - kAutoModelBase;
+    if (idx < 0 || idx >= (int)g_autoModelPaths.size()) return;
+    const std::string& zarPath = g_autoModelPaths[idx];
+    SoH3D::CtrRom* r = rom();
+    if (!r) return;
+    auto zarBytes = r->read(zarPath);
+    if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] auto: zar not found: %s\n", zarPath.c_str()); return; }
+    out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
+    if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] auto Zar %s: %s\n", zarPath.c_str(), out->zar->error().c_str()); return; }
+
+    // Pick the largest non-debris .cmb. Parse each candidate once (one-time per object).
+    const SoH3D::ZarFile* best = nullptr;
+    std::unique_ptr<SoH3D::Cmb> bestCmb;
+    float bestDiag = -1.0f;
+    int nCmb = 0;
+    for (const auto& f : out->zar->files()) {
+        if (f.name.size() < 4 || f.name.compare(f.name.size() - 4, 4, ".cmb") != 0) continue;
+        nCmb++;
+        if (isDebrisCmbName(f.name)) continue;
+        auto cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(f));
+        if (!cmb->ok()) continue;
+        float d = bboxDiag(cmb->buildDrawGroups());
+        if (d > bestDiag) { bestDiag = d; best = &f; bestCmb = std::move(cmb); }
+    }
+    // Fallback: if every CMB looked like debris (or none parsed), take the first .cmb.
+    if (!bestCmb) {
+        const SoH3D::ZarFile* f = out->zar->firstWithSuffix(".cmb");
+        if (f) { bestCmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*f)); best = f; }
+    }
+    if (!bestCmb || !bestCmb->ok()) { fprintf(stderr, "[SoH3D] auto: no usable .cmb in %s\n", zarPath.c_str()); return; }
+    out->cmb = std::move(bestCmb);
+    // Articulated (>1 bone) => skinned character. With no animation it would render in a
+    // frozen bind/T-pose, so the auto path skips it and leaves the N64 model. Calibrated,
+    // animated characters go through the explicit sModelTable (with an anim resolver).
+    out->skinned = out->cmb->bones().size() > 1;
+    buildFromCmb(out, /*bakedVertexColor=*/false);
+    printf("[SoH3D] auto-loaded model %d (%s): cmb '%s' of %d, height=%.1f, bones=%zu%s, %zu groups, %zu textures\n",
+           modelId, zarPath.c_str(), best ? best->name.c_str() : "?", nCmb, bboxHeight(out->groups),
+           out->cmb->bones().size(), out->skinned ? " (skinned->skip)" : "", out->cGroups.size(), out->cTexs.size());
+}
+
 LoadedModel* loadModel(int modelId) {
     auto it = g_loaded.find(modelId);
     if (it != g_loaded.end()) return it->second.get();
@@ -202,7 +310,9 @@ LoadedModel* loadModel(int modelId) {
     LoadedModel* out = lm.get();
     g_loaded[modelId] = std::move(lm);
 
-    if (modelId >= kSceneModelBase) {
+    if (modelId >= kAutoModelBase) {
+        loadAutoModel(modelId, out);
+    } else if (modelId >= kSceneModelBase) {
         loadSceneRoom(modelId, out);
     } else if (modelId >= 0 && modelId < (int)(sizeof(kModels) / sizeof(kModels[0]))) {
         loadActorModel(modelId, out);
@@ -381,6 +491,39 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum) {
     g_sceneRoomPaths.push_back(path);
     g_sceneRoomIds[path] = id;
     return id;
+}
+
+// Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR
+// path (e.g. "/actor/zelda_box.zar"). The geometry loads lazily on first draw via the
+// provider. Returns -1 if zarPath is null/empty. The game calls this from the SOH3D_AUTO
+// actor path with the ZAR resolved from the actor's object id (kSoH3dObjectZars).
+int SoH3D_AutoModelId(const char* zarPath) {
+    if (!zarPath || !*zarPath) return -1;
+    std::string path(zarPath);
+    auto it = g_autoModelIds.find(path);
+    if (it != g_autoModelIds.end()) return it->second;
+    int id = kAutoModelBase + (int)g_autoModelPaths.size();
+    g_autoModelPaths.push_back(path);
+    g_autoModelIds[path] = id;
+    return id;
+}
+
+// Local-space Y (height) extent of a loaded model. The auto-scale path uses it as the
+// OoT3D-side size when deriving worldScale = N64_world_height / model_height. Loads the
+// model lazily; returns 0 if it failed to load or has no geometry.
+float SoH3D_AutoModelHeight(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0.0f;
+    return bboxHeight(lm->groups);
+}
+
+// 1 if a loaded auto model is skinned (articulated skeleton -> the auto path leaves it to
+// N64 to avoid a frozen T-pose), else 0. Loads the model lazily; treats a load failure as
+// "skinned" (==skip) so a bad model never auto-replaces.
+int SoH3D_AutoModelSkinned(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 1;
+    return lm->skinned ? 1 : 0;
 }
 
 // Render-mesh floor height at world (x,z) for a loaded scene-room model (the warped

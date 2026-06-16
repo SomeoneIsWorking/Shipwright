@@ -60,9 +60,16 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 // Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
 // the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
 int SoH3D_RoomModelId(const char* sceneName, int roomNum);
+// Auto-replace path (soh3d_model.cpp): get-or-allocate a GL model id for an actor ZAR
+// (keyed by path), and the OoT3D model's local bbox diagonal (for auto-scale).
+int SoH3D_AutoModelId(const char* zarPath);
+float SoH3D_AutoModelHeight(int modelId);
+int SoH3D_AutoModelSkinned(int modelId);
 
 // SoH sceneNum -> OoT3D scene folder name (kSoH3dSceneNames). Generated, names only.
 #include "soh3d_scene_names.inc"
+// N64 object id -> OoT3D actor ZAR path (kSoH3dObjectZars). Generated, paths only.
+#include "soh3d_object_zars.inc"
 
 // Scene-geometry world transform (REPL-pokeable). OoT3D scene coords are already
 // WORLD-space at (apparently) the N64 unit scale, so the defaults are identity:
@@ -315,23 +322,169 @@ static SoH3D_ModelEntry sModelTable[] = {
       SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1 },
 };
 
+// ===========================================================================
+// SOH3D_AUTO — programmatic actor replacement with auto-scale.
+//
+// Instead of hand-listing every actor, an actor whose loaded object has a matching
+// OoT3D ZAR (kSoH3dObjectZars[objectId]) is replaced by that ZAR's main model, drawn
+// via the same direct-GL path. The world scale is NOT a magic constant: it is MEASURED
+// per object. The first time such an actor is seen, we let its N64 model draw and bracket
+// that draw with the OTR_G_SOH3D_MEASURE opcode; the interpreter accumulates the actor's
+// eye-space (== world-space) bbox and reports its diagonal back via SoH3D_MeasureResult.
+// scale = measured_N64_world_diag / OoT3D_model_local_diag. The next frame the OoT3D
+// model draws at that scale. Explicit sModelTable entries always win (they carry
+// calibrated scale + anim resolvers) unless SOH3D_AUTO=2 (validation: route ALL through
+// the auto path so the derived scale can be checked against the hand-tuned values).
+//
+// Gated behind env SOH3D_AUTO (0=off default, 1=fill non-table actors, 2=auto for ALL)
+// + REPL `auto`. Static props only animate correctly (no skeleton); skinned characters
+// come out in bind pose (frozen) — acceptable per the session-13 plan; sModelTable still
+// drives the calibrated/animated ones at AUTO=1.
+// ===========================================================================
+int gSoH3dAuto = -1; // -1 = uninit (read env), 0=off, 1=fill, 2=all (validation)
+
+static int SoH3D_AutoMode(void) {
+    if (gSoH3dAuto < 0) {
+        const char* v = getenv("SOH3D_AUTO");
+        gSoH3dAuto = (v != NULL && v[0] != '\0') ? atoi(v) : 0;
+    }
+    return gSoH3dAuto;
+}
+
+// Per-object auto-replace cache, indexed by object id.
+//   state: 0 unseen, 1 measuring (bracket emitted, awaiting result), 2 ready, 3 failed
+typedef struct {
+    float measuredH; // N64 world-space height from the measure pass (0 = none yet)
+    float scale;     // derived worldScale (valid when state==2)
+    int modelId;     // allocated GL model id (0 = not yet allocated; ids are >= 2000)
+    signed char state;
+    signed char tries; // measure attempts (cap so a never-drawn actor doesn't loop forever)
+} SoH3D_AutoEntry;
+static SoH3D_AutoEntry sAuto[ARRAY_COUNT(kSoH3dObjectZars)];
+static int sPendingMeasureKey = -1; // object id whose measure bracket is open this draw
+
+// Interpreter callback (libultraship): the measure bracket closed for `key` (object id)
+// with the actor's measured world-space bbox diagonal. Store it; the scale is derived
+// lazily in SoH3D_TryDrawActor next frame (needs the OoT3D model diagonal, loaded there).
+void SoH3D_MeasureResult(int key, float height) {
+    if (key >= 0 && key < (int)ARRAY_COUNT(sAuto)) {
+        sAuto[key].measuredH = height;
+    }
+}
+
+// Emit a measure bracket opcode (begin/end) into POLY_OPA around an actor's N64 draw.
+static void SoH3D_EmitMeasure(PlayState* play, int key, int begin) {
+    OPEN_DISPS(play->state.gfxCtx);
+    gSPSoH3DMeasure(POLY_OPA_DISP++, key, begin);
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// The object id an actor's geometry depends on (its loaded object bank slot), or -1.
+static int SoH3D_ActorObjectId(PlayState* play, Actor* actor) {
+    s8 idx = actor->objBankIndex;
+    if (idx < 0 || idx >= play->objectCtx.num) {
+        return -1;
+    }
+    return play->objectCtx.status[idx].id;
+}
+
+// Try the SOH3D_AUTO path for an actor with no explicit sModelTable entry. Returns 1 if
+// it drew the OoT3D model (caller skips N64), 0 to let the N64 model draw (possibly while
+// measuring it this frame). mode is SoH3D_AutoMode() (>=1).
+static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
+    int objId = SoH3D_ActorObjectId(play, actor);
+    SoH3D_AutoEntry* e;
+    const char* zar;
+    if (objId < 0 || objId >= (int)ARRAY_COUNT(kSoH3dObjectZars)) {
+        return 0;
+    }
+    zar = kSoH3dObjectZars[objId];
+    if (zar == NULL) {
+        return 0; // no OoT3D model for this object -> N64
+    }
+    e = &sAuto[objId];
+    if (e->state == 3) {
+        return 0; // known-unreplaceable -> N64
+    }
+    if (e->modelId == 0) {
+        e->modelId = SoH3D_AutoModelId(zar);
+        if (e->modelId < 0) {
+            e->state = 3;
+            return 0;
+        }
+        // Skinned characters render frozen (no anim) on the auto path, so skip them and
+        // leave the N64 model. Animated replacement via the N64 animation is a separate
+        // effort; calibrated/animated characters go through the explicit sModelTable.
+        if (SoH3D_AutoModelSkinned(e->modelId)) {
+            e->state = 3;
+            return 0;
+        }
+    }
+    if (e->state == 2) {
+        // Ready: draw the OoT3D model at the measured scale. No anim (static prop).
+        SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL);
+        return 1;
+    }
+    // state 0 or 1: derive scale if the measurement has arrived, else (re)measure.
+    if (e->measuredH > 0.0f) {
+        float modelH = SoH3D_AutoModelHeight(e->modelId);
+        if (modelH > 1e-3f) {
+            e->scale = e->measuredH / modelH;
+            e->state = 2;
+            if (SoH3D_AutoMode() >= 1) {
+                printf("SOH3D AUTO: obj 0x%x %s -> scale=%.5f (n64h=%.1f modelh=%.1f)\n", objId, zar, e->scale,
+                       e->measuredH, modelH);
+                fflush(stdout);
+            }
+            SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL);
+            return 1;
+        }
+        e->state = 3; // model has no geometry -> cannot scale -> N64
+        return 0;
+    }
+    // Need a measurement: bracket this actor's N64 draw (begin here, end in AfterActorDraw).
+    if (e->tries >= 8) {
+        e->state = 3; // never produced a measurement (always culled / off-screen) -> give up
+        return 0;
+    }
+    e->tries++;
+    e->state = 1;
+    SoH3D_EmitMeasure(play, objId, /*begin=*/1);
+    sPendingMeasureKey = objId;
+    return 0; // let the N64 model draw so it can be measured
+}
+
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     s32 i;
     if (!SoH3D_Enabled()) {
         return 0;
     }
-    for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
-        if (sModelTable[i].actorId == actor->id) {
-            if (sModelTable[i].glModelId >= 0) {
-                SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
-                                  sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim);
-            } else {
-                SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
+    // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
+    // routes everything through the auto path to check the derived scale.
+    if (SoH3D_AutoMode() != 2) {
+        for (i = 0; i < ARRAY_COUNT(sModelTable); i++) {
+            if (sModelTable[i].actorId == actor->id) {
+                if (sModelTable[i].glModelId >= 0) {
+                    SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
+                                      sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim);
+                } else {
+                    SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
+                }
+                return 1;
             }
-            return 1;
         }
     }
+    if (SoH3D_AutoMode() >= 1) {
+        return SoH3D_TryAuto(play, actor);
+    }
     return 0;
+}
+
+void SoH3D_AfterActorDraw(PlayState* play, Actor* actor) {
+    if (sPendingMeasureKey >= 0) {
+        SoH3D_EmitMeasure(play, sPendingMeasureKey, /*begin=*/0);
+        sPendingMeasureKey = -1;
+    }
 }
 
 int SoH3D_Enabled(void) {
@@ -651,6 +804,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dForceTime = (f1 < 0.0f) ? -1 : ((int)f1 & 0xFFFF);
         SoH3D_ReplReply(outPath, "time=%d (0x%04x)%s", gSoH3dForceTime, gSoH3dForceTime < 0 ? 0 : gSoH3dForceTime,
                         gSoH3dForceTime < 0 ? " (clock released)" : "");
+    } else if (strcmp(cmd, "auto") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dAuto = (int)f1;
+        SoH3D_ReplReply(outPath, "auto=%d (0=off,1=fill non-table actors,2=ALL/validation)", gSoH3dAuto);
+    } else if (strcmp(cmd, "autostate") == 0) {
+        // Dump every object that the auto path has touched: state + derived scale, so the
+        // measured scale can be checked against the hand-tuned values (pot/crate/bush/...).
+        s32 k;
+        int shown = 0;
+        for (k = 0; k < (s32)ARRAY_COUNT(sAuto); k++) {
+            if (sAuto[k].state != 0 || sAuto[k].measuredH > 0.0f) {
+                SoH3D_ReplReply(outPath, "auto[0x%x] %s state=%d scale=%.5f n64h=%.1f model=%d", k,
+                                kSoH3dObjectZars[k] ? kSoH3dObjectZars[k] : "?", sAuto[k].state, sAuto[k].scale,
+                                sAuto[k].measuredH, sAuto[k].modelId);
+                shown++;
+            }
+        }
+        if (!shown) {
+            SoH3D_ReplReply(outPath, "autostate: no auto-replaced objects seen yet (auto=%d)", SoH3D_AutoMode());
+        }
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.
@@ -793,7 +965,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimLive,
                         gSoH3dAnimFrame, gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat floorgrid dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable auto autostate scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat floorgrid dump state)", line);
     }
 }
 

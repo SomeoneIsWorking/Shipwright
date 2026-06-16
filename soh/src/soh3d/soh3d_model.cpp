@@ -12,12 +12,18 @@
 #include "asset/pica_texture.h"
 #include "fast/soh3d_gl.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+// Matches the typedef in soh3d.h (which this pure-C++ TU does not include). The N64
+// floor-height callback used by the terrain warp; soh3d.c supplies the implementation.
+typedef float (*SoH3D_FloorFn)(float x, float z);
 
 namespace {
 
@@ -51,6 +57,7 @@ struct LoadedModel {
     std::unique_ptr<SoH3D::Cmb> cmb;               // resident model (skeleton + bind matrices)
     std::unordered_map<std::string, std::unique_ptr<SoH3D::Csab>> anims; // cached by full name
     bool ok = false;
+    bool warped = false; // scene rooms: terrain Y already re-leveled to N64 collision
 };
 
 std::unordered_map<int, std::unique_ptr<LoadedModel>> g_loaded;
@@ -180,6 +187,134 @@ int provider(int modelId, const SoH3DGlGroup** groups, int* groupCount, const So
 
 bool g_registered = false;
 
+// --- Terrain warp: re-level the OoT3D room render mesh's walkable ground to the N64
+// collision floor (so Link, who walks on N64 collision, stands on the visible ground)
+// while preserving OoT3D cliff/mountain relief. We build a per-XZ displacement field
+// D(x,z) = N64_floor - OoT3D_floor on a grid (structure outliers rejected, hole-filled
+// from nearby ground), then shift every vertex Y by the bilinear sample. A whole column
+// (ground + any building/cliff above it) shifts by the same local ground correction, so
+// relief is preserved. Mirrors tools/soh3d_warp.py (the offline-verified oracle). ---
+
+constexpr float kWarpStep = 100.0f;   // grid spacing (world units)
+constexpr float kWarpReject = 120.0f; // |D| above this = structure, not ground -> hole-fill
+constexpr float kNoFloor = -31000.0f; // floorFn returns <= this when there is no floor
+
+// Topmost-or-nearest upward-facing (floor) triangle Y at (x,z) over a room's draw groups;
+// returns false if no floor covers the point. If hasTarget, picks the floor hit closest
+// to target (isolates the same surface across datasets, avoiding roof-vs-ground mixups).
+static bool meshFloor(const std::vector<SoH3D::CmbDrawGroup>& groups, float x, float z, bool hasTarget,
+                      float target, float* outY) {
+    bool found = false;
+    float best = 0.0f;
+    for (const auto& g : groups) {
+        const auto& v = g.verts;
+        for (size_t i = 0; i + 2 < v.size(); i += 3) {
+            const float* p0 = v[i].pos;
+            const float* p1 = v[i + 1].pos;
+            const float* p2 = v[i + 2].pos;
+            float ax = p0[0], az = p0[2], bx = p1[0], bz = p1[2], cx = p2[0], cz = p2[2];
+            float d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+            if (d > -1e-6f && d < 1e-6f) continue;
+            float u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+            float w = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+            float t = 1.0f - u - w;
+            if (u < -1e-4f || w < -1e-4f || t < -1e-4f) continue;
+            // floor test: world normal.y > 0
+            float ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+            float vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+            float ny = uz * vx - ux * vz;
+            float nl = std::sqrt((uy * vz - uz * vy) * (uy * vz - uz * vy) + ny * ny +
+                                 (ux * vy - uy * vx) * (ux * vy - uy * vx));
+            if (nl < 1e-9f || ny / nl <= 0.5f) continue;
+            float y = u * p0[1] + w * p1[1] + t * p2[1];
+            if (!found) {
+                best = y;
+                found = true;
+            } else if (hasTarget ? (std::fabs(y - target) < std::fabs(best - target)) : (y > best)) {
+                best = y;
+            }
+        }
+    }
+    if (found) *outY = best;
+    return found;
+}
+
+static void warpRoomMesh(LoadedModel* lm, SoH3D_FloorFn floorFn) {
+    if (lm->warped || lm->groups.empty() || !floorFn) return;
+    lm->warped = true; // mark up front: a failed/no-op warp must not retry every frame
+
+    // Mesh XZ bounds.
+    float minx = 1e30f, maxx = -1e30f, minz = 1e30f, maxz = -1e30f;
+    for (const auto& g : lm->groups)
+        for (const auto& v : g.verts) {
+            minx = std::min(minx, v.pos[0]); maxx = std::max(maxx, v.pos[0]);
+            minz = std::min(minz, v.pos[2]); maxz = std::max(maxz, v.pos[2]);
+        }
+    if (minx > maxx) return;
+    int nx = (int)((maxx - minx) / kWarpStep) + 2;
+    int nz = (int)((maxz - minz) / kWarpStep) + 2;
+    if ((long)nx * nz > 2000000) return; // sanity guard against pathological extents
+
+    std::vector<float> D((size_t)nx * nz, 0.0f);
+    std::vector<char> valid((size_t)nx * nz, 0);
+    int nValid = 0;
+    for (int j = 0; j < nz; j++) {
+        for (int i = 0; i < nx; i++) {
+            float x = minx + i * kWarpStep, z = minz + j * kWarpStep;
+            float n64 = floorFn(x, z);
+            if (n64 <= kNoFloor) continue;
+            float oot;
+            if (!meshFloor(lm->groups, x, z, true, n64, &oot)) continue;
+            float d = n64 - oot;
+            if (std::fabs(d) <= kWarpReject) {
+                D[(size_t)j * nx + i] = d;
+                valid[(size_t)j * nx + i] = 1;
+                nValid++;
+            }
+        }
+    }
+    if (nValid == 0) return;
+
+    // Hole-fill: BFS so structure / off-mesh cells inherit the nearest valid ground D.
+    std::vector<char> filled = valid;
+    std::vector<int> q;
+    q.reserve((size_t)nx * nz);
+    for (int k = 0; k < nx * nz; k++)
+        if (valid[k]) q.push_back(k);
+    for (size_t head = 0; head < q.size(); head++) {
+        int k = q[head], i = k % nx, j = k / nx;
+        const int di[4] = { 1, -1, 0, 0 }, dj[4] = { 0, 0, 1, -1 };
+        for (int e = 0; e < 4; e++) {
+            int ni = i + di[e], nj = j + dj[e];
+            if (ni < 0 || ni >= nx || nj < 0 || nj >= nz) continue;
+            int nk = nj * nx + ni;
+            if (!filled[nk]) {
+                D[nk] = D[k];
+                filled[nk] = 1;
+                q.push_back(nk);
+            }
+        }
+    }
+
+    auto sample = [&](float x, float z) -> float {
+        float fx = (x - minx) / kWarpStep, fz = (z - minz) / kWarpStep;
+        int ix = (int)std::floor(fx), iz = (int)std::floor(fz);
+        float tx = fx - ix, tz = fz - iz;
+        auto cell = [&](int i, int j) -> float {
+            i = i < 0 ? 0 : (i >= nx ? nx - 1 : i);
+            j = j < 0 ? 0 : (j >= nz ? nz - 1 : j);
+            return D[(size_t)j * nx + i];
+        };
+        return cell(ix, iz) * (1 - tx) * (1 - tz) + cell(ix + 1, iz) * tx * (1 - tz) +
+               cell(ix, iz + 1) * (1 - tx) * tz + cell(ix + 1, iz + 1) * tx * tz;
+    };
+
+    for (auto& g : lm->groups)
+        for (auto& v : g.verts)
+            v.pos[1] += sample(v.pos[0], v.pos[2]);
+    fprintf(stderr, "[SoH3D] terrain warp: %dx%d grid, %d ground cells, mesh re-leveled to N64\n", nx, nz, nValid);
+}
+
 } // namespace
 
 extern "C" {
@@ -210,6 +345,26 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum) {
     g_sceneRoomPaths.push_back(path);
     g_sceneRoomIds[path] = id;
     return id;
+}
+
+// Render-mesh floor height at world (x,z) for a loaded scene-room model (the warped
+// geometry, since the warp runs in-place). Returns 0 and leaves *outY untouched if no
+// floor covers the point or the model is not a loaded scene room. For verifying that the
+// warp made the drawn ground match N64 (compare to the REPL `floorat`).
+int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY) {
+    if (modelId < kSceneModelBase) return 0;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0;
+    return meshFloor(lm->groups, x, z, false, 0.0f, outY) ? 1 : 0;
+}
+
+// Re-level a scene-room model's render ground to the N64 collision floor (idempotent;
+// the warp runs once per model). `floorFn` raycasts the N64 collision (provided by
+// soh3d.c, which has the PlayState). Call before the room is first drawn.
+void SoH3D_WarpRoomToN64(int modelId, SoH3D_FloorFn floorFn) {
+    if (modelId < kSceneModelBase) return; // scene rooms only
+    LoadedModel* lm = loadModel(modelId);
+    if (lm && lm->ok) warpRoomMesh(lm, floorFn);
 }
 
 } // extern "C"

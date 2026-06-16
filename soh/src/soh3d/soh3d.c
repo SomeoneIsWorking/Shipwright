@@ -70,6 +70,38 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum);
 float gSoH3dSceneScale = 1.0f;
 float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 
+// --- Terrain warp: re-level the OoT3D room render ground to the N64 collision floor
+// (so Link, who walks on N64 collision, stands on the visible ground). The mesh re-level
+// runs in soh3d_model.cpp (SoH3D_WarpRoomToN64); this side supplies the N64 floor probe
+// and the on/off gate. Default ON; disable with env SOH3D_TERRAIN_WARP=0 for A/B. ---
+int gSoH3dTerrainWarp = 1;
+static PlayState* sWarpPlay = NULL; // current PlayState for the floor callback (set per draw)
+
+static int SoH3D_TerrainWarpEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("SOH3D_TERRAIN_WARP");
+        cached = (v != NULL && v[0] == '0') ? 0 : 1; // default ON
+    }
+    return cached && gSoH3dTerrainWarp;
+}
+
+// N64 collision floor height at world (x,z): raycast straight down through BgCheck from
+// high above (same as the REPL `floorat`). Used by SoH3D_WarpRoomToN64 to build the warp.
+static float SoH3D_N64FloorCb(float x, float z) {
+    Vec3f pos;
+    CollisionPoly* poly = NULL;
+    f32 y;
+    if (sWarpPlay == NULL) {
+        return -32000.0f;
+    }
+    pos.x = x;
+    pos.y = 10000.0f;
+    pos.z = z;
+    y = BgCheck_EntityRaycastFloor1(&sWarpPlay->colCtx, &poly, &pos);
+    return (poly != NULL) ? y : -32000.0f;
+}
+
 // --- Diagnostic camera override (REPL `cam` / `camorbit` / `camfreeze`) ---
 // When gSoH3dCamOverride != 0, SoH3D_ReplPoll forces play->view.eye/lookAt/up every
 // frame. The camera engine recomputes the view in Play_Update; the poll runs AFTER
@@ -344,6 +376,13 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
     // Debug isolation: SOH3D_SCENE=2 skips the N64 room mesh but draws NOTHING (no GL),
     // to bisect "skipping the N64 room corrupts state" vs "our GL draw corrupts state".
     if (sceneDivert != 2) {
+        // Re-level the room's render ground to the N64 collision floor (once per model).
+        // Done here (not in the lazy provider) because we have the PlayState/colCtx for
+        // the floor probe; the warp marks the model done so it is a one-time cost.
+        if (SoH3D_TerrainWarpEnabled()) {
+            sWarpPlay = play;
+            SoH3D_WarpRoomToN64(modelId, SoH3D_N64FloorCb);
+        }
         SoH3D_DrawRoomGL(play, modelId);
     }
     return 1; // drew the OoT3D room -> caller skips the N64 mesh
@@ -579,6 +618,23 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             }
         } else {
             SoH3D_ReplReply(outPath, "floorgrid needs: x0 z0 x1 z1 step path");
+        }
+    } else if (strcmp(cmd, "terrainwarp") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // Toggle the terrain re-level. Note: the warp is applied once per room model and
+        // CACHED, so toggling off does not un-warp already-loaded rooms (re-enter the
+        // scene, or use env SOH3D_TERRAIN_WARP=0 from launch, for a clean A/B).
+        gSoH3dTerrainWarp = (int)f1;
+        SoH3D_ReplReply(outPath, "terrainwarp=%d (applies to rooms loaded after this)", gSoH3dTerrainWarp);
+    } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
+        // the terrain warp this should match `floorat` (N64) on walkable ground.
+        const char* sn = SoH3D_SceneName(play);
+        int mid = (sn != NULL) ? SoH3D_RoomModelId(sn, play->roomCtx.curRoom.num) : -1;
+        float my;
+        if (mid >= 0 && SoH3D_RoomMeshFloorAt(mid, f1, f2, &my)) {
+            SoH3D_ReplReply(outPath, "meshfloor (%.0f,%.0f) y=%.2f (room model %d)", f1, f2, my, mid);
+        } else {
+            SoH3D_ReplReply(outPath, "meshfloor (%.0f,%.0f) no hit (model %d)", f1, f2, mid);
         }
     } else if (strcmp(cmd, "scale") == 0 && sscanf(line, "%*s %63s %f", arg, &f1) == 2) {
         SoH3D_ModelEntry* e = SoH3D_FindModel(arg);

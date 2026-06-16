@@ -32,6 +32,19 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // skips the N64 room mesh; returns 0 otherwise (caller draws the N64 room as normal).
 int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 
+// Floor-height callback: returns the N64 collision floor Y at world (x,z), or a value
+// <= -31000 if there is no floor. Provided by soh3d.c (it has the PlayState/colCtx).
+typedef float (*SoH3D_FloorFn)(float x, float z);
+
+// Re-level a loaded OoT3D scene-room render mesh's walkable ground to the N64 collision
+// floor (terrain-sink fix), preserving cliff/mountain relief. Idempotent per model.
+// Defined in soh3d_model.cpp; call from the room-draw hook before the room is drawn.
+void SoH3D_WarpRoomToN64(int modelId, SoH3D_FloorFn floorFn);
+
+// Query the (warped) OoT3D room render-mesh floor Y at world (x,z). Returns 1 + *outY
+// on a floor hit, else 0. For verifying the warp aligned the drawn ground to N64.
+int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
+
 // World scale for the OoT3D pot (OoT3D model units -> N64 world units). Tuned by
 // matching the rendered height of the OoT3D pot to the N64 pot at the same spot
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands

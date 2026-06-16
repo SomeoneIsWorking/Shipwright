@@ -2800,10 +2800,16 @@ void Actor_Draw(PlayState* play, Actor* actor) {
 
     // SoH3D: if this actor has an OoT3D model registered, draw it instead of the
     // N64 model. One central table-driven divert for all actors — see soh3d.c.
+    // SoH3D: lift the actor's RENDER position onto the visible OoT3D ground (render mesh is
+    // left untouched; inverse of the old terrain warp). Offset world.pos.y for the draw only,
+    // then restore so physics stays on N64 collision. 0 when SoH3D/scene not applicable.
+    f32 soh3dYOff = SoH3D_ActorRenderYOffset(play, actor);
+    actor->world.pos.y += soh3dYOff;
     if (!SoH3D_TryDrawActor(play, actor)) {
         actor->draw(actor, play);
         SoH3D_AfterActorDraw(play, actor); // close any auto-scale measure bracket
     }
+    actor->world.pos.y -= soh3dYOff;
 
     if (actor->colorFilterTimer != 0) {
         if (actor->colorFilterParams & 0x2000) {

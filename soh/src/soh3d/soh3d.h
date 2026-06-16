@@ -52,10 +52,20 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 // <= -31000 if there is no floor. Provided by soh3d.c (it has the PlayState/colCtx).
 typedef float (*SoH3D_FloorFn)(float x, float z);
 
-// Re-level a loaded OoT3D scene-room render mesh's walkable ground to the N64 collision
-// floor (terrain-sink fix), preserving cliff/mountain relief. Idempotent per model.
-// Defined in soh3d_model.cpp; call from the room-draw hook before the room is drawn.
-void SoH3D_WarpRoomToN64(int modelId, SoH3D_FloorFn floorFn);
+// Compute & cache an OoT3D scene-room's ground-delta field D(x,z)=N64_floor-OoT3D_floor (the
+// render mesh is left untouched; actors are offset by -D to stand on the visible OoT3D
+// ground). Idempotent per model. Call from the room-draw hook before the room is drawn.
+void SoH3D_ComputeRoomGroundDelta(int modelId, SoH3D_FloorFn floorFn);
+
+// Sample that field: *outD = N64_floor - OoT3D_floor at world (x,z). Returns 1 on success.
+int SoH3D_RoomGroundDeltaAt(int modelId, float x, float z, float* outD);
+
+// Render-Y offset for an actor so it stands on the visible OoT3D ground instead of floating
+// at the N64 collision height (= OoT3D_ground - N64_ground at the actor's XZ, i.e. -D).
+// Returns 0 when SoH3D is off, the scene has no OoT3D room, or no delta covers the actor.
+// Called from Actor_Draw: add to actor->world.pos.y around the draw, then subtract (physics
+// stays N64). The inverse of the old render warp (which distorted the mesh).
+float SoH3D_ActorRenderYOffset(PlayState* play, Actor* actor);
 
 // Query the (warped) OoT3D room render-mesh floor Y at world (x,z). Returns 1 + *outY
 // on a floor hit, else 0. For verifying the warp aligned the drawn ground to N64.

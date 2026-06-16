@@ -76,9 +76,16 @@ struct LoadedModel {
     std::unique_ptr<SoH3D::Cmb> cmb;               // resident model (skeleton + bind matrices)
     std::unordered_map<std::string, std::unique_ptr<SoH3D::Csab>> anims; // cached by full name
     bool ok = false;
-    bool warped = false;  // scene rooms: terrain Y already re-leveled to N64 collision
     bool skinned = false; // auto models: CMB has an articulated skeleton (>1 bone) -> the
                           // auto path skips it (no anim => T-pose), leaving it to N64.
+    // Per-XZ ground-delta field D(x,z) = N64_floor - OoT3D_floor for a scene room, computed
+    // once (deltaReady). The render mesh is LEFT UNTOUCHED (pixel-faithful OoT3D); instead
+    // actors are offset by -D so they stand on the visible OoT3D ground (inverse of the old
+    // render warp, which smeared at N64 collision steps). minx/minz/nx/nz/step describe the grid.
+    bool deltaReady = false;
+    std::vector<float> delta;
+    float dMinX = 0, dMinZ = 0, dStep = 100.0f;
+    int dNx = 0, dNz = 0;
 };
 
 std::unordered_map<int, std::unique_ptr<LoadedModel>> g_loaded;
@@ -388,13 +395,6 @@ bool g_registered = false;
 constexpr float kWarpStep = 100.0f;   // grid spacing (world units)
 constexpr float kWarpReject = 120.0f; // |D| above this = structure, not ground -> hole-fill
 constexpr float kNoFloor = -31000.0f; // floorFn returns <= this when there is no floor
-// Height-aware blend: a vertex at/just above the local ground gets the FULL re-level; a
-// vertex high above it (wall, tree canopy, fence top) fades to NO correction, so structures
-// don't float/sink when the ground shifts. Validated offline (tools/soh3d_warp_proto.py):
-// vs the old unblended warp, floating structure verts dropped 168->10 (Kokiri) and 31->4
-// (Kakariko) with the walkable-ground correction unchanged. Full below H0, zero above H1.
-constexpr float kWarpBlendH0 = 60.0f;
-constexpr float kWarpBlendH1 = 400.0f;
 
 // Topmost-or-nearest upward-facing (floor) triangle Y at (x,z) over a room's draw groups;
 // returns false if no floor covers the point. If hasTarget, picks the floor hit closest
@@ -436,11 +436,15 @@ static bool meshFloor(const std::vector<SoH3D::CmbDrawGroup>& groups, float x, f
     return found;
 }
 
-static void warpRoomMesh(LoadedModel* lm, SoH3D_FloorFn floorFn) {
-    if (lm->warped || lm->groups.empty() || !floorFn) return;
-    lm->warped = true; // mark up front: a failed/no-op warp must not retry every frame
+// Compute the per-XZ ground-delta field D(x,z) = N64_floor - OoT3D_floor for a scene room and
+// store it on the model. The render mesh is NOT modified — actors are later offset by -D (so
+// they stand on the visible OoT3D ground) via SoH3D_RoomGroundDeltaAt. This is the inverse of
+// the old render-mesh warp, which had to smooth D and so smeared corrections across N64
+// collision steps (ledges), wrongly lifting already-correct ground and floating fences/posts.
+static void computeRoomGroundDelta(LoadedModel* lm, SoH3D_FloorFn floorFn) {
+    if (lm->deltaReady || lm->groups.empty() || !floorFn) return;
+    lm->deltaReady = true; // mark up front: a failed/no-op compute must not retry every frame
 
-    // Mesh XZ bounds.
     float minx = 1e30f, maxx = -1e30f, minz = 1e30f, maxz = -1e30f;
     for (const auto& g : lm->groups)
         for (const auto& v : g.verts) {
@@ -472,7 +476,8 @@ static void warpRoomMesh(LoadedModel* lm, SoH3D_FloorFn floorFn) {
     }
     if (nValid == 0) return;
 
-    // Hole-fill: BFS so structure / off-mesh cells inherit the nearest valid ground D.
+    // Hole-fill: BFS so structure / off-mesh cells inherit the nearest valid ground D (so an
+    // actor over a spot with no OoT3D floor sample still gets a sane offset from nearby ground).
     std::vector<char> filled = valid;
     std::vector<int> q;
     q.reserve((size_t)nx * nz);
@@ -493,50 +498,9 @@ static void warpRoomMesh(LoadedModel* lm, SoH3D_FloorFn floorFn) {
         }
     }
 
-    auto sample = [&](float x, float z) -> float {
-        float fx = (x - minx) / kWarpStep, fz = (z - minz) / kWarpStep;
-        int ix = (int)std::floor(fx), iz = (int)std::floor(fz);
-        float tx = fx - ix, tz = fz - iz;
-        auto cell = [&](int i, int j) -> float {
-            i = i < 0 ? 0 : (i >= nx ? nx - 1 : i);
-            j = j < 0 ? 0 : (j >= nz ? nz - 1 : j);
-            return D[(size_t)j * nx + i];
-        };
-        return cell(ix, iz) * (1 - tx) * (1 - tz) + cell(ix + 1, iz) * tx * (1 - tz) +
-               cell(ix, iz + 1) * (1 - tx) * tz + cell(ix + 1, iz + 1) * tx * tz;
-    };
-
-    // Local-ground grid: the LOWEST OoT3D floor per cell (the walkable ground, not a roof),
-    // for the height-aware blend. kNoFloor where no floor covers the cell.
-    std::vector<float> G((size_t)nx * nz, kNoFloor);
-    for (int j = 0; j < nz; j++)
-        for (int i = 0; i < nx; i++) {
-            float x = minx + i * kWarpStep, z = minz + j * kWarpStep, gy;
-            if (meshFloor(lm->groups, x, z, /*hasTarget=*/false, 0.0f, &gy, /*lowest=*/true))
-                G[(size_t)j * nx + i] = gy;
-        }
-    auto groundAt = [&](float x, float z) -> float {
-        int ix = (int)std::floor((x - minx) / kWarpStep + 0.5f);
-        int iz = (int)std::floor((z - minz) / kWarpStep + 0.5f);
-        ix = ix < 0 ? 0 : (ix >= nx ? nx - 1 : ix);
-        iz = iz < 0 ? 0 : (iz >= nz ? nz - 1 : iz);
-        return G[(size_t)iz * nx + ix];
-    };
-
-    for (auto& g : lm->groups)
-        for (auto& v : g.verts) {
-            float gy = groundAt(v.pos[0], v.pos[2]);
-            float f;
-            if (gy <= kNoFloor) {
-                f = 0.0f; // no ground below this column -> canopy/void: leave it put
-            } else {
-                float h = v.pos[1] - gy;
-                f = h <= kWarpBlendH0 ? 1.0f
-                    : (h >= kWarpBlendH1 ? 0.0f : (kWarpBlendH1 - h) / (kWarpBlendH1 - kWarpBlendH0));
-            }
-            v.pos[1] += sample(v.pos[0], v.pos[2]) * f;
-        }
-    fprintf(stderr, "[SoH3D] terrain warp: %dx%d grid, %d ground cells, height-blended re-level to N64\n",
+    lm->delta = std::move(D);
+    lm->dMinX = minx; lm->dMinZ = minz; lm->dNx = nx; lm->dNz = nz; lm->dStep = kWarpStep;
+    fprintf(stderr, "[SoH3D] ground-delta field: %dx%d grid, %d ground cells (actors offset to OoT3D ground)\n",
             nx, nz, nValid);
 }
 
@@ -616,13 +580,34 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY) {
     return meshFloor(lm->groups, x, z, false, 0.0f, outY) ? 1 : 0;
 }
 
-// Re-level a scene-room model's render ground to the N64 collision floor (idempotent;
-// the warp runs once per model). `floorFn` raycasts the N64 collision (provided by
-// soh3d.c, which has the PlayState). Call before the room is first drawn.
-void SoH3D_WarpRoomToN64(int modelId, SoH3D_FloorFn floorFn) {
+// Compute & cache a scene-room model's ground-delta field (N64 - OoT3D per XZ), once.
+// `floorFn` raycasts the N64 collision (provided by soh3d.c, which has the PlayState). The
+// render mesh is NOT modified; actors are offset by -D via SoH3D_RoomGroundDeltaAt. Call
+// before the room is first drawn.
+void SoH3D_ComputeRoomGroundDelta(int modelId, SoH3D_FloorFn floorFn) {
     if (modelId < kSceneModelBase) return; // scene rooms only
     LoadedModel* lm = loadModel(modelId);
-    if (lm && lm->ok) warpRoomMesh(lm, floorFn);
+    if (lm && lm->ok) computeRoomGroundDelta(lm, floorFn);
+}
+
+// Sample the cached ground-delta field: *outD = N64_floor - OoT3D_floor at world (x,z) for a
+// scene room (bilinear). Returns 1 on success, 0 if the model isn't a scene room or the field
+// isn't ready. Actors add -(*outD) to their render Y to stand on the visible OoT3D ground.
+int SoH3D_RoomGroundDeltaAt(int modelId, float x, float z, float* outD) {
+    if (modelId < kSceneModelBase) return 0;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->deltaReady || lm->delta.empty()) return 0;
+    float fx = (x - lm->dMinX) / lm->dStep, fz = (z - lm->dMinZ) / lm->dStep;
+    int ix = (int)std::floor(fx), iz = (int)std::floor(fz);
+    float tx = fx - ix, tz = fz - iz;
+    auto cell = [&](int i, int j) -> float {
+        i = i < 0 ? 0 : (i >= lm->dNx ? lm->dNx - 1 : i);
+        j = j < 0 ? 0 : (j >= lm->dNz ? lm->dNz - 1 : j);
+        return lm->delta[(size_t)j * lm->dNx + i];
+    };
+    *outD = cell(ix, iz) * (1 - tx) * (1 - tz) + cell(ix + 1, iz) * tx * (1 - tz) +
+            cell(ix, iz + 1) * (1 - tx) * tz + cell(ix + 1, iz + 1) * tx * tz;
+    return 1;
 }
 
 } // extern "C"

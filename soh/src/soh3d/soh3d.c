@@ -666,16 +666,37 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
     // Debug isolation: SOH3D_SCENE=2 skips the N64 room mesh but draws NOTHING (no GL),
     // to bisect "skipping the N64 room corrupts state" vs "our GL draw corrupts state".
     if (sceneDivert != 2) {
-        // Re-level the room's render ground to the N64 collision floor (once per model).
-        // Done here (not in the lazy provider) because we have the PlayState/colCtx for
-        // the floor probe; the warp marks the model done so it is a one-time cost.
+        // Compute the room's ground-delta field (N64 - OoT3D per XZ) once. Done here (not in
+        // the lazy provider) because we have the PlayState/colCtx for the floor probe. The
+        // render mesh is left untouched; actors are offset by -D (SoH3D_ActorRenderYOffset)
+        // so they stand on the visible OoT3D ground.
         if (SoH3D_TerrainWarpEnabled()) {
             sWarpPlay = play;
-            SoH3D_WarpRoomToN64(modelId, SoH3D_N64FloorCb);
+            SoH3D_ComputeRoomGroundDelta(modelId, SoH3D_N64FloorCb);
         }
         SoH3D_DrawRoomGL(play, modelId);
     }
     return 1; // drew the OoT3D room -> caller skips the N64 mesh
+}
+
+float SoH3D_ActorRenderYOffset(PlayState* play, Actor* actor) {
+    const char* sceneName;
+    int modelId, room;
+    float d;
+    if (actor == NULL || !SoH3D_Enabled() || !SoH3D_TerrainWarpEnabled()) {
+        return 0.0f;
+    }
+    sceneName = SoH3D_SceneName(play);
+    if (sceneName == NULL) {
+        return 0.0f; // scene has no OoT3D mapping
+    }
+    // Use the actor's room when it has one, else the current room (e.g. -1 = persistent actor).
+    room = (actor->room >= 0) ? actor->room : play->roomCtx.curRoom.num;
+    modelId = SoH3D_RoomModelId(sceneName, room);
+    if (modelId < 0 || !SoH3D_RoomGroundDeltaAt(modelId, actor->world.pos.x, actor->world.pos.z, &d)) {
+        return 0.0f; // no OoT3D room / delta not ready -> no offset (actor stays at N64 height)
+    }
+    return -d; // -(N64 - OoT3D) = OoT3D_ground - N64_ground: lift the render onto the OoT3D ground
 }
 
 int SoH3D_AutoWarpEnabled(void) {

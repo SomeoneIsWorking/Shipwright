@@ -91,6 +91,8 @@ float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
 float SoH3D_AutoModelBoneLenSum(int modelId); // Σ|trans| of non-root OoT3D bones (skeleton size)
+const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
+void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate); // play OoT3D's own CSAB
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
@@ -913,51 +915,39 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
     }
     const SoH3DBoneMap* bm = gSoH3dPendingBoneMap;
     if (gSoH3dPendingAuto) {
-        int bones = SoH3D_AutoModelBoneCount(gSoH3dPendingModel);
-        // With a precomputed map the bone/limb counts legitimately differ (OoT3D adds root/
-        // reorient bones), so the map handles correspondence. WITHOUT a map we fall back to the
-        // identity assumption (bone i <- limb i), valid only when the counts match; else skip.
-        if (bm == NULL && bones != limbCount) {
-            static int loggedSkip[64];
-            static int nSkip = 0;
-            int seen = 0;
-            for (int i = 0; i < nSkip; i++)
-                if (loggedSkip[i] == gSoH3dPendingModel) { seen = 1; break; }
-            if (!seen && nSkip < (int)ARRAY_COUNT(loggedSkip)) {
-                loggedSkip[nSkip++] = gSoH3dPendingModel;
-                printf("SOH3D RETARGET: model %d SKIP -> N64 (no map; oot3d bones=%d != n64 limbCount=%d)\n",
-                       gSoH3dPendingModel, bones, limbCount);
-                fflush(stdout);
-            }
-            gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
-            gSoH3dPendingBoneMap = NULL;
-            return 0;
+        // OWN-ANIMATION path (user direction): the OoT3D model plays its OWN authored CSAB —
+        // correct for its own rig — instead of retargeting live N64 joints (which explodes on
+        // rigs whose rest pose differs from N64). We only need the SCALE (rest-skeleton
+        // bone-length ratio, same character) + a default/idle CSAB; no bone correspondence, no
+        // count guard, so ANY skinned auto-actor with a CSAB renders. Selecting the CSAB from the
+        // actor's live N64 animation (true N64->3DS anim mapping) is the next refinement.
+        float n64sum = SoH3D_N64SkelBoneLenSum(skeleton, limbCount);
+        float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
+        if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
+            gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
         }
+        const char* csab = SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
         {
-            static int loggedDraw[64];
-            static int nDraw = 0;
+            static int logged[64];
+            static int nLog = 0;
             int seen = 0;
-            for (int i = 0; i < nDraw; i++)
-                if (loggedDraw[i] == gSoH3dPendingModel) { seen = 1; break; }
-            if (!seen && nDraw < (int)ARRAY_COUNT(loggedDraw)) {
-                loggedDraw[nDraw++] = gSoH3dPendingModel;
-                printf("SOH3D RETARGET: model %d DRAW OoT3D %s (bones=%d limbCount=%d)\n", gSoH3dPendingModel,
-                       bm ? "[mapped]" : "[identity]", bones, limbCount);
+            for (int i = 0; i < nLog; i++)
+                if (logged[i] == gSoH3dPendingModel) { seen = 1; break; }
+            if (!seen && nLog < (int)ARRAY_COUNT(logged)) {
+                logged[nLog++] = gSoH3dPendingModel;
+                printf("SOH3D ANIM: model %d plays OoT3D anim='%s' scale=%.5f\n", gSoH3dPendingModel,
+                       csab ? csab : "(bind pose)", gSoH3dPendingScale);
                 fflush(stdout);
             }
         }
-        // Scale: precomputed scaleRatio when a map exists, else the runtime rest-pose bone-length
-        // ratio (N64 & OoT3D are the same character). Either replaces the bbox measure (giant).
-        if (bm != NULL) {
-            gSoH3dPendingScale = gSoH3dPendingActor->scale.x * bm->scaleRatio;
-        } else {
-            float n64sum = SoH3D_N64SkelBoneLenSum(skeleton, limbCount);
-            float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
-            if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
-                gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
-            }
-        }
+        SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate);
+        SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
+        gSoH3dPendingModel = -1;
+        gSoH3dPendingBoneMap = NULL;
+        return 1;
     }
+    // Hand-calibrated table entry (e.g. En_Ge1): retarget from the live N64 joints (the bone map,
+    // if any, fixes the correspondence). Kept for the few hand-verified rigs that work this way.
     if (bm != NULL) {
         SoH3D_UpdateAnimN64Mapped(gSoH3dPendingModel, (const s16*)&jointTable[1], limbCount, bm->boneToLimb,
                                   bm->boneCount);

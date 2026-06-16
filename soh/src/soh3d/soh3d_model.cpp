@@ -77,6 +77,8 @@ struct LoadedModel {
     std::unique_ptr<SoH3D::Zar> zar;               // resident archive (for CSAB lookup)
     std::unique_ptr<SoH3D::Cmb> cmb;               // resident model (skeleton + bind matrices)
     std::unordered_map<std::string, std::unique_ptr<SoH3D::Csab>> anims; // cached by full name
+    std::string defaultAnim; // chosen default (idle) CSAB base name, "" = none; computed lazily
+    int defaultAnimDone = 0; // 0 = not yet scanned
     bool ok = false;
     bool skinned = false; // auto models: CMB has an articulated skeleton (>1 bone) -> the
                           // auto path skips it (no anim => T-pose), leaving it to N64.
@@ -614,6 +616,37 @@ float SoH3D_AutoModelBoneLenSum(int modelId) {
     return sum;
 }
 
+// Default (idle) animation for an auto-replaced model: the OoT3D model plays its OWN authored
+// CSAB instead of retargeting N64 joints (which explodes on divergent rigs). Scans the ZAR's
+// Anim/*.csab and prefers an idle-looking one ("wait"/"stand"/"matsu"/"_w"), else the first.
+// Returns the base name (no "Anim/"/".csab"), or NULL if the model has no animations. Cached.
+const char* SoH3D_AutoModelDefaultAnim(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->zar) return nullptr;
+    if (!lm->defaultAnimDone) {
+        lm->defaultAnimDone = 1;
+        std::string first, idle;
+        for (const auto& f : lm->zar->files()) {
+            const std::string& n = f.name;
+            if (n.size() < 5 || n.compare(n.size() - 5, 5, ".csab") != 0) continue;
+            std::string base = n;
+            if (base.rfind("Anim/", 0) == 0) base = base.substr(5);
+            if (base.size() > 5) base = base.substr(0, base.size() - 5); // strip .csab
+            if (first.empty()) first = base;
+            std::string low = base;
+            for (char& c : low) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+            if (idle.empty() && (low.find("wait") != std::string::npos || low.find("stand") != std::string::npos ||
+                                 low.find("matsu") != std::string::npos || low.find("_w") != std::string::npos)) {
+                idle = base;
+            }
+        }
+        lm->defaultAnim = !idle.empty() ? idle : first;
+        fprintf(stderr, "[SoH3D] model %d default anim = '%s'\n", modelId,
+                lm->defaultAnim.empty() ? "(none)" : lm->defaultAnim.c_str());
+    }
+    return lm->defaultAnim.empty() ? nullptr : lm->defaultAnim.c_str();
+}
+
 // ORACLE DUMP (gated by the caller): print the OoT3D model's skeleton — per-bone rest
 // translation/rotation/scale + parent + world-space rest position (FK), plus mesh height and
 // the world rest extent (bone span). Used offline to design the programmatic N64<->OoT3D scale
@@ -820,6 +853,19 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     anim->skinMatrices(*lm->cmb, frame, sm);
     // vector<array<float,16>> is contiguous -> hand the renderer a flat float buffer.
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
+}
+
+// Drive an auto-replaced model by its OWN OoT3D CSAB (animName), with a self-managed per-model
+// playhead (the global gSoH3dGlAnim accumulators only cover the small hand-table ids). This is
+// the "own animation" path: the OoT3D model plays its authored animation (correct for its rig)
+// instead of retargeting N64 joints (which explodes on divergent rigs). animName==NULL -> bind
+// pose. The CSAB wraps the frame internally (Csab::animFrame REPEAT). `rate` = frames/draw.
+void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate) {
+    static std::unordered_map<int, float> frames;
+    if (!animName || !*animName) { frames.erase(modelId); SoH3D_UpdateAnim(modelId, nullptr, 0); return; }
+    float& f = frames[modelId];
+    SoH3D_UpdateAnim(modelId, animName, f);
+    f += rate;
 }
 
 } // extern "C"

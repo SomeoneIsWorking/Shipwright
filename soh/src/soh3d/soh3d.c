@@ -510,7 +510,10 @@ static void SoH3D_EmitModelDraw(PlayState* play, int modelId, Actor* actor, floa
     if (groundOffset != 0.0f) Matrix_Translate(0.0f, groundOffset, 0.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
-    gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
+    // High bit of the handle = "lit": apply the half-Lambert FORM term. Characters/props carry no
+    // baked vertex lighting, so without this they render flat; scene rooms (other emit site) keep
+    // their bit clear so their baked vColor AO isn't double-shaded.
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);
 }
 
@@ -1577,6 +1580,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "rotz") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dRotZ = f1;
         SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
+    } else if (strcmp(cmd, "light") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        extern int gSoH3dLightEnable; // libultraship soh3d_gl.cpp: character/prop form lighting
+        gSoH3dLightEnable = (int)f1;
+        SoH3D_ReplReply(outPath, "light=%d (1=half-Lambert form on characters/props, 0=flat tint)",
+                        gSoH3dLightEnable);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

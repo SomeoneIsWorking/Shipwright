@@ -31,6 +31,12 @@ class OoT3DCollision {
         uint16_t vA, vB, vC; // already masked to 0x1FFF
         int16_t nx, ny, nz;  // unit normal * 32767 (raw s16, matches SoH COLPOLY_SNORMAL)
         float dist;          // plane: n.p == -dist
+        uint16_t type;       // index into surfaces() (the +0x12 record field)
+    };
+    // SurfaceType: same bitfield layout as N64 OoT (same game). data0 low byte = bgCamIndex,
+    // (data0>>8)&0x1F = sceneExitIndex, plus floor/wall flags; data1 = floor/material props.
+    struct Surface {
+        uint32_t data0, data1;
     };
 
     explicit OoT3DCollision(const std::vector<uint8_t>& data);
@@ -39,12 +45,14 @@ class OoT3DCollision {
 
     const std::vector<Vert>& verts() const { return mVerts; }
     const std::vector<Poly>& polys() const { return mPolys; }
+    const std::vector<Surface>& surfaces() const { return mSurfaces; }
 
   private:
     bool mOk = false;
     std::string mErr;
     std::vector<Vert> mVerts;
     std::vector<Poly> mPolys;
+    std::vector<Surface> mSurfaces;
 };
 
 } // namespace SoH3D

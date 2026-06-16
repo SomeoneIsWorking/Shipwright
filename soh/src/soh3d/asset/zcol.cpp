@@ -49,13 +49,21 @@ OoT3DCollision::OoT3DCollision(const std::vector<uint8_t>& data) {
     }
     uint16_t nVtx = u16le(d, hdr + 0x1c);
     uint16_t nPoly = u16le(d, hdr + 0x1e);
+    uint16_t nSurf = u16le(d, hdr + 0x20);
     uint32_t pVtx = u32le(d, hdr + 0x28);
     uint32_t pPoly = u32le(d, hdr + 0x2c);
+    uint32_t pSurf = u32le(d, hdr + 0x30);
     size_t vbase = (size_t)pVtx + 0x10;
     size_t pbase = (size_t)pPoly - 2;
-    if (vbase + (size_t)nVtx * 6 > n || pbase + (size_t)nPoly * 20 > n) {
+    size_t sbase = (size_t)pSurf + 0x10; // surfaceType list (8 bytes/entry), same +0x10 as vtx
+    if (vbase + (size_t)nVtx * 6 > n || pbase + (size_t)nPoly * 20 > n ||
+        sbase + (size_t)nSurf * 8 > n) {
         mErr = "collision arrays out of bounds";
         return;
+    }
+    mSurfaces.reserve(nSurf);
+    for (uint16_t s = 0; s < nSurf; s++) {
+        mSurfaces.push_back({ u32le(d, sbase + (size_t)s * 8), u32le(d, sbase + (size_t)s * 8 + 4) });
     }
     mVerts.reserve(nVtx);
     for (uint16_t i = 0; i < nVtx; i++) {
@@ -73,6 +81,8 @@ OoT3DCollision::OoT3DCollision(const std::vector<uint8_t>& data) {
         p.ny = s16le(d, o + 10);
         p.nz = s16le(d, o + 12);
         p.dist = f32le(d, o + 14);
+        p.type = u16le(d, o + 18); // index into the surfaceType list
+        if (p.type >= nSurf) p.type = 0;
         // Skip degenerate / out-of-range polys.
         if (p.vA >= nVtx || p.vB >= nVtx || p.vC >= nVtx) continue;
         mPolys.push_back(p);

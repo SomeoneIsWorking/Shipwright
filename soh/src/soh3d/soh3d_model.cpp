@@ -745,15 +745,21 @@ extern "C" int SoH3D_LoadSceneCollisionRaw(const char* sceneName, SoH3D_RawColli
     if (!col.ok()) { fprintf(stderr, "[SoH3D] collision %s: %s\n", path.c_str(), col.error().c_str()); return 0; }
     const auto& verts = col.verts();
     const auto& polys = col.polys();
+    const auto& surfs = col.surfaces();
     if (verts.empty() || polys.empty()) return 0;
 
     out->numVerts = (int)verts.size();
     out->numPolys = (int)polys.size();
+    out->numSurf = (int)surfs.size();
     out->verts = (int16_t*)malloc(sizeof(int16_t) * 3 * verts.size());
     out->polyVtx = (uint16_t*)malloc(sizeof(uint16_t) * 3 * polys.size());
     out->polyNrm = (int16_t*)malloc(sizeof(int16_t) * 3 * polys.size());
     out->polyDist = (float*)malloc(sizeof(float) * polys.size());
-    if (!out->verts || !out->polyVtx || !out->polyNrm || !out->polyDist) {
+    out->polyType = (uint16_t*)malloc(sizeof(uint16_t) * polys.size());
+    out->surf0 = surfs.empty() ? nullptr : (uint32_t*)malloc(sizeof(uint32_t) * surfs.size());
+    out->surf1 = surfs.empty() ? nullptr : (uint32_t*)malloc(sizeof(uint32_t) * surfs.size());
+    if (!out->verts || !out->polyVtx || !out->polyNrm || !out->polyDist || !out->polyType ||
+        (!surfs.empty() && (!out->surf0 || !out->surf1))) {
         SoH3D_FreeRawCollision(out);
         return 0;
     }
@@ -770,8 +776,14 @@ extern "C" int SoH3D_LoadSceneCollisionRaw(const char* sceneName, SoH3D_RawColli
         out->polyNrm[k * 3 + 1] = polys[k].ny;
         out->polyNrm[k * 3 + 2] = polys[k].nz;
         out->polyDist[k] = polys[k].dist;
+        out->polyType[k] = polys[k].type;
     }
-    printf("[SoH3D] loaded scene collision %s: %d verts, %d polys\n", path.c_str(), out->numVerts, out->numPolys);
+    for (size_t s = 0; s < surfs.size(); s++) {
+        out->surf0[s] = surfs[s].data0;
+        out->surf1[s] = surfs[s].data1;
+    }
+    printf("[SoH3D] loaded scene collision %s: %d verts, %d polys, %d surface types\n",
+           path.c_str(), out->numVerts, out->numPolys, out->numSurf);
     return 1;
 }
 
@@ -781,5 +793,8 @@ extern "C" void SoH3D_FreeRawCollision(SoH3D_RawCollision* out) {
     free(out->polyVtx);
     free(out->polyNrm);
     free(out->polyDist);
+    free(out->polyType);
+    free(out->surf0);
+    free(out->surf1);
     memset(out, 0, sizeof(*out));
 }

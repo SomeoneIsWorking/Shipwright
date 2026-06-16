@@ -20,7 +20,11 @@ typedef struct {
     uint16_t* polyVtx;  // 3*numPolys: vA,vB,vC (already & 0x1FFF)
     int16_t* polyNrm;   // 3*numPolys: nx,ny,nz
     float* polyDist;    // numPolys
+    uint16_t* polyType; // numPolys: index into the surfaceType list
     int numPolys;
+    uint32_t* surf0;    // numSurf: SurfaceType data[0] (N64 layout: cam/exit/flags)
+    uint32_t* surf1;    // numSurf: SurfaceType data[1] (floor/material props)
+    int numSurf;
 } SoH3D_RawCollision;
 
 // Load + parse <scene>_info.zsi collision for sceneName (the OoT3D folder name, e.g.

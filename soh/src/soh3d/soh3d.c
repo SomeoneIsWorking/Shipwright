@@ -175,7 +175,7 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
     Vec3s* vtx;
     CollisionPoly* poly;
     int i;
-    int camNormalIdx = 0; // camDataList index of a CAM_SET_NORMAL0 (follow) entry for floors
+    int nSurf;         // surfaceType entries allocated (>=1)
     s16 minX, minY, minZ, maxX, maxY, maxZ;
     size_t camLen = 1; // entries in sCamData (>=1: a dummy when no N64 list)
 
@@ -203,10 +203,11 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
     sCamData = NULL;
     sWaterBoxes = NULL;
 
+    nSurf = (raw.numSurf > 0) ? raw.numSurf : 1;
     h = (CollisionHeader*)calloc(1, sizeof(CollisionHeader));
     vtx = (Vec3s*)malloc(sizeof(Vec3s) * raw.numVerts);
     poly = (CollisionPoly*)calloc(raw.numPolys, sizeof(CollisionPoly));
-    sSurfaceTypes = (SurfaceType*)calloc(1, sizeof(SurfaceType));      // one generic ground type
+    sSurfaceTypes = (SurfaceType*)calloc(nSurf, sizeof(SurfaceType));
     if (h == NULL || vtx == NULL || poly == NULL || sSurfaceTypes == NULL) {
         free(h); free(vtx); free(poly); free(sSurfaceTypes);
         sHeader = NULL; sSurfaceTypes = NULL;
@@ -214,49 +215,41 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         return NULL;
     }
 
-    // Waterboxes + camera regions are gameplay volumes that actors index by [0]/by camId and
-    // DEREFERENCE (e.g. Bg_Spot01_Idomizu writes waterBoxes[0].ySurface -> NULL crash if absent).
-    // We have not REd those OoT3D sub-lists yet; copy them from the N64 header (same world space)
-    // so water/camera gameplay keeps working while floors+walls come from OoT3D. Deep-copy the
-    // arrays (the CamData entries keep their N64 camPosData pointers, which persist for the scene).
+    // SurfaceTypes carry the per-poly gameplay semantics: data[0] low byte = camDataIndex (which
+    // camera region), (data[0]>>8)&0x1F = scene EXIT index (how Link leaves the area), plus
+    // floor/wall flags; data[1] = floor type / material. OoT3D uses the SAME bitfield layout as
+    // N64 (same game), and its cam/exit indices line up with the N64 cameraDataList / exit list
+    // SoH loads (same scenes) — so copy them verbatim. This is what makes exits, per-region
+    // cameras, and special floors work (vs the earlier single generic type that broke exits +
+    // forced one camera scene-wide).
+    for (i = 0; i < raw.numSurf; i++) {
+        sSurfaceTypes[i].data[0] = raw.surf0[i];
+        sSurfaceTypes[i].data[1] = raw.surf1[i];
+    }
+
+    // Waterboxes + camera REGION data are gameplay volumes actors index + DEREFERENCE (e.g.
+    // Bg_Spot01_Idomizu writes waterBoxes[0].ySurface -> NULL crash if absent; the surfaceType cam
+    // index selects cameraDataList[idx]). We have not REd those OoT3D sub-lists yet; copy them from
+    // the N64 header (same world space + same indices since same game). The CamData entries keep
+    // their N64 camPosData pointers (valid for the scene), so fixed/pivot cameras still work.
     if (n64 != NULL && n64->numWaterBoxes > 0 && n64->waterBoxes != NULL) {
         sWaterBoxes = (WaterBox*)malloc(sizeof(WaterBox) * n64->numWaterBoxes);
         if (sWaterBoxes != NULL) {
             memcpy(sWaterBoxes, n64->waterBoxes, sizeof(WaterBox) * n64->numWaterBoxes);
         }
     }
-    // Camera: every floor poly shares ONE generic SurfaceType, whose camDataIndex (data[0]&0xFF)
-    // selects cameraDataList[idx].cameraSType as the scene-follow camera setting. If that pointed
-    // at N64 camData[0] (often a FIXED/pivot cam), the camera would stop following Link. So make
-    // the generic floor use a CAM_SET_NORMAL0 (normal follow) entry: reuse one from the copied N64
-    // list if present, else append one. (Per-region cameras need the OoT3D surfaceType list, TODO.)
-    {
-        size_t n = (n64 != NULL && n64->cameraDataList != NULL && n64->cameraDataListLen > 0)
-                       ? (size_t)n64->cameraDataListLen : 0;
-        sCamData = (CamData*)calloc(n + 1, sizeof(CamData)); // +1 slot for an appended normal cam
+    if (n64 != NULL && n64->cameraDataList != NULL && n64->cameraDataListLen > 0) {
+        sCamData = (CamData*)malloc(sizeof(CamData) * n64->cameraDataListLen);
         if (sCamData != NULL) {
-            if (n > 0) memcpy(sCamData, n64->cameraDataList, sizeof(CamData) * n);
-            camNormalIdx = -1;
-            for (i = 0; i < (int)n; i++) {
-                if (sCamData[i].cameraSType == CAM_SET_NORMAL0) { camNormalIdx = i; break; }
-            }
-            if (camNormalIdx < 0) { // none in the N64 list -> use the appended entry
-                sCamData[n].cameraSType = CAM_SET_NORMAL0;
-                sCamData[n].numCameras = 0;
-                sCamData[n].camPosData = NULL;
-                camNormalIdx = (int)n;
-                camLen = n + 1;
-            } else {
-                camLen = n; // appended slot unused (still allocated, harmless)
-            }
+            memcpy(sCamData, n64->cameraDataList, sizeof(CamData) * n64->cameraDataListLen);
+            camLen = n64->cameraDataListLen;
         }
     }
     if (sCamData == NULL) {
-        sCamData = (CamData*)calloc(1, sizeof(CamData)); // fallback (CAM_SET_NONE)
+        sCamData = (CamData*)calloc(1, sizeof(CamData)); // fallback: CAM_SET_NORMAL0 follow cam
         sCamData[0].cameraSType = CAM_SET_NORMAL0;
-        camLen = 1; camNormalIdx = 0;
+        camLen = 1;
     }
-    sSurfaceTypes[0].data[0] = (u32)(camNormalIdx & 0xFF); // floors -> normal follow camera
 
     minX = maxX = raw.verts[0]; minY = maxY = raw.verts[1]; minZ = maxZ = raw.verts[2];
     for (i = 0; i < raw.numVerts; i++) {
@@ -267,7 +260,8 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
     }
     for (i = 0; i < raw.numPolys; i++) {
-        poly[i].type = 0; // index into the single SurfaceType
+        u16 ty = raw.polyType[i];
+        poly[i].type = (ty < (u16)raw.numSurf) ? ty : 0; // index into surfaceTypeList
         poly[i].flags_vIA = raw.polyVtx[i * 3 + 0] & 0x1FFF;
         poly[i].flags_vIB = raw.polyVtx[i * 3 + 1] & 0x1FFF;
         poly[i].vIC = raw.polyVtx[i * 3 + 2] & 0x1FFF;
@@ -1085,6 +1079,20 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             COLPOLY_GET_NORMAL(poly->normal.y));
         } else {
             SoH3D_ReplReply(outPath, "floorat (%.0f,%.0f) NO FLOOR", f1, f2);
+        }
+    } else if (strcmp(cmd, "exitat") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        // Report the floor poly's SurfaceType gameplay data at (x,z): scene exit index, camera
+        // index, and floor type. Verifies the OoT3D surfaceType list is wired (exits/cameras).
+        Vec3f pos = { f1, 10000.0f, f2 };
+        CollisionPoly* poly = NULL;
+        f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &pos);
+        if (poly != NULL) {
+            u32 exitIdx = SurfaceType_GetSceneExitIndex(&play->colCtx, poly, BGCHECK_SCENE);
+            u32 camIdx = SurfaceType_GetCamDataIndex(&play->colCtx, poly, BGCHECK_SCENE);
+            SoH3D_ReplReply(outPath, "exitat (%.0f,%.0f) y=%.1f type=%d exit=%d cam=%d",
+                            f1, f2, y, poly->type, exitIdx, camIdx);
+        } else {
+            SoH3D_ReplReply(outPath, "exitat (%.0f,%.0f) NO FLOOR", f1, f2);
         }
     } else if (strcmp(cmd, "floorgrid") == 0) {
         // Batch raycast a regular XZ grid into a CSV (looped in C -> one FIFO round-trip,

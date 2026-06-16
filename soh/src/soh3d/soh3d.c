@@ -1256,6 +1256,33 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)",
                         play->sceneNum, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z,
                         p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z);
+    } else if (strcmp(cmd, "actors") == 0) {
+        // List actors (id + object id + world pos + distance from Link), so an NPC can be
+        // located and framed (cam/tp) without hunting. Default: NPC category only; "actors all"
+        // lists every category. Used to drive character-replacement verification.
+        Player* p = GET_PLAYER(play);
+        int wantAll = (strstr(line, "all") != NULL);
+        s32 cat, shown = 0;
+        for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+            if (!wantAll && cat != ACTORCAT_NPC && cat != ACTORCAT_ENEMY && cat != ACTORCAT_BOSS) {
+                continue;
+            }
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL && shown < 40; a = a->next) {
+                float dx = a->world.pos.x - p->actor.world.pos.x;
+                float dz = a->world.pos.z - p->actor.world.pos.z;
+                int objId = -1;
+                if (a->objBankIndex >= 0 && a->objBankIndex < play->objectCtx.num) {
+                    objId = play->objectCtx.status[a->objBankIndex].id;
+                }
+                SoH3D_ReplReply(outPath, "actor id=0x%x cat=%d obj=0x%x pos=(%.0f,%.0f,%.0f) dist=%.0f", a->id, cat,
+                                objId, a->world.pos.x, a->world.pos.y, a->world.pos.z, sqrtf(dx * dx + dz * dz));
+                shown++;
+            }
+        }
+        if (!shown) {
+            SoH3D_ReplReply(outPath, "actors: none in the requested categories");
+        }
     } else if (strcmp(cmd, "floorat") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Authoritative N64-collision floor height at world (x,z): raycast straight down
         // through SoH's BgCheck from high above. This is exactly the surface Link stands

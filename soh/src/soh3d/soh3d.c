@@ -886,6 +886,42 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         if (!shown) {
             SoH3D_ReplReply(outPath, "autostate: no auto-replaced objects seen yet (auto=%d)", SoH3D_AutoMode());
         }
+    } else if (strcmp(cmd, "jointdump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
+        // Dump the live En_Ge1 SkelAnime jointTable to a CSV, for the QUANTITATIVE
+        // N64->OoT3D retarget derivation: idx 0 = root translation (Vec3s), idx 1..limbCount =
+        // per-limb binang rotations (x,y,z). Combined offline with the CMB rest rotations and
+        // the CSAB ge1_s_wait animated rotations (tools/soh3d_anim_derive.py) to solve the
+        // per-limb rotation convention numerically instead of eyeballing rotation orders.
+        EnGe1* ge = NULL;
+        s32 cat;
+        for (cat = 0; cat < ACTORCAT_MAX && ge == NULL; cat++) {
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL; a = a->next) {
+                if (a->id == ACTOR_EN_GE1) { ge = (EnGe1*)a; break; }
+            }
+        }
+        if (ge == NULL || ge->skelAnime.jointTable == NULL || ge->skelAnime.limbCount <= 0) {
+            SoH3D_ReplReply(outPath, "jointdump: no live En_Ge1 with a jointTable found");
+        } else {
+            FILE* jf = fopen(path, "w");
+            if (jf == NULL) {
+                SoH3D_ReplReply(outPath, "jointdump: cannot open %s", path);
+            } else {
+                const char* n64 = (const char*)ge->animation;
+                s32 li;
+                fprintf(jf, "# En_Ge1 jointTable; limbCount=%d curFrame=%.3f animLength=%.1f anim=%s\n",
+                        ge->skelAnime.limbCount, ge->skelAnime.curFrame, ge->skelAnime.animLength,
+                        n64 ? n64 : "(null)");
+                fprintf(jf, "idx,x,y,z\n");
+                for (li = 0; li <= ge->skelAnime.limbCount; li++) {
+                    Vec3s* j = &ge->skelAnime.jointTable[li];
+                    fprintf(jf, "%d,%d,%d,%d\n", li, j->x, j->y, j->z);
+                }
+                fclose(jf);
+                SoH3D_ReplReply(outPath, "jointdump -> %s (limbCount=%d curFrame=%.2f anim=%s)", path,
+                                ge->skelAnime.limbCount, ge->skelAnime.curFrame, n64 ? n64 : "(null)");
+            }
+        }
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.

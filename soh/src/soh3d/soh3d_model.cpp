@@ -617,10 +617,14 @@ static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
 // actor's per-limb rotations (jointTable[1..limbCount], each a Vec3s of binang x,y,z; the
 // caller skips jointTable[0] which is the root translation). OoT3D bone id i corresponds to
 // N64 limb (i+1) for same-rig characters (Grezzo preserved the skeletons), so bone i takes
-// jointRots[i]. The N64 bind rotation is identity, so jointTable is the rotation DELTA from
-// rest; we apply it in the bone's post-rest local frame: L = T(rest)·R(rest)·R(n64Δ)·S(rest)
-// — at delta=identity this reproduces the OoT3D bind pose. skin = animWorld · bindInverse,
-// matching csab.cpp::skinMatrices. Mirrors that function but driven by N64 joints not a CSAB.
+// jointRots[i]. The N64 jointTable already encodes each limb's FULL local orientation (the
+// standing pose's big rotations included -- e.g. En_Ge1 limb1 = (-90,0,-90), matching OoT3D
+// bone0's rest), exactly like a CSAB rotation track REPLACES the bone's rest rotation. So we
+// use the N64 rotation as the local rotation directly (Rz*Ry*Rx, same order as csab.cpp) and
+// do NOT compose it with the CMB rest rotation -- composing double-applies the orientation and
+// contorts the pose. Convention derived QUANTITATIVELY (tools/soh3d_anim_derive.py: diff CSAB
+// ge1_s_wait skin matrices vs N64-joint-driven ones -> struct=replace, euler order ZYX wins
+// over every compose variant). L = T(rest)*Rz*Ry*Rx(n64)*S(rest); skin = animWorld*bindInverse.
 extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int rotCount) {
     using namespace SoH3D;
     LoadedModel* lm = loadModel(modelId);
@@ -639,18 +643,20 @@ extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int r
         if (id < 0 || (size_t)id >= aw.size() || !byId[id]) return matId();
         if (done[id]) return aw[id];
         const CmbBone* bn = byId[id];
-        Mat4 Rrest = matMul(matMul(matRz(bn->rot[2]), matRy(bn->rot[1])), matRx(bn->rot[0]));
         Mat4 L = matT(bn->trans[0], bn->trans[1], bn->trans[2]);
         if (id < rotCount) {
-            // N64 joint rotation is about the joint in the PARENT frame, so it precedes the
-            // bone's rest mesh-orientation: L = T · R(n64) · R(rest) · S. At n64=identity this
-            // is the OoT3D bind pose, so the rig stays consistent with bindInverse.
+            // Use the N64 joint rotation AS the bone's local rotation (replacing the CMB rest
+            // rotation), in csab.cpp's Rz*Ry*Rx order. The jointTable already carries the full
+            // limb orientation, so composing it with the rest rotation double-applies and
+            // contorts (verified by tools/soh3d_anim_derive.py: replace beats compose).
             float rx = jointRots[id * 3 + 0] * kBinangToRad;
             float ry = jointRots[id * 3 + 1] * kBinangToRad;
             float rz = jointRots[id * 3 + 2] * kBinangToRad;
             L = matMul(L, matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)));
+        } else {
+            // No live joint for this bone: keep its CMB rest orientation (bind pose).
+            L = matMul(L, matMul(matMul(matRz(bn->rot[2]), matRy(bn->rot[1])), matRx(bn->rot[0])));
         }
-        L = matMul(L, Rrest);
         L = matMul(L, matS(bn->scale[0], bn->scale[1], bn->scale[2]));
         Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
         aw[id] = W;

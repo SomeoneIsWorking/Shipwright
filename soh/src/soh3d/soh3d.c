@@ -77,6 +77,25 @@ float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 int gSoH3dTerrainWarp = 1;
 static PlayState* sWarpPlay = NULL; // current PlayState for the floor callback (set per draw)
 
+// --- Force time-of-day (debugging): when gSoH3dForceTime >= 0, pin gSaveContext.dayTime
+// to it every frame so a scene loads/stays at a chosen time (e.g. day instead of night).
+// 0x8000 = noon, 0x4000 = dawn, 0xC000 = dusk, 0x0000 = midnight. Set via env SOH3D_TIME
+// (decimal or 0xHEX) at launch, or live via REPL `time`. -1 = leave the game's clock alone. ---
+int gSoH3dForceTime = -1;
+
+static void SoH3D_InitForceTime(void) {
+    static int done = 0;
+    const char* v;
+    if (done) {
+        return;
+    }
+    done = 1;
+    v = getenv("SOH3D_TIME");
+    if (v != NULL && v[0] != '\0') {
+        gSoH3dForceTime = (int)strtol(v, NULL, 0); // 0 base: accepts 0x.. hex or decimal
+    }
+}
+
 static int SoH3D_TerrainWarpEnabled(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -625,6 +644,12 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // scene, or use env SOH3D_TERRAIN_WARP=0 from launch, for a clean A/B).
         gSoH3dTerrainWarp = (int)f1;
         SoH3D_ReplReply(outPath, "terrainwarp=%d (applies to rooms loaded after this)", gSoH3dTerrainWarp);
+    } else if (strcmp(cmd, "time") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // Pin time-of-day (0x8000=noon, 0x4000=dawn, 0xC000=dusk, 0=midnight). Negative
+        // releases the game clock. Accepts a raw u16 value.
+        gSoH3dForceTime = (f1 < 0.0f) ? -1 : ((int)f1 & 0xFFFF);
+        SoH3D_ReplReply(outPath, "time=%d (0x%04x)%s", gSoH3dForceTime, gSoH3dForceTime < 0 ? 0 : gSoH3dForceTime,
+                        gSoH3dForceTime < 0 ? " (clock released)" : "");
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.
@@ -779,6 +804,15 @@ void SoH3D_ReplPoll(PlayState* play) {
     char* start;
     char* nl;
     ssize_t n;
+
+    // Force time-of-day (e.g. day instead of night). Applied every frame, before the
+    // FIFO handling, so it holds regardless of whether the REPL is connected.
+    SoH3D_InitForceTime();
+    if (gSoH3dForceTime >= 0) {
+        gSaveContext.dayTime = (u16)gSoH3dForceTime;
+        gSaveContext.skyboxTime = (u16)gSoH3dForceTime;
+    }
+
     if (fd == -2) {
         const char* p = getenv("SOH3D_REPL");
         if (p == NULL || p[0] == '\0') {

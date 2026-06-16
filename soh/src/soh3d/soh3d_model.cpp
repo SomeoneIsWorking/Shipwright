@@ -115,6 +115,15 @@ static void buildFromCmb(LoadedModel* out) {
         cg.alphaRef = mat ? mat->alpha_ref : 0.0f;
         cg.wrapS = mat ? mat->wrap_s : 0x2901;
         cg.wrapT = mat ? mat->wrap_t : 0x2901;
+        cg.blendEnable = mat && mat->blend_enable ? 1 : 0;
+        cg.blendSrcRGB = mat ? mat->blend_src_rgb : 0x0302;
+        cg.blendDstRGB = mat ? mat->blend_dst_rgb : 0x0303;
+        cg.blendEqRGB = mat ? mat->blend_eq_rgb : 0x8006;
+        cg.blendSrcA = mat ? mat->blend_src_a : 0x0001;
+        cg.blendDstA = mat ? mat->blend_dst_a : 0x0000;
+        cg.blendEqA = mat ? mat->blend_eq_a : 0x8006;
+        cg.depthWrite = mat ? (mat->depth_write ? 1 : 0) : 1;
+        for (int k = 0; k < 4; k++) cg.blendColor[k] = mat ? mat->blend_color[k] : (k == 3 ? 1.0f : 0.0f);
         out->cGroups.push_back(cg);
     }
     out->ok = true;

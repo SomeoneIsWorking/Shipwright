@@ -28,6 +28,16 @@ struct CmbMaterial {
     int cull = 0;
     bool alpha_test = false;
     float alpha_ref = 0;
+    // Blend state. The CMB stores GL-ES enum values directly (e.g. 0x0302 GL_SRC_ALPHA,
+    // 0x0001 GL_ONE, 0x8006 GL_FUNC_ADD), identical to desktop GL — used verbatim. When
+    // blend_enable is false the material is opaque (alpha-test only). Additive light-shaft
+    // materials have dst_rgb = GL_ONE; without honoring this they render opaque.
+    bool blend_enable = false;
+    uint16_t blend_src_rgb = 0x0302, blend_dst_rgb = 0x0303; // GL_SRC_ALPHA / GL_ONE_MINUS_SRC_ALPHA
+    uint16_t blend_src_a = 0x0001, blend_dst_a = 0x0000;     // GL_ONE / GL_ZERO
+    uint16_t blend_eq_rgb = 0x8006, blend_eq_a = 0x8006;     // GL_FUNC_ADD
+    float blend_color[4] = { 0, 0, 0, 1 };                   // for CONSTANT_COLOR/ALPHA factors
+    bool depth_write = true;                                 // translucent volumes usually disable this
 };
 
 struct CmbTexture {

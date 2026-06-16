@@ -144,6 +144,17 @@ bool Cmb::parseMats() {
         m.rot = f32(b, co + 20);
         m.alpha_test = u8(b, o + 0x130) != 0;
         m.alpha_ref = u8(b, o + 0x131) / 255.0f;
+        // Blend state (GL-ES enum values, used verbatim — see CmbMaterial). Offsets per
+        // noclip readMatsChunk (Ocarina v6 layout); verified against real room materials.
+        m.depth_write = u8(b, o + 0x135) != 0;
+        m.blend_enable = u8(b, o + 0x138) != 0;
+        m.blend_src_rgb = u16(b, o + 0x13C);
+        m.blend_dst_rgb = u16(b, o + 0x13E);
+        m.blend_eq_rgb = u16(b, o + 0x140);
+        m.blend_src_a = u16(b, o + 0x144);
+        m.blend_dst_a = u16(b, o + 0x146);
+        m.blend_eq_a = u16(b, o + 0x148);
+        for (int k = 0; k < 4; k++) m.blend_color[k] = f32(b, o + 0x14C + 4 * k);
         o += stride;
     }
     return true;

@@ -862,8 +862,16 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 // pose. The CSAB wraps the frame internally (Csab::animFrame REPEAT). `rate` = frames/draw.
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate) {
     static std::unordered_map<int, float> frames;
-    if (!animName || !*animName) { frames.erase(modelId); SoH3D_UpdateAnim(modelId, nullptr, 0); return; }
+    static std::unordered_map<int, std::string> lastCsab; // per-model: which CSAB the playhead is on
+    if (!animName || !*animName) {
+        frames.erase(modelId); lastCsab.erase(modelId);
+        SoH3D_UpdateAnim(modelId, nullptr, 0); return;
+    }
+    // Restart the playhead from 0 whenever the selected CSAB changes, so a one-shot (a wave, a
+    // hand-off) plays from its start instead of resuming at the previous anim's accumulated frame.
     float& f = frames[modelId];
+    std::string& prev = lastCsab[modelId];
+    if (prev != animName) { f = 0.0f; prev = animName; }
     SoH3D_UpdateAnim(modelId, animName, f);
     f += rate;
 }

@@ -41,6 +41,12 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime);
 // model (caller skips the N64 limbs).
 int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable);
 
+// Record the live N64 animation pointer (an OTR path string in SoH) for the actor currently
+// deferred for replacement, so the auto CSAB resolver can map it to the matching OoT3D CSAB. Called
+// from the SkelAnime-bearing draw wrappers (func_80034BA0/CC4) whose inner SkelAnime_DrawFlex (the
+// raw hook) has only the skeleton, not the animation. No-op when no replacement is pending.
+void SoH3D_SetCurAnim(void* animation);
+
 // Draws an OoT3D model display list at an actor's world position/yaw with an
 // explicit world scale (OoT3D model units -> N64 world units). Builds its own
 // MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so

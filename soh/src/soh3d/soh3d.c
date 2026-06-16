@@ -129,6 +129,49 @@ static const SoH3DBoneMap* SoH3D_FindBoneMap(const char* zar) {
 // identity retarget). Set alongside gSoH3dPendingModel when an auto actor is deferred.
 static const SoH3DBoneMap* gSoH3dPendingBoneMap = NULL;
 
+// Per-character N64-animation -> OoT3D-CSAB map (kSoH3dAnimMaps). Lets an AUTO skinned actor play
+// the CSAB corresponding to whatever animation the N64 game logic is running (walk->walk, talk->
+// talk), instead of a single fixed idle. Hand-maintained; seeded by tools/soh3d_anim_export.py.
+#include "soh3d_animmap.inc"
+
+// Resolve the actor's LIVE N64 animation (skelAnime->animation, an OTR path string in SoH) to the
+// CSAB base it maps to, or NULL if unlisted (-> caller falls back to the default idle). The runtime
+// string carries an "__OTR__" prefix the map keys omit, so skip it before the strcmp.
+static const char* SoH3D_ResolveAutoCsab(const char* n64AnimOtr) {
+    if (n64AnimOtr == NULL) {
+        return NULL;
+    }
+    if (strncmp(n64AnimOtr, "__OTR__", 7) == 0) {
+        n64AnimOtr += 7;
+    }
+    for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dAnimMaps); i++) {
+        if (strcmp(kSoH3dAnimMaps[i].n64otr, n64AnimOtr) == 0) {
+            return kSoH3dAnimMaps[i].csab;
+        }
+    }
+    return NULL;
+}
+
+// Live N64 animation OTR path for the actor currently deferred for auto replacement. Reset per
+// actor in SoH3D_TryDrawActor, captured by the SkelAnime-bearing choke points (SoH3D_SkelAnimeDraw
+// and func_80034BA0/CC4 via SoH3D_SetCurAnim), consumed by the auto branch of SoH3D_DoRetarget.
+// NULL -> no live anim known (default idle).
+static const char* gSoH3dPendingAnimOtr = NULL;
+
+void SoH3D_SetCurAnim(void* animation) {
+    if (gSoH3dAnimDebug) {
+        static int dbg = 0;
+        if ((dbg++ % 60) == 0) {
+            fprintf(stderr, "[SetCurAnim] pendingModel=%d anim=%s\n", gSoH3dPendingModel,
+                    animation ? (const char*)animation : "(null)");
+            fflush(stderr);
+        }
+    }
+    if (gSoH3dPendingModel >= 0) { // only meaningful while an actor is deferred for replacement
+        gSoH3dPendingAnimOtr = (const char*)animation;
+    }
+}
+
 // Scene-geometry world transform (REPL-pokeable). OoT3D scene coords are already
 // WORLD-space at (apparently) the N64 unit scale, so the defaults are identity:
 // scale 1.0 at the world origin. Tunable live to confirm the unit/origin match.
@@ -773,6 +816,9 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     if (!SoH3D_Enabled()) {
         return 0;
     }
+    // Per-actor reset of the live-anim capture: this is the single entry consulted once for every
+    // actor, before its own Draw runs the SkelAnime choke points that record the current anim.
+    gSoH3dPendingAnimOtr = NULL;
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.
     if (SoH3D_AutoMode() != 2) {
@@ -918,25 +964,24 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // OWN-ANIMATION path (user direction): the OoT3D model plays its OWN authored CSAB —
         // correct for its own rig — instead of retargeting live N64 joints (which explodes on
         // rigs whose rest pose differs from N64). We only need the SCALE (rest-skeleton
-        // bone-length ratio, same character) + a default/idle CSAB; no bone correspondence, no
-        // count guard, so ANY skinned auto-actor with a CSAB renders. Selecting the CSAB from the
-        // actor's live N64 animation (true N64->3DS anim mapping) is the next refinement.
+        // bone-length ratio, same character) + a CSAB; no bone correspondence, no count guard, so
+        // ANY skinned auto-actor with a CSAB renders.
         float n64sum = SoH3D_N64SkelBoneLenSum(skeleton, limbCount);
         float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
         if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
             gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
         }
-        const char* csab = SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
-        {
-            static int logged[64];
-            static int nLog = 0;
-            int seen = 0;
-            for (int i = 0; i < nLog; i++)
-                if (logged[i] == gSoH3dPendingModel) { seen = 1; break; }
-            if (!seen && nLog < (int)ARRAY_COUNT(logged)) {
-                logged[nLog++] = gSoH3dPendingModel;
-                printf("SOH3D ANIM: model %d plays OoT3D anim='%s' scale=%.5f\n", gSoH3dPendingModel,
-                       csab ? csab : "(bind pose)", gSoH3dPendingScale);
+        // Select the CSAB from the actor's LIVE N64 animation (true N64->3DS anim mapping): map the
+        // current animation OTR path through kSoH3dAnimMaps; if it isn't mapped, fall back to the
+        // model's default idle so an unmapped state still reads as standing rather than freezing.
+        const char* mapped = SoH3D_ResolveAutoCsab(gSoH3dPendingAnimOtr);
+        const char* csab = (mapped != NULL) ? mapped : SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
+        if (gSoH3dAnimDebug) {
+            static int dbg = 0;
+            if ((dbg++ % 30) == 0) {
+                const char* otr = gSoH3dPendingAnimOtr ? gSoH3dPendingAnimOtr : "(none)";
+                printf("SOH3D ANIM: model %d n64=%s -> csab=%s%s scale=%.5f\n", gSoH3dPendingModel, otr,
+                       csab ? csab : "(bind pose)", mapped ? "" : " [default-idle]", gSoH3dPendingScale);
                 fflush(stdout);
             }
         }
@@ -971,6 +1016,9 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     if (skelAnime == NULL || skelAnime->jointTable == NULL || skelAnime->limbCount == 0) {
         return 0; // no usable pose -> let the N64 skeleton draw
     }
+    // This is the only choke point with a SkelAnime*, so it's where the live N64 animation pointer
+    // (an OTR path string in SoH) is available — stash it for the auto CSAB resolver below.
+    gSoH3dPendingAnimOtr = (const char*)skelAnime->animation;
     return SoH3D_DoRetarget(play, skelAnime->skeleton, skelAnime->jointTable, skelAnime->limbCount);
 }
 
@@ -985,6 +1033,8 @@ int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable) 
     if (limbCount <= 0) {
         return 0;
     }
+    // No SkelAnime here -> no animation pointer. Don't clear gSoH3dPendingAnimOtr: a wrapper with
+    // the SkelAnime (func_80034BA0/CC4) may have already captured it before routing to DrawFlex.
     return SoH3D_DoRetarget(play, skeleton, jointTable, limbCount);
 }
 

@@ -598,6 +598,22 @@ int SoH3D_AutoModelBoneCount(int modelId) {
     return (int)lm->cmb->bones().size();
 }
 
+// Sum of OoT3D bone lengths (|local translation| of every non-root bone) for a loaded model.
+// Rotation-invariant skeleton "size". The N64 actor and the OoT3D model are the SAME character
+// (Grezzo port), so (Σ N64 jointPos lengths × actor->scale) / (Σ OoT3D bone-trans lengths) is
+// the correct OoT3D->world scale — independent of pose and free of the bbox-measure overshoot
+// that made skinned auto-actors giant. Returns 0 if no skeleton.
+float SoH3D_AutoModelBoneLenSum(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) return 0.0f;
+    float sum = 0.0f;
+    for (const auto& bn : lm->cmb->bones()) {
+        if (bn.parent < 0) continue; // root translation is a placement, not a bone length
+        sum += std::sqrt(bn.trans[0] * bn.trans[0] + bn.trans[1] * bn.trans[1] + bn.trans[2] * bn.trans[2]);
+    }
+    return sum;
+}
+
 // ORACLE DUMP (gated by the caller): print the OoT3D model's skeleton — per-bone rest
 // translation/rotation/scale + parent + world-space rest position (FK), plus mesh height and
 // the world rest extent (bone span). Used offline to design the programmatic N64<->OoT3D scale

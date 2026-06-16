@@ -90,6 +90,7 @@ float SoH3D_AutoModelHeight(int modelId);
 float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
+float SoH3D_AutoModelBoneLenSum(int modelId); // Σ|trans| of non-root OoT3D bones (skeleton size)
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
@@ -678,6 +679,11 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
             }
             e->skinned = 1;
             e->groundOff = -SoH3D_AutoModelMinY(e->modelId); // feet -> actor world Y
+            // Skinned scale is derived from the rest skeletons (bone-length ratio) in the
+            // SkelAnime hook — NOT the bbox measure, which over-measures articulated actors and
+            // made them giant (Boj: measured n64h~1235 -> scale 0.18; the true scale is ~0.0102).
+            // Go straight to ready; the hook computes the real scale and retargets the pose.
+            e->state = 2;
         }
     }
     if (e->state == 2) {
@@ -772,6 +778,65 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     return 0;
 }
 
+// Walk a live N64 skeleton's limb TREE (child/sibling from the root), invoking cb(limbIndex,
+// limb) for every limb EXCEPT the root (limb 0). MUST walk the tree, not a blind 0..limbCount-1
+// loop: some skeletons carry an unreferenced trailing limb whose skeleton[]/jointTable[] slots
+// are out of bounds (Boj: limbCount=16 but only limbs 0..14 are reachable) — blind indexing
+// reads OOB and crashes. Bounded by limbCount visits; null/out-of-range indices are skipped.
+typedef void (*SoH3D_LimbCb)(int limbIndex, StandardLimb* limb, void* ud);
+static void SoH3D_WalkN64Skeleton(SkelAnime* sk, SoH3D_LimbCb cb, void* ud) {
+    if (sk == NULL || sk->skeleton == NULL || sk->limbCount <= 0) {
+        return;
+    }
+    StandardLimb* root = (StandardLimb*)SEGMENTED_TO_VIRTUAL(sk->skeleton[0]);
+    if (root == NULL || root->child == LIMB_DONE) {
+        return;
+    }
+    int stack[128];
+    int sp = 0;
+    int visited = 0;
+    stack[sp++] = root->child;
+    while (sp > 0 && visited <= sk->limbCount) {
+        int idx = stack[--sp];
+        if (idx < 0 || idx >= sk->limbCount) {
+            continue;
+        }
+        StandardLimb* lb = (StandardLimb*)SEGMENTED_TO_VIRTUAL(sk->skeleton[idx]);
+        if (lb == NULL) {
+            continue;
+        }
+        visited++;
+        cb(idx, lb, ud);
+        if (lb->sibling != LIMB_DONE && sp < (int)ARRAY_COUNT(stack)) {
+            stack[sp++] = lb->sibling;
+        }
+        if (lb->child != LIMB_DONE && sp < (int)ARRAY_COUNT(stack)) {
+            stack[sp++] = lb->child;
+        }
+    }
+}
+
+static void SoH3D_AccumBoneLen(int limbIndex, StandardLimb* lb, void* ud) {
+    (void)limbIndex;
+    float x = lb->jointPos.x, y = lb->jointPos.y, z = lb->jointPos.z;
+    *(float*)ud += sqrtf(x * x + y * y + z * z);
+}
+
+// Σ of N64 bone lengths (|jointPos| of every non-root reachable limb) — the rotation-invariant
+// N64 skeleton size, for the rest-pose scale derivation. See SoH3D_AutoModelBoneLenSum.
+static float SoH3D_N64SkelBoneLenSum(SkelAnime* sk) {
+    float sum = 0.0f;
+    SoH3D_WalkN64Skeleton(sk, SoH3D_AccumBoneLen, &sum);
+    return sum;
+}
+
+static void SoH3D_DumpLimbCb(int limbIndex, StandardLimb* lb, void* ud) {
+    SkelAnime* sk = (SkelAnime*)ud;
+    Vec3s rot = sk->jointTable[limbIndex + 1]; // reachable limb -> jointTable slot is valid
+    fprintf(stderr, "[SKELDUMP] N64 limb=%d jointPos=(%d,%d,%d) child=%d sibling=%d rot=(%d,%d,%d)\n", limbIndex,
+            lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling, rot.x, rot.y, rot.z);
+}
+
 // Generic N64-anim SkelAnime hook (declared in soh3d.h, called from z_skelanime.c's
 // SkelAnime_DrawSkeletonOpa / DrawSkeleton2). If the actor currently being drawn was deferred
 // for N64-anim replacement (gSoH3dPending* set by SoH3D_TryDrawActor), retarget its OoT3D
@@ -807,18 +872,7 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
                 Vec3f sc = gSoH3dPendingActor->scale;
                 fprintf(stderr, "[SKELDUMP] N64 actor=0x%x model=%d limbCount=%d actorScale=(%.5f,%.5f,%.5f)\n",
                         gSoH3dPendingActor->id, gSoH3dPendingModel, skelAnime->limbCount, sc.x, sc.y, sc.z);
-                for (int k = 0; skelAnime->skeleton != NULL && k < skelAnime->limbCount; k++) {
-                    StandardLimb* lb = (StandardLimb*)SEGMENTED_TO_VIRTUAL(skelAnime->skeleton[k]);
-                    if (lb == NULL) {
-                        fprintf(stderr, "[SKELDUMP] N64 limb=%d <null>\n", k);
-                        continue;
-                    }
-                    Vec3s rot = skelAnime->jointTable[k + 1]; // live local rotation for limb k
-                    fprintf(stderr,
-                            "[SKELDUMP] N64 limb=%d jointPos=(%d,%d,%d) child=%d sibling=%d rot=(%d,%d,%d)\n", k,
-                            lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling, rot.x, rot.y,
-                            rot.z);
-                }
+                SoH3D_WalkN64Skeleton(skelAnime, SoH3D_DumpLimbCb, skelAnime); // tree walk (OOB-safe)
                 fflush(stderr);
                 SoH3D_DumpModelBones(gSoH3dPendingModel);
             }
@@ -834,6 +888,30 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
         if (bones != skelAnime->limbCount) {
             gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
             return 0;
+        }
+        // Derive the OoT3D->world scale from the REST skeletons' bone-length ratio instead of the
+        // bbox measure (which over-measured articulated actors -> giant). N64 and OoT3D are the
+        // SAME character, so scale = actor->scale * (Σ N64 |jointPos|) / (Σ OoT3D |trans|).
+        float n64sum = SoH3D_N64SkelBoneLenSum(skelAnime);
+        float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
+        if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
+            gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
+            if (SoH3D_AutoMode() >= 1) {
+                static int reported[64];
+                static int nRep = 0;
+                int seen = 0;
+                for (int i = 0; i < nRep; i++)
+                    if (reported[i] == gSoH3dPendingModel) {
+                        seen = 1;
+                        break;
+                    }
+                if (!seen && nRep < (int)ARRAY_COUNT(reported)) {
+                    reported[nRep++] = gSoH3dPendingModel;
+                    printf("SOH3D AUTO: model %d skinned scale=%.5f (restpose n64sum=%.1f oot3dsum=%.1f actorScale=%.5f)\n",
+                           gSoH3dPendingModel, gSoH3dPendingScale, n64sum, oot3dsum, gSoH3dPendingActor->scale.x);
+                    fflush(stdout);
+                }
+            }
         }
     }
     // Retarget the OoT3D skeleton from the live N64 jointTable (jointTable[0] is the root

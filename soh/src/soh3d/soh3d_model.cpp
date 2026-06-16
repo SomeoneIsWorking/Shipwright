@@ -410,6 +410,11 @@ static bool meshFloor(const std::vector<SoH3D::CmbDrawGroup>& groups, float x, f
             const float* p1 = v[i + 1].pos;
             const float* p2 = v[i + 2].pos;
             float ax = p0[0], az = p0[2], bx = p1[0], bz = p1[2], cx = p2[0], cz = p2[2];
+            // Cheap XZ-bbox reject first (this runs per-actor per-frame for grounding).
+            if (x < ax && x < bx && x < cx) continue;
+            if (x > ax && x > bx && x > cx) continue;
+            if (z < az && z < bz && z < cz) continue;
+            if (z > az && z > bz && z > cz) continue;
             float d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
             if (d > -1e-6f && d < 1e-6f) continue;
             float u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
@@ -578,6 +583,17 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY) {
     LoadedModel* lm = loadModel(modelId);
     if (!lm || !lm->ok) return 0;
     return meshFloor(lm->groups, x, z, false, 0.0f, outY) ? 1 : 0;
+}
+
+// OoT3D render-mesh floor Y at (x,z) for a scene room, picking the floor hit CLOSEST to
+// `target` (the actor's N64 floor, so multi-level spots pick the right surface). Returns 1 +
+// *outY on a hit. Used to ground actors exactly on the visible OoT3D ground (per-actor, so
+// meshFloor's XZ-bbox reject keeps it cheap). Exact — no grid approximation.
+int SoH3D_RoomOoT3DFloorAt(int modelId, float x, float z, float target, float* outY) {
+    if (modelId < kSceneModelBase) return 0;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0;
+    return meshFloor(lm->groups, x, z, /*hasTarget=*/true, target, outY) ? 1 : 0;
 }
 
 // Compute & cache a scene-room model's ground-delta field (N64 - OoT3D per XZ), once.

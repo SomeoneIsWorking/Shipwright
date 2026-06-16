@@ -60,6 +60,11 @@ void SoH3D_ComputeRoomGroundDelta(int modelId, SoH3D_FloorFn floorFn);
 // Sample that field: *outD = N64_floor - OoT3D_floor at world (x,z). Returns 1 on success.
 int SoH3D_RoomGroundDeltaAt(int modelId, float x, float z, float* outD);
 
+// OoT3D render-mesh floor at (x,z) for a scene room, the floor hit closest to `target`.
+// Returns 1 + *outY on a hit. Grounds actors exactly on the visible OoT3D ground (exact, no
+// grid approximation; XZ-bbox-culled so per-actor-per-frame is cheap).
+int SoH3D_RoomOoT3DFloorAt(int modelId, float x, float z, float target, float* outY);
+
 // Render-Y offset for an actor so it stands on the visible OoT3D ground instead of floating
 // at the N64 collision height (= OoT3D_ground - N64_ground at the actor's XZ, i.e. -D).
 // Returns 0 when SoH3D is off, the scene has no OoT3D room, or no delta covers the actor.

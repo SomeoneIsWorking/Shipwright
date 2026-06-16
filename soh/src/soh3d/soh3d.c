@@ -674,14 +674,9 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
     // Debug isolation: SOH3D_SCENE=2 skips the N64 room mesh but draws NOTHING (no GL),
     // to bisect "skipping the N64 room corrupts state" vs "our GL draw corrupts state".
     if (sceneDivert != 2) {
-        // Compute the room's ground-delta field (N64 - OoT3D per XZ) once. Done here (not in
-        // the lazy provider) because we have the PlayState/colCtx for the floor probe. The
-        // render mesh is left untouched; actors are offset by -D (SoH3D_ActorRenderYOffset)
-        // so they stand on the visible OoT3D ground.
-        if (SoH3D_TerrainWarpEnabled()) {
-            sWarpPlay = play;
-            SoH3D_ComputeRoomGroundDelta(modelId, SoH3D_N64FloorCb);
-        }
+        // Render mesh is left UNTOUCHED (pixel-faithful OoT3D). Actors are grounded onto the
+        // visible OoT3D floor per-actor at draw time (SoH3D_ActorRenderYOffset, direct mesh
+        // raycast) — no precomputed warp/grid here.
         SoH3D_DrawRoomGL(play, modelId);
     }
     return 1; // drew the OoT3D room -> caller skips the N64 mesh
@@ -690,7 +685,7 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room) {
 float SoH3D_ActorRenderYOffset(PlayState* play, Actor* actor) {
     const char* sceneName;
     int modelId, room;
-    float d;
+    float n64, oot;
     if (actor == NULL || !SoH3D_Enabled() || !SoH3D_TerrainWarpEnabled()) {
         return 0.0f;
     }
@@ -701,10 +696,23 @@ float SoH3D_ActorRenderYOffset(PlayState* play, Actor* actor) {
     // Use the actor's room when it has one, else the current room (e.g. -1 = persistent actor).
     room = (actor->room >= 0) ? actor->room : play->roomCtx.curRoom.num;
     modelId = SoH3D_RoomModelId(sceneName, room);
-    if (modelId < 0 || !SoH3D_RoomGroundDeltaAt(modelId, actor->world.pos.x, actor->world.pos.z, &d)) {
-        return 0.0f; // no OoT3D room / delta not ready -> no offset (actor stays at N64 height)
+    if (modelId < 0) {
+        return 0.0f;
     }
-    return -d; // -(N64 - OoT3D) = OoT3D_ground - N64_ground: lift the render onto the OoT3D ground
+    // Ground the render EXACTLY on the visible OoT3D mesh: offset = OoT3D_floor - N64_floor at
+    // the actor's XZ (the OoT3D floor closest to the N64 floor, so multi-level spots pick the
+    // right surface). Direct raycast of the actual render mesh — no 100u grid approximation
+    // (which hole-filled/smeared and sank actors). For an airborne actor this shifts by the
+    // ground delta, preserving its height above ground.
+    sWarpPlay = play; // SoH3D_N64FloorCb needs the PlayState/colCtx
+    n64 = SoH3D_N64FloorCb(actor->world.pos.x, actor->world.pos.z);
+    if (n64 <= -31000.0f) {
+        return 0.0f; // no N64 floor under the actor -> can't reconcile, leave it
+    }
+    if (!SoH3D_RoomOoT3DFloorAt(modelId, actor->world.pos.x, actor->world.pos.z, n64, &oot)) {
+        return 0.0f; // no OoT3D render floor here -> no offset
+    }
+    return oot - n64; // lift/drop the render onto the visible OoT3D ground
 }
 
 int SoH3D_AutoWarpEnabled(void) {

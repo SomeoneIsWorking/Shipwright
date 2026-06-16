@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -68,6 +69,18 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum);
 // scale 1.0 at the world origin. Tunable live to confirm the unit/origin match.
 float gSoH3dSceneScale = 1.0f;
 float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
+
+// --- Diagnostic camera override (REPL `cam` / `camorbit` / `camfreeze`) ---
+// When gSoH3dCamOverride != 0, SoH3D_ReplPoll forces play->view.eye/lookAt/up every
+// frame. The camera engine recomputes the view in Play_Update; the poll runs AFTER
+// Play_Update and BEFORE Play_Draw, so re-applying there wins for the rendered frame.
+// Purpose: freeze the world and ORBIT the camera about a fixed look point. The OoT3D
+// scene (GL) and N64 actors (Fast3D) share the same MP matrix, so under a pure camera
+// rotation they can ONLY drift apart if their WORLD coords differ (origin/scale
+// mismatch). A controlled orbit makes that drift measurable instead of eyeballed.
+int gSoH3dCamOverride = 0;
+float gSoH3dCamEye[3] = { 0, 0, 0 };
+float gSoH3dCamAt[3] = { 0, 0, 0 };
 
 // Resolve the actor's CURRENT animation to a CSAB base name, by reading the actor's
 // live N64 state, so the OoT3D model plays the same animation the game logic chose
@@ -494,6 +507,34 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "enable") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dEnabled = (int)f1;
         SoH3D_ReplReply(outPath, "enabled=%d", gSoH3dEnabled);
+    } else if (strcmp(cmd, "tp") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
+        Player* p = GET_PLAYER(play);
+        p->actor.world.pos.x = f1;
+        p->actor.world.pos.y = f2;
+        p->actor.world.pos.z = f3;
+        p->actor.prevPos = p->actor.world.pos;
+        SoH3D_ReplReply(outPath, "tp -> (%.0f,%.0f,%.0f)", f1, f2, f3);
+    } else if (strcmp(cmd, "move") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = p->actor.shape.rot.y;
+        p->actor.world.pos.x += f1 * Math_SinS(yaw);
+        p->actor.world.pos.z += f1 * Math_CosS(yaw);
+        p->actor.prevPos = p->actor.world.pos;
+        SoH3D_ReplReply(outPath, "move %.0f -> (%.0f,%.0f,%.0f)", f1, p->actor.world.pos.x, p->actor.world.pos.y,
+                        p->actor.world.pos.z);
+    } else if (strcmp(cmd, "turn") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = (s16)(f1 * 182.0444f); // deg -> binang
+        p->actor.shape.rot.y = yaw;
+        p->actor.world.rot.y = yaw;
+        SoH3D_ReplReply(outPath, "turn -> %.0f deg (yaw=%d)", f1, yaw);
+    } else if (strcmp(cmd, "posinfo") == 0) {
+        Player* p = GET_PLAYER(play);
+        Camera* c = GET_ACTIVE_CAM(play);
+        SoH3D_ReplReply(outPath,
+                        "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)",
+                        play->sceneNum, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z,
+                        p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z);
     } else if (strcmp(cmd, "scale") == 0 && sscanf(line, "%*s %63s %f", arg, &f1) == 2) {
         SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
         if (e != NULL) {
@@ -547,6 +588,65 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dSceneOffY = f2;
         gSoH3dSceneOffZ = f3;
         SoH3D_ReplReply(outPath, "sceneoff=(%.1f,%.1f,%.1f)", gSoH3dSceneOffX, gSoH3dSceneOffY, gSoH3dSceneOffZ);
+    } else if (strcmp(cmd, "camfreeze") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // Capture the current camera and hold it (1), or release back to the engine (0).
+        if (f1 != 0.0f) {
+            gSoH3dCamEye[0] = play->view.eye.x;
+            gSoH3dCamEye[1] = play->view.eye.y;
+            gSoH3dCamEye[2] = play->view.eye.z;
+            gSoH3dCamAt[0] = play->view.lookAt.x;
+            gSoH3dCamAt[1] = play->view.lookAt.y;
+            gSoH3dCamAt[2] = play->view.lookAt.z;
+            gSoH3dCamOverride = 1;
+            SoH3D_ReplReply(outPath, "camfreeze ON eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)", gSoH3dCamEye[0],
+                            gSoH3dCamEye[1], gSoH3dCamEye[2], gSoH3dCamAt[0], gSoH3dCamAt[1], gSoH3dCamAt[2]);
+        } else {
+            gSoH3dCamOverride = 0;
+            SoH3D_ReplReply(outPath, "camfreeze OFF (camera returned to engine)");
+        }
+    } else if (strcmp(cmd, "cam") == 0) {
+        // cam <eyeX eyeY eyeZ atX atY atZ> — set the frozen camera explicitly + hold it.
+        float c[6];
+        if (sscanf(line, "%*s %f %f %f %f %f %f", &c[0], &c[1], &c[2], &c[3], &c[4], &c[5]) == 6) {
+            gSoH3dCamEye[0] = c[0];
+            gSoH3dCamEye[1] = c[1];
+            gSoH3dCamEye[2] = c[2];
+            gSoH3dCamAt[0] = c[3];
+            gSoH3dCamAt[1] = c[4];
+            gSoH3dCamAt[2] = c[5];
+            gSoH3dCamOverride = 1;
+            SoH3D_ReplReply(outPath, "cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)", c[0], c[1], c[2], c[3], c[4],
+                            c[5]);
+        } else {
+            SoH3D_ReplReply(outPath, "cam needs 6 floats: eyeX eyeY eyeZ atX atY atZ");
+        }
+    } else if (strcmp(cmd, "camorbit") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // Rotate the frozen eye about the frozen `at` by f1 degrees around world +Y,
+        // preserving radius and height. Auto-freezes from the live camera first if not
+        // already held, so `camorbit 15` works without a prior `camfreeze 1`. This is
+        // the parallax-sweep primitive: hold `at`, step the azimuth, dump at each step.
+        float dx, dz, c, s, nx, nz, rad;
+        if (!gSoH3dCamOverride) {
+            gSoH3dCamEye[0] = play->view.eye.x;
+            gSoH3dCamEye[1] = play->view.eye.y;
+            gSoH3dCamEye[2] = play->view.eye.z;
+            gSoH3dCamAt[0] = play->view.lookAt.x;
+            gSoH3dCamAt[1] = play->view.lookAt.y;
+            gSoH3dCamAt[2] = play->view.lookAt.z;
+            gSoH3dCamOverride = 1;
+        }
+        dx = gSoH3dCamEye[0] - gSoH3dCamAt[0];
+        dz = gSoH3dCamEye[2] - gSoH3dCamAt[2];
+        c = cosf(f1 * (3.14159265f / 180.0f));
+        s = sinf(f1 * (3.14159265f / 180.0f));
+        nx = dx * c - dz * s;
+        nz = dx * s + dz * c;
+        gSoH3dCamEye[0] = gSoH3dCamAt[0] + nx;
+        gSoH3dCamEye[2] = gSoH3dCamAt[2] + nz;
+        rad = sqrtf(nx * nx + nz * nz);
+        SoH3D_ReplReply(outPath, "camorbit %+.1fdeg eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f) rad=%.0f", f1,
+                        gSoH3dCamEye[0], gSoH3dCamEye[1], gSoH3dCamEye[2], gSoH3dCamAt[0], gSoH3dCamAt[1],
+                        gSoH3dCamAt[2], rad);
     } else if (strcmp(cmd, "dump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
         strncpy(gSoh3dDumpPath, path, sizeof(gSoh3dDumpPath) - 1);
         gSoh3dDumpPath[sizeof(gSoh3dDumpPath) - 1] = '\0';
@@ -566,7 +666,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimLive,
                         gSoH3dAnimFrame, gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze dump state)", line);
     }
 }
 
@@ -617,4 +717,18 @@ void SoH3D_ReplPoll(PlayState* play) {
     }
     buflen = (int)strlen(start);
     memmove(buf, start, buflen + 1);
+
+    // Hold the diagnostic camera: re-apply every frame so the engine's per-update
+    // recompute doesn't reclaim it. up is forced to world +Y (an orbit never rolls).
+    if (gSoH3dCamOverride) {
+        play->view.eye.x = gSoH3dCamEye[0];
+        play->view.eye.y = gSoH3dCamEye[1];
+        play->view.eye.z = gSoH3dCamEye[2];
+        play->view.lookAt.x = gSoH3dCamAt[0];
+        play->view.lookAt.y = gSoH3dCamAt[1];
+        play->view.lookAt.z = gSoH3dCamAt[2];
+        play->view.up.x = 0.0f;
+        play->view.up.y = 1.0f;
+        play->view.up.z = 0.0f;
+    }
 }

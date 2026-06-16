@@ -535,6 +535,51 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)",
                         play->sceneNum, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z,
                         p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z);
+    } else if (strcmp(cmd, "floorat") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        // Authoritative N64-collision floor height at world (x,z): raycast straight down
+        // through SoH's BgCheck from high above. This is exactly the surface Link stands
+        // on, so it is the ground truth the OoT3D render mesh must be warped to match.
+        Vec3f pos = { f1, 10000.0f, f2 };
+        CollisionPoly* poly = NULL;
+        f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &pos);
+        if (poly != NULL) {
+            SoH3D_ReplReply(outPath, "floorat (%.0f,%.0f) y=%.2f ny=%.4f", f1, f2, y,
+                            COLPOLY_GET_NORMAL(poly->normal.y));
+        } else {
+            SoH3D_ReplReply(outPath, "floorat (%.0f,%.0f) NO FLOOR", f1, f2);
+        }
+    } else if (strcmp(cmd, "floorgrid") == 0) {
+        // Batch raycast a regular XZ grid into a CSV (looped in C -> one FIFO round-trip,
+        // not thousands). Used offline to build the dense N64 floor field for terrain warp.
+        float x0, z0, x1, z1, step;
+        char gpath[1024];
+        if (sscanf(line, "%*s %f %f %f %f %f %1023s", &x0, &z0, &x1, &z1, &step, gpath) == 6 && step > 0.0f) {
+            FILE* gf = fopen(gpath, "w");
+            if (gf == NULL) {
+                SoH3D_ReplReply(outPath, "floorgrid: cannot open %s", gpath);
+            } else {
+                int hits = 0;
+                float x, z;
+                fprintf(gf, "x,z,y,ny\n");
+                for (z = z0; z <= z1; z += step) {
+                    for (x = x0; x <= x1; x += step) {
+                        Vec3f pos = { x, 10000.0f, z };
+                        CollisionPoly* poly = NULL;
+                        f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &pos);
+                        if (poly != NULL) {
+                            fprintf(gf, "%.1f,%.1f,%.2f,%.4f\n", x, z, y, COLPOLY_GET_NORMAL(poly->normal.y));
+                            hits++;
+                        } else {
+                            fprintf(gf, "%.1f,%.1f,nan,nan\n", x, z);
+                        }
+                    }
+                }
+                fclose(gf);
+                SoH3D_ReplReply(outPath, "floorgrid -> %s (%d floor hits)", gpath, hits);
+            }
+        } else {
+            SoH3D_ReplReply(outPath, "floorgrid needs: x0 z0 x1 z1 step path");
+        }
     } else if (strcmp(cmd, "scale") == 0 && sscanf(line, "%*s %63s %f", arg, &f1) == 2) {
         SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
         if (e != NULL) {
@@ -666,7 +711,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimLive,
                         gSoH3dAnimFrame, gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat floorgrid dump state)", line);
     }
 }
 

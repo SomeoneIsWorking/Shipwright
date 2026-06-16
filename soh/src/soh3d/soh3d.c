@@ -57,6 +57,15 @@ static struct {
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
+// Retarget a live N64 SkelAnime pose onto the OoT3D skeleton (GPU skinning). jointRots =
+// &jointTable[1] (per-limb binang Vec3s; root translation jointTable[0] is skipped),
+// rotCount = limbCount. See soh3d_model.cpp. The OoT3D model must share the N64 rig order.
+void SoH3D_UpdateAnimN64(int modelId, const s16* jointRots, int rotCount);
+
+// 1 = drive replaced skinned characters from their live N64 SkelAnime joints (port N64
+// animations onto the OoT3D skeleton) instead of a CSAB. Env SOH3D_N64ANIM (default OFF —
+// WIP, see SoH3D_N64AnimEnabled) + REPL `n64anim`. The CSAB path stays available for A/B.
+int gSoH3dN64Anim = -1;
 // Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
 // the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
 int SoH3D_RoomModelId(const char* sceneName, int roomNum);
@@ -148,8 +157,27 @@ float gSoH3dCamAt[3] = { 0, 0, 0 };
 // life comes from procedural limb fidget, not keyframes) carry no frame motion to sync
 // to, so the OoT3D CSAB's own motion is the faithful source.
 typedef const char* (*SoH3D_AnimResolver)(Actor* actor);
+
+// Resolve the actor's live N64 SkelAnime pose for the N64-animation port path. On success
+// returns 1 and sets *outJointRots = &jointTable[1] (per-limb binang rotations; the root
+// translation jointTable[0] is skipped) and *outLimbCount = the limb count. Per-actor (the
+// SkelAnime sits at an actor-specific struct offset). NULL/return 0 -> no N64 joints.
+typedef int (*SoH3D_JointResolver)(Actor* actor, const s16** outJointRots, int* outLimbCount);
+
 static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale,
-                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim);
+                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim,
+                              SoH3D_JointResolver resolveJoints);
+
+static int SoH3D_N64AnimEnabled(void) {
+    if (gSoH3dN64Anim < 0) {
+        const char* v = getenv("SOH3D_N64ANIM");
+        // Default OFF: the N64-joint retarget math is WIP (pose still contorted — the per-limb
+        // rotation convention needs work), so calibrated characters keep the working CSAB path
+        // until it's correct. Opt in with SOH3D_N64ANIM=1 / REPL `n64anim 1`.
+        gSoH3dN64Anim = (v != NULL && v[0] == '1') ? 1 : 0;
+    }
+    return gSoH3dN64Anim;
+}
 
 // On-demand frame dump trigger, defined in libultraship's gfx_sdl2.cpp.
 extern char gSoh3dDumpPath[1024];
@@ -218,11 +246,24 @@ void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale
 // — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
 // N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
 static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float worldScale,
-                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim) {
+                              const char* animName, float groundOffset, SoH3D_AnimResolver resolveAnim,
+                              SoH3D_JointResolver resolveJoints) {
     u8 tint[3];
     OPEN_DISPS(play->state.gfxCtx);
 
     SoH3D_EnsureModelProvider();
+    // N64-animation port: drive the OoT3D skeleton straight from the actor's live N64
+    // SkelAnime joints (the pose the game logic computed this frame), so the replacement
+    // animates with the SAME animation the N64 actor plays — no per-actor CSAB mapping.
+    // Wins over the CSAB path when enabled and the actor exposes its joints.
+    if (SoH3D_N64AnimEnabled() && gSoH3dAnimLive && resolveJoints != NULL) {
+        const s16* jointRots = NULL;
+        int limbCount = 0;
+        if (resolveJoints(actor, &jointRots, &limbCount) && jointRots != NULL && limbCount > 0) {
+            SoH3D_UpdateAnimN64(modelId, jointRots, limbCount);
+            goto draw; // pose set from N64 joints; skip the CSAB path
+        }
+    }
     // Apply this model's skeletal animation (GPU skinning), once per Actor_Draw.
     // Live (gSoH3dAnimLive): the resolver picks WHICH CSAB by the actor's live N64
     // state (idle/talk/gate-open); the CSAB then free-runs at its own authored rate,
@@ -248,6 +289,7 @@ static void SoH3D_DrawModelGL(PlayState* play, int modelId, Actor* actor, float 
         SoH3D_UpdateAnim(modelId, animToPlay, *frame);
         *frame += gSoH3dAnimRate;
     }
+draw:
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
@@ -298,6 +340,20 @@ static const char* SoH3D_ResolveAnim_EnGe1(Actor* actor) {
     return csab;
 }
 
+// En_Ge1 joints for the N64-animation port: hand back &jointTable[1] (per-limb binang
+// rotations; skip jointTable[0] root translation) + limbCount. The OoT3D geldwoman skeleton
+// is the SAME rig as N64 En_Ge1 (15 limbs, same order: WAIST, L/R legs ×3, TORSO, L/R arms
+// ×3, HEAD), so OoT3D bone i == N64 limb (i+1) and SoH3D_UpdateAnimN64 maps bone i <- rots[i].
+static int SoH3D_Joints_EnGe1(Actor* actor, const s16** outJointRots, int* outLimbCount) {
+    EnGe1* ge = (EnGe1*)actor;
+    if (ge->skelAnime.jointTable == NULL || ge->skelAnime.limbCount <= 0) {
+        return 0;
+    }
+    *outJointRots = (const s16*)&ge->skelAnime.jointTable[1]; // [0] = root translation, skip it
+    *outLimbCount = ge->skelAnime.limbCount;
+    return 1;
+}
+
 typedef struct {
     s16 actorId;
     const char* name; // REPL handle for `scale <name>` / `spawn <name>`
@@ -310,16 +366,19 @@ typedef struct {
                         // the actor's ground pos. Pre-scale => scales with worldScale, so
                         // re-tuning scale does not desync grounding. REPL `yoff <name> <f>`.
     SoH3D_AnimResolver resolveAnim; // NULL = no live anim state (use `anim` + free frame)
+    SoH3D_JointResolver resolveJoints; // NULL = no N64-joint port (use CSAB path). When set
+                                       // and SOH3D_N64ANIM is on, drives the OoT3D skeleton
+                                       // from the actor's live N64 SkelAnime pose.
 } SoH3D_ModelEntry;
 
 // Non-const so the REPL can tune worldScale/groundOffset live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL },
-    { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL }, // bush (scale tuned live via REPL)
+    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL, NULL },
+    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL, NULL },
+    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL, NULL },
+    { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL, NULL }, // bush (scale tuned live via REPL)
     { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait",
-      SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1 },
+      SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1, SoH3D_Joints_EnGe1 },
 };
 
 // ===========================================================================
@@ -422,7 +481,7 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
     }
     if (e->state == 2) {
         // Ready: draw the OoT3D model at the measured scale. No anim (static prop).
-        SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL);
+        SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL, NULL);
         return 1;
     }
     // state 0 or 1: derive scale if the measurement has arrived, else (re)measure.
@@ -436,7 +495,7 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
                        e->measuredH, modelH);
                 fflush(stdout);
             }
-            SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL);
+            SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL, NULL);
             return 1;
         }
         e->state = 3; // model has no geometry -> cannot scale -> N64
@@ -466,7 +525,8 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
             if (sModelTable[i].actorId == actor->id) {
                 if (sModelTable[i].glModelId >= 0) {
                     SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
-                                      sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim);
+                                      sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim,
+                                      sModelTable[i].resolveJoints);
                 } else {
                     SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
                 }
@@ -807,6 +867,9 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "auto") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAuto = (int)f1;
         SoH3D_ReplReply(outPath, "auto=%d (0=off,1=fill non-table actors,2=ALL/validation)", gSoH3dAuto);
+    } else if (strcmp(cmd, "n64anim") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        gSoH3dN64Anim = (int)f1;
+        SoH3D_ReplReply(outPath, "n64anim=%d (1=N64 SkelAnime joints on OoT3D skeleton, 0=CSAB)", gSoH3dN64Anim);
     } else if (strcmp(cmd, "autostate") == 0) {
         // Dump every object that the auto path has touched: state + derived scale, so the
         // measured scale can be checked against the hand-tuned values (pot/crate/bush/...).

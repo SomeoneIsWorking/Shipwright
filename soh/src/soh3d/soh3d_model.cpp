@@ -9,12 +9,14 @@
 #include "asset/zsi.h"
 #include "asset/cmb.h"
 #include "asset/csab.h"
+#include "asset/mat4.h"
 #include "asset/pica_texture.h"
 #include "fast/soh3d_gl.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -609,6 +611,57 @@ static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
         it = lm->anims.emplace(full, std::move(csab)).first;
     }
     return it->second.get();
+}
+
+// Retarget a live N64 SkelAnime pose onto the OoT3D skeleton. `jointRots` points to the
+// actor's per-limb rotations (jointTable[1..limbCount], each a Vec3s of binang x,y,z; the
+// caller skips jointTable[0] which is the root translation). OoT3D bone id i corresponds to
+// N64 limb (i+1) for same-rig characters (Grezzo preserved the skeletons), so bone i takes
+// jointRots[i]. The N64 bind rotation is identity, so jointTable is the rotation DELTA from
+// rest; we apply it in the bone's post-rest local frame: L = T(rest)·R(rest)·R(n64Δ)·S(rest)
+// — at delta=identity this reproduces the OoT3D bind pose. skin = animWorld · bindInverse,
+// matching csab.cpp::skinMatrices. Mirrors that function but driven by N64 joints not a CSAB.
+extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int rotCount) {
+    using namespace SoH3D;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    const auto& bones = lm->cmb->bones();
+    const auto& bind = lm->cmb->boneMatrices();
+    const float kBinangToRad = 3.14159265358979f / 32768.0f;
+
+    std::vector<Mat4> aw(bind.size(), matId());
+    std::vector<char> done(bind.size(), 0);
+    std::vector<const CmbBone*> byId(bind.size(), nullptr);
+    for (const auto& bn : bones)
+        if (bn.id >= 0 && (size_t)bn.id < byId.size()) byId[bn.id] = &bn;
+
+    std::function<Mat4(int)> world = [&](int id) -> Mat4 {
+        if (id < 0 || (size_t)id >= aw.size() || !byId[id]) return matId();
+        if (done[id]) return aw[id];
+        const CmbBone* bn = byId[id];
+        Mat4 Rrest = matMul(matMul(matRz(bn->rot[2]), matRy(bn->rot[1])), matRx(bn->rot[0]));
+        Mat4 L = matT(bn->trans[0], bn->trans[1], bn->trans[2]);
+        if (id < rotCount) {
+            // N64 joint rotation is about the joint in the PARENT frame, so it precedes the
+            // bone's rest mesh-orientation: L = T · R(n64) · R(rest) · S. At n64=identity this
+            // is the OoT3D bind pose, so the rig stays consistent with bindInverse.
+            float rx = jointRots[id * 3 + 0] * kBinangToRad;
+            float ry = jointRots[id * 3 + 1] * kBinangToRad;
+            float rz = jointRots[id * 3 + 2] * kBinangToRad;
+            L = matMul(L, matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)));
+        }
+        L = matMul(L, Rrest);
+        L = matMul(L, matS(bn->scale[0], bn->scale[1], bn->scale[2]));
+        Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
+        aw[id] = W;
+        done[id] = 1;
+        return W;
+    };
+    for (const auto& bn : bones) world(bn.id);
+
+    std::vector<std::array<float, 16>> sm(bind.size());
+    for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }
 
 extern "C" {

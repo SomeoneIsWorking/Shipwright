@@ -58,6 +58,7 @@ struct CmbVertex {
     float uv[2];
     float boneIds[4] = { 0, 0, 0, 0 };
     float weights[4] = { 0, 0, 0, 0 };
+    float color[4] = { 1, 1, 1, 1 }; // per-vertex RGBA (OoT3D baked lighting / falloff)
 };
 
 // One draw batch: all triangles that use a given material, as a triangle list.

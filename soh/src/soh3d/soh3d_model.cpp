@@ -89,9 +89,17 @@ SoH3D::CtrRom* rom() {
 // draw groups (model-space verts + bone bindings; GPU skinning applies the pose, or
 // identity = bind pose for skeleton-less scene rooms), decoded RGBA8 textures, and the
 // C-API group/texture views. Shared by the actor (ZAR) and scene-room (ZSI) paths.
-static void buildFromCmb(LoadedModel* out) {
+// bakedVertexColor: keep the CMB's per-vertex color (OoT3D baked scene lighting). Only
+// SCENE ROOMS use it; characters/props are lit dynamically (scene ambient tint), and their
+// CMB color attribute is unused/garbage (e.g. geldwoman reads ~0 -> would render black),
+// so for those we force white (the verified-correct behavior).
+static void buildFromCmb(LoadedModel* out, bool bakedVertexColor) {
     SoH3D::Cmb& cmb = *out->cmb;
     out->groups = cmb.buildDrawGroups();
+    if (!bakedVertexColor) {
+        for (auto& g : out->groups)
+            for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
+    }
 
     const auto& texs = cmb.textures();
     out->texRgba.resize(texs.size());
@@ -144,7 +152,7 @@ static void loadSceneRoom(int modelId, LoadedModel* out) {
     if (!zsi.hasGeometry()) { fprintf(stderr, "[SoH3D] no room geometry in %s\n", path.c_str()); return; }
     out->cmb = std::make_unique<SoH3D::Cmb>(zsi.cmbBytes());
     if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb %s: %s\n", path.c_str(), out->cmb->error().c_str()); return; }
-    buildFromCmb(out);
+    buildFromCmb(out, /*bakedVertexColor=*/true); // scene rooms carry OoT3D baked vertex lighting
     printf("[SoH3D] loaded scene-room model %d (%s): %zu groups, %zu textures\n", modelId, path.c_str(),
            out->cGroups.size(), out->cTexs.size());
 }
@@ -162,7 +170,7 @@ static void loadActorModel(int modelId, LoadedModel* out) {
     if (!cmbf) { fprintf(stderr, "[SoH3D] no .cmb in %s\n", kModels[modelId].zarPath); return; }
     out->cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*cmbf));
     if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb: %s\n", out->cmb->error().c_str()); return; }
-    buildFromCmb(out);
+    buildFromCmb(out, /*bakedVertexColor=*/false); // characters/props: dynamic lighting, color attr unused
     printf("[SoH3D] loaded model %d (%s): %zu groups, %zu textures\n", modelId, kModels[modelId].zarPath,
            out->cGroups.size(), out->cTexs.size());
 }

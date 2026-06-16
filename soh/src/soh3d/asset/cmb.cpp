@@ -319,10 +319,11 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
     int count = 0;
     const AttrDef* defs = Cmb_attrsDef(mVersion, &count);
     // locate attribute slots by name
-    int slotPos = -1, slotNrm = -1, slotUv0 = -1, slotBi = -1, slotBw = -1;
+    int slotPos = -1, slotNrm = -1, slotUv0 = -1, slotBi = -1, slotBw = -1, slotCol = -1;
     for (int i = 0; i < count; i++) {
         if (!strcmp(defs[i].name, "position")) slotPos = i;
         else if (!strcmp(defs[i].name, "normal")) slotNrm = i;
+        else if (!strcmp(defs[i].name, "color")) slotCol = i;
         else if (!strcmp(defs[i].name, "texCoord0")) slotUv0 = i;
         else if (!strcmp(defs[i].name, "boneIndices")) slotBi = i;
         else if (!strcmp(defs[i].name, "boneWeights")) slotBw = i;
@@ -404,6 +405,12 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
                 }
                 v.uv[0] = uv[0];
                 v.uv[1] = uv[1];
+                // Per-vertex color: OoT3D's baked scene lighting (walls dimmed, AO on the
+                // ground) and the additive light-shaft/god-ray alpha falloff. Defaults to
+                // white when the attribute is absent, so untinted models are unaffected.
+                if (slotCol >= 0 && sepd.attrs[slotCol].present) {
+                    readAttr(sepd.attrs[slotCol], slotCol, idx, 4, v.color);
+                }
                 // record the (model-space) bone bindings for GPU skinning. The CPU
                 // blend above bakes the pose into pos/nrm; GPU skinning instead uploads
                 // these bindings + model-space pos (skinMats=identity) and applies the

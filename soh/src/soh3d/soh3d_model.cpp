@@ -157,6 +157,7 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor) {
         cg.blendDstA = mat ? mat->blend_dst_a : 0x0000;
         cg.blendEqA = mat ? mat->blend_eq_a : 0x8006;
         cg.depthWrite = mat ? (mat->depth_write ? 1 : 0) : 1;
+        cg.polygonOffset = mat ? mat->polygon_offset : 0.0f;
         for (int k = 0; k < 4; k++) cg.blendColor[k] = mat ? mat->blend_color[k] : (k == 3 ? 1.0f : 0.0f);
         out->cGroups.push_back(cg);
     }

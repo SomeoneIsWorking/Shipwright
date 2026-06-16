@@ -132,6 +132,10 @@ bool Cmb::parseMats() {
         CmbMaterial& m = mMaterials[i];
         m.index = (int)i;
         m.cull = u8(b, o + 4);
+        // Polygon (depth) offset for decal surfaces: enable flag @ +0x05, signed unit @ +0x07
+        // (noclip readMatsChunk). polygon_offset = unit/0xFFFE; pulls coplanar decals toward
+        // the camera so they don't z-fight the base ground/wall.
+        if (u8(b, o + 0x05)) m.polygon_offset = (float)((int8_t)u8(b, o + 0x07)) / 65534.0f;
         uint32_t bo = o + 0x10;
         m.tex0_idx = s16(b, bo);
         m.wrap_s = u16(b, bo + 8);

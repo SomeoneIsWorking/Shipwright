@@ -38,6 +38,12 @@ struct CmbMaterial {
     uint16_t blend_eq_rgb = 0x8006, blend_eq_a = 0x8006;     // GL_FUNC_ADD
     float blend_color[4] = { 0, 0, 0, 1 };                   // for CONSTANT_COLOR/ALPHA factors
     bool depth_write = true;                                 // translucent volumes usually disable this
+    // Decal depth bias. OoT3D flags coplanar detail surfaces (sand/symbol decals on the
+    // ground/walls) with a polygon offset that pulls them slightly toward the camera so
+    // they win the depth test cleanly instead of z-fighting the base. Stored as a window-
+    // depth offset (polygonOffsetUnit / 0xFFFE, per noclip); 0 = no bias. Applied in the
+    // GL fragment shader as gl_FragDepth = gl_FragCoord.z + polygon_offset.
+    float polygon_offset = 0.0f;
 };
 
 struct CmbTexture {

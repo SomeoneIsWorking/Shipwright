@@ -483,6 +483,14 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
     if (zar == NULL) {
         return 0; // no OoT3D model for this object -> N64
     }
+    // Multi-part assemblies the "largest single CMB" auto-picker can't handle: it grabs one
+    // sub-piece that renders detached/floating. Skip -> N64 fallback until hand-assembled.
+    // OBJECT_KANBAN (breakable signpost): the intact sign is bo_bottom(post,Y0-3200) +
+    // bo_center(Y3200-4364) + bo_top(board,Y4364-6014); the picker took only bo_center, a
+    // mid-board chunk floating ~165u up. Grounding it alone would still show a broken sign.
+    if (objId == OBJECT_KANBAN) {
+        return 0;
+    }
     e = &sAuto[objId];
     if (e->state == 3) {
         return 0; // known-unreplaceable -> N64

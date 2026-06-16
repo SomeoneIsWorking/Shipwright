@@ -248,12 +248,40 @@ static float bboxHeight(const std::vector<SoH3D::CmbDrawGroup>& groups) {
 // mesh) alongside the intact model. We skip those by name and, among the remainder,
 // pick the CMB with the largest geometry (the main body). Returns nullptr if none.
 static bool isDebrisCmbName(const std::string& n) {
-    static const char* kSkip[] = { "hahen", "modelt", "broke", "_bf", "kakera", "fragment" };
+    static const char* kSkip[] = { "hahen", "broke", "_bf", "kakera", "fragment" };
     std::string lo = n;
     for (auto& c : lo) c = (char)std::tolower((unsigned char)c);
     for (const char* s : kSkip)
         if (lo.find(s) != std::string::npos) return true;
     return false;
+}
+
+// A CMB whose geometry is FLAT (one bbox dimension ~0) is a billboard/sprite/decal quad
+// (e.g. wood02's wd_model [800,655,0], the *_modelT transparency sprites), not a real 3D
+// model. The auto path skips these so it picks the actual mesh (a 3D tree, not a flat white
+// quad on the ground). True if the smallest extent is a tiny fraction of the largest.
+static bool isFlatGroups(const std::vector<SoH3D::CmbDrawGroup>& groups) {
+    float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+    bool any = false;
+    for (const auto& g : groups)
+        for (const auto& v : g.verts) {
+            any = true;
+            for (int k = 0; k < 3; k++) {
+                mn[k] = std::min(mn[k], v.pos[k]);
+                mx[k] = std::max(mx[k], v.pos[k]);
+            }
+        }
+    if (!any) return true;
+    float e0 = mx[0] - mn[0], e1 = mx[1] - mn[1], e2 = mx[2] - mn[2];
+    float emax = std::max(e0, std::max(e1, e2));
+    float emin = std::min(e0, std::min(e1, e2));
+    return emax <= 1e-3f || emin < 0.02f * emax;
+}
+
+static size_t vertCountGroups(const std::vector<SoH3D::CmbDrawGroup>& groups) {
+    size_t n = 0;
+    for (const auto& g : groups) n += g.verts.size();
+    return n;
 }
 
 // Load an auto-replaced actor model: read the ZAR at its registered path, pick the main
@@ -271,10 +299,18 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
     if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] auto Zar %s: %s\n", zarPath.c_str(), out->zar->error().c_str()); return; }
 
-    // Pick the largest non-debris .cmb. Parse each candidate once (one-time per object).
+    // Pick the MAIN model CMB. Parse each candidate once (one-time per object). Prefer the
+    // most-detailed real mesh: skip debris (by name) and flat billboard/sprite quads (e.g.
+    // wood02's wd_model is a flat [800,655,0] decal that, picked by raw size, rendered as a
+    // white quad on the ground). Among the rest, the CMB with the most vertices is the main
+    // body (a 3D tree, not its sprite LOD). Fall back progressively so a ZAR with only
+    // flat/debris CMBs still yields something rather than nothing.
     const SoH3D::ZarFile* best = nullptr;
     std::unique_ptr<SoH3D::Cmb> bestCmb;
-    float bestDiag = -1.0f;
+    size_t bestVerts = 0;
+    const SoH3D::ZarFile* fbFile = nullptr; // best non-debris (incl. flat), by diagonal
+    std::unique_ptr<SoH3D::Cmb> fbCmb;
+    float fbDiag = -1.0f;
     int nCmb = 0;
     for (const auto& f : out->zar->files()) {
         if (f.name.size() < 4 || f.name.compare(f.name.size() - 4, 4, ".cmb") != 0) continue;
@@ -282,10 +318,15 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
         if (isDebrisCmbName(f.name)) continue;
         auto cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(f));
         if (!cmb->ok()) continue;
-        float d = bboxDiag(cmb->buildDrawGroups());
-        if (d > bestDiag) { bestDiag = d; best = &f; bestCmb = std::move(cmb); }
+        auto groups = cmb->buildDrawGroups();
+        float d = bboxDiag(groups);
+        if (d > fbDiag) { fbDiag = d; fbFile = &f; fbCmb = std::make_unique<SoH3D::Cmb>(out->zar->read(f)); }
+        if (isFlatGroups(groups)) continue; // billboard/sprite/decal -> not the main mesh
+        size_t nv = vertCountGroups(groups);
+        if (nv > bestVerts) { bestVerts = nv; best = &f; bestCmb = std::move(cmb); }
     }
-    // Fallback: if every CMB looked like debris (or none parsed), take the first .cmb.
+    if (!bestCmb) { best = fbFile; bestCmb = std::move(fbCmb); } // all flat? take largest non-debris
+    // Last resort: if every CMB looked like debris (or none parsed), take the first .cmb.
     if (!bestCmb) {
         const SoH3D::ZarFile* f = out->zar->firstWithSuffix(".cmb");
         if (f) { bestCmb = std::make_unique<SoH3D::Cmb>(out->zar->read(*f)); best = f; }

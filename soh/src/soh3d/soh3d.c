@@ -814,6 +814,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     char arg[64];
     char path[1024];
     float f1, f2, f3;
+    int iv;
     while (*line == ' ' || *line == '\t' || *line == '\r') {
         line++;
     }
@@ -843,6 +844,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         p->actor.world.pos.z = f3;
         p->actor.prevPos = p->actor.world.pos;
         SoH3D_ReplReply(outPath, "tp -> (%.0f,%.0f,%.0f)", f1, f2, f3);
+    } else if (strcmp(cmd, "warp") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // Trigger an in-game scene transition to an entrance index (decimal or 0x-hex), so
+        // the live instance can hop scenes without a relaunch (e.g. `warp 0xee` = Kokiri
+        // Forest). Same mechanism actors use to send Link through a loading zone.
+        play->nextEntranceIndex = iv;
+        play->transitionTrigger = TRANS_TRIGGER_START;
+        play->transitionType = TRANS_TYPE_FADE_BLACK;
+        SoH3D_ReplReply(outPath, "warp -> entrance 0x%x (%d)", iv, iv);
     } else if (strcmp(cmd, "move") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         Player* p = GET_PLAYER(play);
         s16 yaw = p->actor.shape.rot.y;

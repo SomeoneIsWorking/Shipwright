@@ -100,6 +100,32 @@ static const char* SoH3D_SceneName(PlayState* play);
 #include "soh3d_scene_names.inc"
 // N64 object id -> OoT3D actor ZAR path (kSoH3dObjectZars). Generated, paths only.
 #include "soh3d_object_zars.inc"
+// Per-character N64<->OoT3D bone correspondence + scale (kSoH3dBoneMaps). Generated offline by
+// tools/soh3d_skel_export.py; used by the SkelAnime retarget for topology-divergent rigs.
+#include "soh3d_bonemap.inc"
+
+// Retarget the OoT3D skeleton from a live N64 pose with an explicit bone correspondence (NULL
+// map = identity). Defined in soh3d_model.cpp.
+void SoH3D_UpdateAnimN64Mapped(int modelId, const s16* jointRots, int rotCount, const signed char* boneToLimb,
+                               int mapCount);
+
+// Find the precomputed bone map for a ZAR path, or NULL if none (-> identity retarget + runtime
+// rest-pose scale).
+static const SoH3DBoneMap* SoH3D_FindBoneMap(const char* zar) {
+    if (zar == NULL) {
+        return NULL;
+    }
+    for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dBoneMaps); i++) {
+        if (strcmp(kSoH3dBoneMaps[i].zar, zar) == 0) {
+            return &kSoH3dBoneMaps[i];
+        }
+    }
+    return NULL;
+}
+
+// Precomputed bone map for the actor currently deferred for N64-anim replacement (NULL = none ->
+// identity retarget). Set alongside gSoH3dPendingModel when an auto actor is deferred.
+static const SoH3DBoneMap* gSoH3dPendingBoneMap = NULL;
 
 // Scene-geometry world transform (REPL-pokeable). OoT3D scene coords are already
 // WORLD-space at (apparently) the N64 unit scale, so the defaults are identity:
@@ -695,6 +721,7 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
             gSoH3dPendingScale = e->scale;
             gSoH3dPendingGroundOff = e->groundOff;
             gSoH3dPendingAuto = 1;
+            gSoH3dPendingBoneMap = SoH3D_FindBoneMap(zar); // precomputed correspondence (or NULL)
             return 0;
         }
         // Ready static prop: draw the OoT3D model at the measured scale. No anim.
@@ -759,6 +786,7 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
                     gSoH3dPendingScale = sModelTable[i].worldScale;
                     gSoH3dPendingGroundOff = sModelTable[i].groundOffset;
                     gSoH3dPendingAuto = 0; // hand-verified entry -> skip the rig-mismatch guard
+                    gSoH3dPendingBoneMap = NULL; // hand-calibrated entries use the identity retarget
                     return 0;
                 }
                 if (sModelTable[i].glModelId >= 0) {
@@ -883,11 +911,14 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     // correspond -> the pose comes out giant/malformed; refuse it and fall back to the N64 model.
     // (Hand-verified sModelTable entries skip this guard: they're known-good even if a tail/extra
     // helper bone makes the counts differ.)
+    const SoH3DBoneMap* bm = gSoH3dPendingBoneMap;
     if (gSoH3dPendingAuto) {
         int bones = SoH3D_AutoModelBoneCount(gSoH3dPendingModel);
-        if (bones != skelAnime->limbCount) {
-            // Log once per model so it's clear which actors fall back to N64 (rig mismatch) vs
-            // actually render the OoT3D model. (Diagnostic for the char-replace correspondence.)
+        // With a precomputed map the bone/limb counts legitimately differ (OoT3D adds root/
+        // reorient bones), so the map handles correspondence. WITHOUT a map we fall back to the
+        // identity assumption (bone i <- limb i), which is only valid when the counts match;
+        // otherwise skip to N64 to avoid a malformed pose.
+        if (bm == NULL && bones != skelAnime->limbCount) {
             static int loggedSkip[64];
             static int nSkip = 0;
             int seen = 0;
@@ -895,11 +926,12 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
                 if (loggedSkip[i] == gSoH3dPendingModel) { seen = 1; break; }
             if (!seen && nSkip < (int)ARRAY_COUNT(loggedSkip)) {
                 loggedSkip[nSkip++] = gSoH3dPendingModel;
-                printf("SOH3D RETARGET: model %d SKIP -> N64 (oot3d bones=%d != n64 limbCount=%d)\n",
+                printf("SOH3D RETARGET: model %d SKIP -> N64 (no map; oot3d bones=%d != n64 limbCount=%d)\n",
                        gSoH3dPendingModel, bones, skelAnime->limbCount);
                 fflush(stdout);
             }
             gSoH3dPendingModel = -1; // give up on this actor for this frame -> N64 draws
+            gSoH3dPendingBoneMap = NULL;
             return 0;
         }
         {
@@ -910,42 +942,35 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
                 if (loggedDraw[i] == gSoH3dPendingModel) { seen = 1; break; }
             if (!seen && nDraw < (int)ARRAY_COUNT(loggedDraw)) {
                 loggedDraw[nDraw++] = gSoH3dPendingModel;
-                printf("SOH3D RETARGET: model %d DRAW OoT3D (bones=%d == limbCount=%d)\n", gSoH3dPendingModel,
-                       bones, skelAnime->limbCount);
+                printf("SOH3D RETARGET: model %d DRAW OoT3D %s (bones=%d limbCount=%d)\n", gSoH3dPendingModel,
+                       bm ? "[mapped]" : "[identity]", bones, skelAnime->limbCount);
                 fflush(stdout);
             }
         }
-        // Derive the OoT3D->world scale from the REST skeletons' bone-length ratio instead of the
-        // bbox measure (which over-measured articulated actors -> giant). N64 and OoT3D are the
-        // SAME character, so scale = actor->scale * (Σ N64 |jointPos|) / (Σ OoT3D |trans|).
-        float n64sum = SoH3D_N64SkelBoneLenSum(skelAnime);
-        float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
-        if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
-            gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
-            if (SoH3D_AutoMode() >= 1) {
-                static int reported[64];
-                static int nRep = 0;
-                int seen = 0;
-                for (int i = 0; i < nRep; i++)
-                    if (reported[i] == gSoH3dPendingModel) {
-                        seen = 1;
-                        break;
-                    }
-                if (!seen && nRep < (int)ARRAY_COUNT(reported)) {
-                    reported[nRep++] = gSoH3dPendingModel;
-                    printf("SOH3D AUTO: model %d skinned scale=%.5f (restpose n64sum=%.1f oot3dsum=%.1f actorScale=%.5f)\n",
-                           gSoH3dPendingModel, gSoH3dPendingScale, n64sum, oot3dsum, gSoH3dPendingActor->scale.x);
-                    fflush(stdout);
-                }
+        // Scale: precomputed scaleRatio when a map exists, else the runtime rest-pose bone-length
+        // ratio (N64 & OoT3D are the same character). Either replaces the bbox measure (giant).
+        if (bm != NULL) {
+            gSoH3dPendingScale = gSoH3dPendingActor->scale.x * bm->scaleRatio;
+        } else {
+            float n64sum = SoH3D_N64SkelBoneLenSum(skelAnime);
+            float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
+            if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
+                gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
             }
         }
     }
     // Retarget the OoT3D skeleton from the live N64 jointTable (jointTable[0] is the root
-    // translation, so the per-limb rotations start at [1]). SoH3D_UpdateAnimN64 falls back to
-    // the CMB rest rotation for any OoT3D bone beyond limbCount, so a shorter N64 rig is safe.
-    SoH3D_UpdateAnimN64(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount);
+    // translation, so per-limb rotations start at [1]). With a precomputed map, OoT3D bone i takes
+    // N64 limb bm->boneToLimb[i]; without one, identity (bone i <- limb i).
+    if (bm != NULL) {
+        SoH3D_UpdateAnimN64Mapped(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount,
+                                  bm->boneToLimb, bm->boneCount);
+    } else {
+        SoH3D_UpdateAnimN64(gSoH3dPendingModel, (const s16*)&skelAnime->jointTable[1], skelAnime->limbCount);
+    }
     SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
     gSoH3dPendingModel = -1; // drawn once this actor; don't re-draw on a second SkelAnime call
+    gSoH3dPendingBoneMap = NULL;
     return 1;
 }
 
@@ -958,6 +983,7 @@ void SoH3D_AfterActorDraw(PlayState* play, Actor* actor) {
     // if it didn't, the actor's N64 model drew as the fallback).
     gSoH3dPendingActor = NULL;
     gSoH3dPendingModel = -1;
+    gSoH3dPendingBoneMap = NULL;
 }
 
 int SoH3D_Enabled(void) {

@@ -741,7 +741,20 @@ static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
 // contorts the pose. Convention derived QUANTITATIVELY (tools/soh3d_anim_derive.py: diff CSAB
 // ge1_s_wait skin matrices vs N64-joint-driven ones -> struct=replace, euler order ZYX wins
 // over every compose variant). L = T(rest)*Rz*Ry*Rx(n64)*S(rest); skin = animWorld*bindInverse.
+extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots, int rotCount,
+                                          const signed char* boneToLimb, int mapCount);
+
 extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int rotCount) {
+    SoH3D_UpdateAnimN64Mapped(modelId, jointRots, rotCount, nullptr, 0);
+}
+
+// As SoH3D_UpdateAnimN64, but with an explicit OoT3D-bone -> N64-limb correspondence
+// (`boneToLimb`, indexed by bone id; -1 = no live joint -> keep rest). NULL map = identity
+// (bone i <- limb i), the same-rig assumption. The map is the precomputed correspondence
+// (tools/soh3d_skel_match.py -> soh3d_bonemap.inc), needed for rigs whose topology differs
+// from the N64 skeleton (OoT3D inserts root/reorient bones). See PROGRESS "replace ALL chars".
+extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots, int rotCount,
+                                          const signed char* boneToLimb, int mapCount) {
     using namespace SoH3D;
     LoadedModel* lm = loadModel(modelId);
     if (!lm || !lm->ok || !lm->cmb) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
@@ -760,14 +773,17 @@ extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int r
         if (done[id]) return aw[id];
         const CmbBone* bn = byId[id];
         Mat4 L = matT(bn->trans[0], bn->trans[1], bn->trans[2]);
-        if (id < rotCount) {
+        // limb = the N64 limb whose rotation drives this OoT3D bone: the precomputed map if
+        // present, else identity (bone id == limb index).
+        int limb = boneToLimb ? (id < mapCount ? (int)boneToLimb[id] : -1) : id;
+        if (limb >= 0 && limb < rotCount) {
             // Use the N64 joint rotation AS the bone's local rotation (replacing the CMB rest
             // rotation), in csab.cpp's Rz*Ry*Rx order. The jointTable already carries the full
             // limb orientation, so composing it with the rest rotation double-applies and
             // contorts (verified by tools/soh3d_anim_derive.py: replace beats compose).
-            float rx = jointRots[id * 3 + 0] * kBinangToRad;
-            float ry = jointRots[id * 3 + 1] * kBinangToRad;
-            float rz = jointRots[id * 3 + 2] * kBinangToRad;
+            float rx = jointRots[limb * 3 + 0] * kBinangToRad;
+            float ry = jointRots[limb * 3 + 1] * kBinangToRad;
+            float rz = jointRots[limb * 3 + 2] * kBinangToRad;
             L = matMul(L, matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)));
         } else {
             // No live joint for this bone: keep its CMB rest orientation (bind pose).

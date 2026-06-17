@@ -763,6 +763,29 @@ const char* SoH3D_AutoModelDefaultAnim(int modelId) {
     return lm->defaultAnim.empty() ? nullptr : lm->defaultAnim.c_str();
 }
 
+// LIVE anim-compare tooling: list a model's CSAB base names (+ duration) into `out`, space-separated
+// as "base(duration)". For REPL `animlist` so the live comparer knows which CSABs to `animforce`.
+extern "C" void SoH3D_AutoModelCsabList(int modelId, char* out, int outsz) {
+    if (out == nullptr || outsz <= 0) return;
+    out[0] = '\0';
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->zar) return;
+    int pos = 0;
+    for (const auto& f : lm->zar->files()) {
+        const std::string& n = f.name;
+        if (n.size() < 5 || n.compare(n.size() - 5, 5, ".csab") != 0) continue;
+        std::string base = n;
+        if (base.rfind("Anim/", 0) == 0) base = base.substr(5);
+        base = base.substr(0, base.size() - 5); // strip .csab
+        int dur = -1;
+        auto cmb = lm->cmb.get();
+        if (cmb) { SoH3D::Csab c(lm->zar->read(f)); if (c.ok()) dur = (int)c.duration(); }
+        int w = snprintf(out + pos, (size_t)(outsz - pos), "%s%s(%d)", pos ? " " : "", base.c_str(), dur);
+        if (w <= 0 || w >= outsz - pos) break;
+        pos += w;
+    }
+}
+
 // ORACLE DUMP (gated by the caller): print the OoT3D model's skeleton — per-bone rest
 // translation/rotation/scale + parent + world-space rest position (FK), plus mesh height and
 // the world rest extent (bone span). Used offline to design the programmatic N64<->OoT3D scale

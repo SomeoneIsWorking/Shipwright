@@ -40,6 +40,10 @@ float gSoH3dAnimRate = 1.0f; // 0 = paused (hold current frame)
 // see SoH3D_AnimResolver); 0 = free-running gSoH3dAnimFrame for REPL scrubbing.
 int gSoH3dAnimLive = 1;
 int gSoH3dAnimDebug = 0; // REPL `animdbg 1`: log resolved csab/curFrame/phase each ~20 draws
+// LIVE anim-compare tooling: REPL `animforce <csab-base>` pins that CSAB on replaced actors (empty
+// = auto-resolve); `animlist` prints the CSABs of the last replaced model (gSoH3dLastAutoModel).
+char gSoH3dForceCsab[64] = "";
+int gSoH3dLastAutoModel = -1;
 
 // Per-GL-model live playback state, so multiple DISTINCT GL characters animate
 // independently (gSoH3dAnimRate is the shared speed knob; the frame accumulator and
@@ -997,6 +1001,12 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // model's default idle so an unmapped state still reads as standing rather than freezing.
         const char* mapped = SoH3D_ResolveAutoCsab(gSoH3dPendingAnimOtr);
         const char* csab = (mapped != NULL) ? mapped : SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
+        // LIVE anim-compare tooling: REPL `animforce <base>` pins a chosen CSAB on every replaced
+        // actor so its motion can be eyeballed against the N64 anim (toggle `auto 0/1`). Empty = auto.
+        gSoH3dLastAutoModel = gSoH3dPendingModel; // for REPL `animlist`
+        if (gSoH3dForceCsab[0] != '\0') {
+            csab = gSoH3dForceCsab;
+        }
         if (gSoH3dAnimDebug) {
             static int dbg = 0;
             if ((dbg++ % 30) == 0) {
@@ -1538,6 +1548,28 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "n64anim") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dN64Anim = (int)f1;
         SoH3D_ReplReply(outPath, "n64anim=%d (1=N64 SkelAnime joints on OoT3D skeleton, 0=CSAB)", gSoH3dN64Anim);
+    } else if (strcmp(cmd, "animlist") == 0) {
+        // LIVE anim-compare: print the CSABs of the last replaced model so they can be `animforce`d.
+        extern void SoH3D_AutoModelCsabList(int modelId, char* out, int outsz);
+        static char buf[3072];
+        buf[0] = '\0';
+        if (gSoH3dLastAutoModel >= 0) {
+            SoH3D_AutoModelCsabList(gSoH3dLastAutoModel, buf, (int)sizeof(buf));
+        }
+        SoH3D_ReplReply(outPath, "animlist model=%d: %s", gSoH3dLastAutoModel, buf[0] ? buf : "(none seen yet)");
+    } else if (strcmp(cmd, "animforce") == 0) {
+        // `animforce <csab-base>` pins that CSAB on EVERY replaced actor (eyeball it vs the N64 anim,
+        // toggle `auto 0/1`); `animforce off` / no-arg returns to the auto resolver.
+        char name[64] = "";
+        if (sscanf(line, "%*s %63s", name) == 1 && strcmp(name, "off") != 0) {
+            strncpy(gSoH3dForceCsab, name, sizeof(gSoH3dForceCsab) - 1);
+            gSoH3dForceCsab[sizeof(gSoH3dForceCsab) - 1] = '\0';
+            SoH3D_ReplReply(outPath, "animforce='%s' (forced on all replaced actors; `animforce off` to release)",
+                            gSoH3dForceCsab);
+        } else {
+            gSoH3dForceCsab[0] = '\0';
+            SoH3D_ReplReply(outPath, "animforce OFF (auto-resolve restored)");
+        }
     } else if (strcmp(cmd, "autostate") == 0) {
         // Dump every object that the auto path has touched: state + derived scale, so the
         // measured scale can be checked against the hand-tuned values (pot/crate/bush/...).

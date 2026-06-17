@@ -11,6 +11,7 @@
 #include <ship/resource/ResourceManager.h>
 #include <ship/resource/ResourceLoader.h>
 #include <ship/resource/File.h> // RESOURCE_FORMAT_BINARY
+#include <ship/resource/archive/ArchiveManager.h> // ListFiles (skeleton discovery)
 
 #include <fast/resource/ResourceType.h>
 #include <fast/resource/factory/DisplayListFactory.h>
@@ -108,6 +109,30 @@ void RegisterN64Factories() {
 
 static Ship::ResourceManager* rm() { return Ship::Context::GetRawInstance()->GetResourceManager().get(); }
 
+// Discover the N64 skeleton symbol(s) inside an object's OTR folder. The animmap gives the
+// object name but not the skeleton symbol; SkeletonHeader resources are named "...Skel" (the
+// per-limb resources are "...SkelLimbsLimb_...DL_..."), so we list the folder and keep the
+// basenames that END in "Skel". Returned sorted; the caller tries them until one loads.
+std::vector<std::string> FindN64Skeletons(const std::string& objectPath) {
+    RegisterN64Factories();
+    std::vector<std::string> out;
+    auto am = Ship::Context::GetRawInstance()->GetResourceManager()->GetArchiveManager();
+    auto list = am->ListFiles(objectPath + "/*");
+    for (const auto& p : *list) {
+        size_t slash = p.find_last_of('/');
+        std::string name = (slash == std::string::npos) ? p : p.substr(slash + 1);
+        // A SkeletonHeader resource contains "Skel" but is not a limb ("...SkelLimbsLimb...") or a
+        // display list ("...DL..."). Names vary: gGerudoRedSkel (suffix) or object_daiku_Skel_007958
+        // (ZAPD auto-name), so match the substring, not just the suffix.
+        if (name.find("Skel") == std::string::npos) continue;
+        if (name.find("Limb") != std::string::npos || name.find("DL") != std::string::npos) continue;
+        out.push_back(name);
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 void SetAnimN64(ModelN64& m, const std::string& animName) {
     if (animName.empty()) return;
     std::string path = m.objectPath + "/" + animName;
@@ -118,6 +143,15 @@ void SetAnimN64(ModelN64& m, const std::string& animName) {
     m.animName = animName;
     auto* ah = (SOH::AnimationHeader*)m.anim;
     m.animFrameCount = ah->common.frameCount;
+    // Actual array sizes from the resource — used to bound sampling. animmap can pair an anim with a
+    // skeleton of a DIFFERENT limb count (multi-skeleton bosses like Volvagia: body skel + arm anim),
+    // so jointIndices may be shorter than limbCount+1; reading past it would crash.
+    m.animJointCount = m.limbCount + 1;
+    m.animFrameDataCount = 0;
+    if (auto anim = std::dynamic_pointer_cast<SOH::Animation>(res)) {
+        m.animJointCount = (int)anim->rotationIndices.size();
+        m.animFrameDataCount = (int)anim->rotationValues.size();
+    }
 }
 
 ModelN64 LoadN64(const std::string& objectPath, const std::string& skelName,
@@ -138,11 +172,47 @@ ModelN64 LoadN64(const std::string& objectPath, const std::string& skelName,
     m.ok = (m.limbCount > 0 && fsh->sh.segment != nullptr);
     if (!m.ok) { m.error = "skeleton has no limbs"; return m; }
 
+    // This renderer only handles RIGID (Standard/LOD) limbs. Skin limbs (animated skin meshes —
+    // e.g. Epona, the player) have an incompatible limb struct that reads as garbage here, and
+    // Curve skeletons use a different draw path entirely. Refuse them up front (the 3DS side
+    // likewise skips skinned models) instead of dereferencing garbage limb pointers later.
+    if (auto skel = std::dynamic_pointer_cast<SOH::Skeleton>(res)) {
+        if (skel->type == SOH::SkeletonType::Curve || skel->limbType == SOH::LimbType::Skin ||
+            skel->limbTableType == SOH::LimbType::Skin || skel->limbType == SOH::LimbType::Curve) {
+            m.ok = false;
+            m.error = "skinned/curve skeleton (N64 rigid renderer unsupported)";
+            fprintf(stderr, "[cc_n64] %s: %s\n", skelPath.c_str(), m.error.c_str());
+            return m;
+        }
+    }
+
     if (!animNames.empty()) SetAnimN64(m, animNames[0]);
 
-    fprintf(stderr, "[cc_n64] loaded %s: %d limbs, %zu anims, anim '%s' (%d frames)\n", skelPath.c_str(), m.limbCount,
-            animNames.size(), m.animName.c_str(), m.animFrameCount);
+    fprintf(stderr, "[cc_n64] loaded %s: %d limbs, skeletonType=%d, %zu anims, anim '%s' (%d frames)\n",
+            skelPath.c_str(), m.limbCount, (int)fsh->sh.skeletonType, animNames.size(), m.animName.c_str(),
+            m.animFrameCount);
     return m;
+}
+
+// Load an N64 character given only its object folder: discover the skeleton symbol(s) and try
+// each until one loads with limbs (most objects have exactly one). animNames are the N64 anim
+// symbols to select from (from the charcompare index).
+ModelN64 LoadN64Auto(const std::string& objectPath, const std::vector<std::string>& animNames) {
+    auto skels = FindN64Skeletons(objectPath);
+    if (skels.empty()) {
+        ModelN64 m;
+        m.objectPath = objectPath;
+        m.error = "no skeleton found in " + objectPath;
+        fprintf(stderr, "[cc_n64] %s\n", m.error.c_str());
+        return m;
+    }
+    ModelN64 last;
+    for (const auto& s : skels) {
+        ModelN64 m = LoadN64(objectPath, s, animNames);
+        if (m.ok) return m;
+        last = m;
+    }
+    return last; // carries the last attempt's error
 }
 
 // Sample the animation into jointTable[limbCount+1] (out[0]=root pos, out[1..]=rotations).
@@ -154,10 +224,19 @@ static void sampleAnim(const ModelN64& m, float frame, std::vector<std::array<in
     const SOH::JointIndex* ji = ah->jointIndices;
     uint16_t smax = ah->staticIndexMax;
     int f = ((int)frame % m.animFrameCount + m.animFrameCount) % m.animFrameCount;
-    for (int i = 0; i < m.limbCount + 1; i++) {
-        out[i][0] = (ji[i].x >= smax) ? fd[ji[i].x + f] : fd[ji[i].x];
-        out[i][1] = (ji[i].y >= smax) ? fd[ji[i].y + f] : fd[ji[i].y];
-        out[i][2] = (ji[i].z >= smax) ? fd[ji[i].z + f] : fd[ji[i].z];
+    // Bound every read: the anim may have FEWER joints/frameData than this skeleton needs (a
+    // mismatched animmap pairing on a multi-skeleton boss). Limbs past the anim's joint count keep
+    // rotation 0; a frameData index past the array yields 0 instead of an OOB read.
+    int njoints = std::min(m.limbCount + 1, m.animJointCount);
+    int nfd = m.animFrameDataCount;
+    auto sample = [&](uint16_t idx) -> int16_t {
+        int e = (idx >= smax) ? (idx + f) : idx;
+        return (nfd <= 0 || e < 0 || e >= nfd) ? 0 : fd[e];
+    };
+    for (int i = 0; i < njoints; i++) {
+        out[i][0] = sample(ji[i].x);
+        out[i][1] = sample(ji[i].y);
+        out[i][2] = sample(ji[i].z);
     }
     // Diagnostic: zero all limb rotations (keep root position) to render the rest skeleton —
     // isolates the matrix/jointPos composition from the animation sampling.
@@ -196,6 +275,7 @@ static MtxF limbMatrix(ModelN64& m, int limbIndex, const MtxF& parent,
 // Pass 1: FK — fill world[limbIndex] for every limb (so segment-0x0D refs to ANY limb resolve).
 static void computeWorld(ModelN64& m, int limbIndex, const MtxF& parent,
                          const std::vector<std::array<int16_t, 3>>& joints, std::vector<MtxF>& world) {
+    if (limbIndex < 0 || limbIndex >= m.limbCount) return; // malformed/unsupported skeleton: don't deref OOB
     auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
     SOH::StandardLimb* limb = seg[limbIndex];
     MtxF cur = limbMatrix(m, limbIndex, parent, joints);
@@ -208,6 +288,7 @@ static void computeWorld(ModelN64& m, int limbIndex, const MtxF& parent,
 // sibling) — matching the `mtx++` advance, so the segment-0x0D matrix array is indexed the way
 // the limb DLs (and their cross-limb references) expect. slot[limbIndex] = -1 if no dList.
 static void assignSlots(ModelN64& m, int limbIndex, int& counter, std::vector<int>& slot) {
+    if (limbIndex < 0 || limbIndex >= m.limbCount) return;
     auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
     SOH::StandardLimb* limb = seg[limbIndex];
     slot[limbIndex] = (limb->dList != nullptr) ? counter++ : -1;
@@ -217,11 +298,23 @@ static void assignSlots(ModelN64& m, int limbIndex, int& counter, std::vector<in
 
 // Pass 2: emit a matrix-load (from the segment-0x0D array slot) + the limb's geometry DL per limb.
 static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, std::vector<Gfx>& dl) {
+    if (limbIndex < 0 || limbIndex >= m.limbCount) return;
     auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
     SOH::StandardLimb* limb = seg[limbIndex];
     static const char* onlyEnv = getenv("CC_N64_ONLYLIMB");
     bool drawThis = !onlyEnv || atoi(onlyEnv) == limbIndex;
-    if (drawThis && limb->dList != nullptr && slot[limbIndex] >= 0) {
+    // Guard: our renderer assumes Standard/LOD RIGID limbs, where dList is an "__OTR__" path string
+    // (a valid user-space heap pointer). SKIN limbs (e.g. Epona / player-style animated skin meshes)
+    // have an incompatible struct, so reading dList at the StandardLimb offset yields garbage — a
+    // non-canonical pointer that crashes strlen. Skip those limbs (skin skeletons are unsupported,
+    // mirroring the 3DS side skipping skinned models) instead of crashing.
+    auto dListIsValidString = [](const void* p) {
+        uintptr_t v = (uintptr_t)p;
+        return v >= 0x1000 && v < 0x0000800000000000ULL; // within x86-64 user address space
+    };
+    if (drawThis && limb->dList != nullptr && slot[limbIndex] >= 0 && dListIsValidString(limb->dList)) {
+        if (getenv("CC_N64_DBG"))
+            fprintf(stderr, "[cc_n64] limb %d dListPtr=%p\n", limbIndex, (void*)limb->dList);
         // limb->dList is an OTR PATH string; resolve to the DisplayList resource's Gfx* (mirrors
         // the game's gSPDisplayList wrapper). The flex limb DLs load their matrices from segment
         // 0x0D themselves; we also load this limb's own matrix as the base (like SkelAnime_DrawFlex).
@@ -280,10 +373,13 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
         }
     }
 
-    // Framing matrix F (column-major M*v), same NDC fit as cc_3ds: scale + R(rx,ry,rz), center.
-    // xComp widens clip-X for a narrow (split) viewport so the model isn't squashed (see cc_3ds).
+    // Framing matrix F (column-major M*v): scale + R(rx,ry,rz), center. xComp widens clip-X for a
+    // narrow (split) viewport so the model isn't squashed (see cc_3ds). The fit target is 0.62 NDC
+    // (vs cc_3ds's 0.8) because this bbox is over the JOINT positions, and the limb MESH extends
+    // past the joints (head/hands), so a tighter joint-fit would clip the mesh. (A proper fix would
+    // bbox the transformed geometry like cc_3ds; the margin keeps the whole model on screen for now.)
     const float xComp = (float)SCREEN_WIDTH / vp.w;
-    const float fit = 0.8f / std::max(ext[0], ext[1]);
+    const float fit = 0.62f / std::max(ext[0], ext[1]);
     const float fitZ = 0.4f / ext[2];
     const float S[3] = { fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
@@ -387,8 +483,15 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
                                    G_TL_TILE | G_TD_CLAMP | G_TP_PERSP | G_CYC_2CYCLE | G_PM_NPRIMITIVE,
                                G_AC_NONE | G_ZS_PIXEL | G_RM_FOG_SHADE_A | G_RM_AA_ZB_OPA_SURF2);
       dl.push_back(g); }
-    { Gfx g = gsSPLoadGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH);
-      dl.push_back(g); }
+    // Match SETUPDL_25 exactly, INCLUDING G_FOG. The limb DLs assume the game's persistent fog
+    // state: G_FOG makes GfxSpVertex store the fog factor (z*winv*fog_mul + fog_offset) in the
+    // shade alpha instead of the vertex alpha. With no fog setup the regs are 0, so the fog factor
+    // is 0 -> the cycle-1 fog blend (G_RM_FOG_SHADE_A in the limb render mode) is a no-op and the
+    // model renders normally. If G_FOG is OMITTED, limbs that don't re-set it keep vertex alpha 255,
+    // which the fog blend composites to solid black against the unset (black) fog colour (invisible).
+    uint32_t geoMode = G_ZBUFFER | G_SHADE | G_CULL_BACK | G_FOG | G_LIGHTING | G_SHADING_SMOOTH;
+    if (getenv("CC_N64_NOCULL")) geoMode &= ~(uint32_t)G_CULL_BACK;
+    { Gfx g = gsSPLoadGeometryMode(geoMode); dl.push_back(g); }
 
     // One directional + ambient light so the lit limbs shade correctly (without lights the
     // G_LIGHTING geometry mode reads garbage shade). Light direction faces the camera.
@@ -406,6 +509,27 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
 
     // Bind the per-limb matrix array to segment 0x0D (what the flex limb DLs reference).
     { Gfx g = gsSPSegment(0x0D, (uintptr_t)mtxArray); dl.push_back(g); }
+    // Safety net: some actors' limb DLs gsSPDisplayList()/reference a SCRATCH SEGMENT the game sets
+    // up at draw time (e.g. Darunia's limbs call seg 0x0C; Bari stores geometry in seg 0x08/0x09).
+    // We can't reproduce that actor-specific setup; left unbound, SegAddr returns the raw segmented
+    // address and the interpreter executes/reads it -> SEGV. Point the common actor scratch segments
+    // at a large ZERO buffer whose first word is G_ENDDL: a gSPDisplayList branch/call there ends
+    // immediately, and a stray gSPVertex/data read from such a segment stays in-bounds (reads zeros
+    // -> degenerate geometry) instead of running off into unmapped memory. The model just renders
+    // without that actor-provided geometry, rather than crashing.
+    static std::vector<Gfx> kScratchSeg = [] {
+        std::vector<Gfx> v(0x4000, Gfx{}); // 256 KB of zeros (covers typical segment offsets)
+        v[0] = gsSPEndDisplayList();
+        return v;
+    }();
+    // Bind ALL actor scratch segments (0x01..0x0C) — limb DLs reference various ones for matrices
+    // (e.g. Bari's nucleus loads a matrix from seg 0x01), display lists and vertices. We provide
+    // none of them, so any reference resolves into this safe bounded buffer instead of crashing.
+    // Segment 0x0D is OURS (the per-limb matrix array) and must not be overwritten.
+    for (int seg = 0x01; seg <= 0x0C; seg++) {
+        Gfx g = gsSPSegment(seg, (uintptr_t)kScratchSeg.data());
+        dl.push_back(g);
+    }
 
     emitLimbs(m, 0, slot, dl);
 }

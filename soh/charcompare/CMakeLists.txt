@@ -16,6 +16,7 @@ add_executable(charcompare
     main.cpp
     cc_3ds.cpp
     cc_n64.cpp
+    cc_index.cpp                         # generated character index (charcompare_index.inc)
     cc_skeleton_stub.cpp                 # trimmed SOH::Skeleton (no game-coupled SkeletonPatcher)
     ${SOH_DIR}/soh/resource/importer/SkeletonFactory.cpp
     ${SOH_DIR}/soh/resource/importer/SkeletonLimbFactory.cpp

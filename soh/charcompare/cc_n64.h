@@ -31,6 +31,8 @@ struct ModelN64 {
     void* anim = nullptr;       // AnimationHeader*
     std::string animName;
     int animFrameCount = 0;
+    int animJointCount = 0;     // jointIndices entries in the anim (may differ from limbCount+1)
+    int animFrameDataCount = 0; // frameData entries — bound for OOB-safe sampling
     std::vector<std::string> anims; // animation base names found for this object
     std::string error;
     // Auto-fit framing derived from the posed skeleton bbox (FK over joint positions).
@@ -51,6 +53,12 @@ void RegisterN64Factories();
 // skeleton and enumerates anims; the first anim is selected.
 ModelN64 LoadN64(const std::string& objectPath, const std::string& skelName,
                  const std::vector<std::string>& animNames);
+
+// List the skeleton symbol(s) (basenames ending in "Skel") inside an object's OTR folder.
+std::vector<std::string> FindN64Skeletons(const std::string& objectPath);
+
+// Load an N64 character by object folder alone, discovering its skeleton (see FindN64Skeletons).
+ModelN64 LoadN64Auto(const std::string& objectPath, const std::vector<std::string>& animNames);
 
 // Select the current animation (by symbol name) and recompute frame count + framing.
 void SetAnimN64(ModelN64& m, const std::string& animName);

@@ -1,13 +1,13 @@
 // charcompare — N64-vs-3DS character comparison tool.
 //
 // One window, two viewports (left = N64 via libultraship Fast3D, right = OoT3D/3DS
-// via the soh3d asset parsers + the engine's direct-GL skinned renderer), each
-// showing the SAME character + animation, to drive the N64<->3DS anim-map curation.
+// via the soh3d asset parsers + the engine's direct-GL skinned renderer), showing the
+// SAME character + (mapped) animation, to drive the N64<->3DS anim-map curation.
 //
-// PHASE 2: the 3DS viewport. Loads an OoT3D character from the .3ds and renders it
-// (animated) through the engine's OTR_G_SOH3D_DRAW/_RENDERPASS path, by driving the
-// Fast3D interpreter with a hand-built display list each frame (mirrors the in-game
-// render path and the dlist_harness). ImGui panel selects the animation + frame.
+// Phase 4: cascading selectors (TYPE -> character -> ANIMATION) driven by the generated
+// character index (cc_index.h / charcompare_index.inc, from tools/skeldata/animmap.json).
+// Selecting a character loads its 3DS ZAR (right) and N64 object+skeleton (left); selecting
+// an animation plays the N64 anim and its best-matched 3DS CSAB side by side.
 
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
@@ -19,6 +19,7 @@
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -28,6 +29,7 @@
 
 #include "cc_3ds.h"
 #include "cc_n64.h"
+#include "cc_index.h"
 
 namespace fs = std::filesystem;
 
@@ -77,11 +79,61 @@ static std::string locateArchive(const std::string& name, const char* argv0) {
     return {};
 }
 
+// --- charcompare selection state -----------------------------------------------------------
+// The generated index is a flat array sorted by category then name. We build the list of unique
+// categories and, on demand, the list of entry indices within the selected category.
+struct AppState {
+    std::vector<std::string> categories;
+    int catSel = 0, entrySel = 0, animSel = 0;
+    cc::Model3ds model;            // current 3DS model (right)
+    cc::ModelN64 n64;              // current N64 model (left)
+    float frame = 0.0f;
+    bool playing = true;
+    float playSpeed = 0.5f;        // frames per render-frame
+    float rx = 0, ry = 180, rz = 0; // face the camera (characters author facing +Z away)
+};
+
+static std::vector<int> entriesInCategory(const std::string& cat) {
+    std::vector<int> v;
+    const cc::IndexEntry* idx = cc::CcIndex();
+    for (int i = 0; i < cc::CcIndexCount(); i++)
+        if (cat == idx[i].category) v.push_back(i);
+    return v;
+}
+
+// Load the currently selected character into both viewports and reset the animation.
+static void loadSelection(AppState& s) {
+    auto es = entriesInCategory(s.categories[s.catSel]);
+    if (es.empty()) return;
+    s.entrySel = std::clamp(s.entrySel, 0, (int)es.size() - 1);
+    const cc::IndexEntry& e = cc::CcIndex()[es[s.entrySel]];
+
+    s.model = cc::Load(e.zar);
+    if (!s.model.ok) fprintf(stderr, "[charcompare] 3DS load failed (%s): %s\n", e.zar, s.model.error.c_str());
+
+    std::vector<std::string> animSyms;
+    for (int a = 0; a < e.animCount; a++) animSyms.push_back(e.anims[a].n64);
+    s.n64 = cc::LoadN64Auto(std::string("objects/") + e.object, animSyms);
+    if (!s.n64.ok) fprintf(stderr, "[charcompare] N64 load failed (%s): %s\n", e.object, s.n64.error.c_str());
+
+    s.animSel = 0;
+    s.frame = 0.0f;
+}
+
+// Apply the selected animation to both models for the current frame.
+static void applyAnim(AppState& s) {
+    auto es = entriesInCategory(s.categories[s.catSel]);
+    if (es.empty()) return;
+    const cc::IndexEntry& e = cc::CcIndex()[es[s.entrySel]];
+    if (e.animCount == 0) return;
+    s.animSel = std::clamp(s.animSel, 0, e.animCount - 1);
+    const cc::IndexAnim& a = e.anims[s.animSel];
+    cc::SetAnimN64(s.n64, a.n64);
+    cc::SetAnim(s.model, a.csab && a.csab[0] ? a.csab : "", s.frame);
+}
+
 int main(int argc, char** argv) {
     printf("[charcompare] starting\n");
-
-    // Default character; override with argv[1] (a ZAR path).
-    std::string zarPath = (argc > 1) ? argv[1] : "/actor/zelda_ge1.zar";
 
     std::vector<std::string> archivePaths;
     std::string soh = locateArchive("soh.o2r", argv[0]);
@@ -112,29 +164,39 @@ int main(int argc, char** argv) {
     printf("[charcompare] window backend: %s (%ux%u)\n", window->GetWindowBackendName().c_str(),
            window->GetWidth(), window->GetHeight());
 
-    // Load the 3DS character.
-    cc::Model3ds model = cc::Load(zarPath);
-    if (!model.ok) fprintf(stderr, "[charcompare] 3DS load failed: %s\n", model.error.c_str());
+    // Build the category list (the index is pre-sorted by category, so first-seen order is stable).
+    AppState st;
+    const cc::IndexEntry* idx = cc::CcIndex();
+    for (int i = 0; i < cc::CcIndexCount(); i++)
+        if (std::find(st.categories.begin(), st.categories.end(), idx[i].category) == st.categories.end())
+            st.categories.push_back(idx[i].category);
+    if (st.categories.empty()) { fprintf(stderr, "[charcompare] empty character index\n"); return 1; }
 
-    // Load the N64 character (ge1 = object_geldb / gGerudoRedSkel). TEMP hardcoded for Phase 3
-    // validation; Phase 4 will derive the N64 object/skel/anims from the skeldata JSONs.
-    cc::ModelN64 n64 = cc::LoadN64("objects/object_geldb", "gGerudoRedSkel",
-                                   { "gGerudoRedNeutralAnim", "gGerudoRedJumpAnim" });
-    if (!n64.ok) fprintf(stderr, "[charcompare] N64 load failed: %s\n", n64.error.c_str());
-    int n64AnimIdx = 0;
-    float n64Frame = 0.0f;
-
-    // UI / animation state.
-    int animIdx = model.anims.empty() ? -1 : 0;
-    float frame = 0.0f;
-    bool playing = true;
-    float playSpeed = 0.5f; // frames per render-frame
-    float rx = 0, ry = 180, rz = 0; // face the camera (characters author facing +Z away)
+    // Optional starting character: argv[1] = a ZAR path; otherwise default to ge1 if present.
+    std::string startZar = (argc > 1) ? argv[1] : "/actor/zelda_ge1.zar";
+    for (int i = 0; i < cc::CcIndexCount(); i++) {
+        if (startZar == idx[i].zar) {
+            auto it = std::find(st.categories.begin(), st.categories.end(), idx[i].category);
+            st.catSel = (int)(it - st.categories.begin());
+            auto es = entriesInCategory(idx[i].category);
+            st.entrySel = (int)(std::find(es.begin(), es.end(), i) - es.begin());
+            break;
+        }
+    }
+    loadSelection(st);
 
     // Headless verification hooks.
     std::string shotPath = getenv("CC_SHOT") ? getenv("CC_SHOT") : "";
     int shotFrame = getenv("CC_SHOT_FRAME") ? atoi(getenv("CC_SHOT_FRAME")) : 120;
     long frameCount = 0;
+
+    // Single-model diagnostics (full screen) vs the default side-by-side split.
+    static const bool n64Only = getenv("CC_N64") != nullptr;
+    static const bool ds3Only = getenv("CC_3DS") != nullptr;
+    static const bool noGui = getenv("CC_NOGUI") != nullptr;
+    const cc::Rect full{ 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+    const cc::Rect leftHalf{ 0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
+    const cc::Rect rightHalf{ SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
 
     auto gui = window->GetGui();
     while (window->IsRunning()) {
@@ -143,31 +205,21 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Advance the animation.
-        std::string animName = (animIdx >= 0 && animIdx < (int)model.anims.size()) ? model.anims[animIdx] : "";
-        if (playing && !animName.empty()) frame += playSpeed;
-        cc::SetAnim(model, animName, frame);
+        if (st.playing) st.frame += st.playSpeed;
+        applyAnim(st);
 
-        // Build this frame's display list. Default: side-by-side — N64 (Fast3D) in the LEFT
-        // half, 3DS (SoH3D draw/renderpass) in the RIGHT half, composited in one interp->Run.
-        // CC_N64=1 / CC_3DS=1 render a single model full-screen (diagnostics).
-        static const bool n64Only = getenv("CC_N64") != nullptr;
-        static const bool ds3Only = getenv("CC_3DS") != nullptr;
-        const cc::Rect full{ 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
-        const cc::Rect leftHalf{ 0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
-        const cc::Rect rightHalf{ SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
+        // Build this frame's display list: N64 (Fast3D) left, 3DS (SoH3D) right, in one Run.
         std::vector<Gfx> dl;
         std::unordered_map<Mtx*, MtxF> mtx;
         cc::DlistKeys keys;
-        if (playing) n64Frame += playSpeed;
         if (n64Only) {
-            cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz, full);
+            cc::EmitDlistN64(st.n64, st.frame, dl, mtx, keys, st.rx, st.ry, st.rz, full);
         } else if (ds3Only) {
-            cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz, full);
+            cc::EmitDlist(st.model, dl, mtx, keys, st.rx, st.ry, st.rz, full);
         } else {
-            // N64 limbs first (Fast3D), then the 3DS draw + renderpass last so it composites on top.
-            if (n64.ok) cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz, leftHalf);
-            if (model.ok) cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz, rightHalf);
+            // N64 limbs first (Fast3D), then the 3DS draw + render pass last so it composites on top.
+            if (st.n64.ok) cc::EmitDlistN64(st.n64, st.frame, dl, mtx, keys, st.rx, st.ry, st.rz, leftHalf);
+            if (st.model.ok) cc::EmitDlist(st.model, dl, mtx, keys, st.rx, st.ry, st.rz, rightHalf);
         }
         Gfx end = gsSPEndDisplayList();
         dl.push_back(end);
@@ -176,40 +228,87 @@ int main(int argc, char** argv) {
         window->StartFrame();
         interp->Run(dl.data(), mtx);
 
-        // ImGui controls. (CC_NOGUI hides the panel so the full scene is visible for diagnostics.)
-        static const bool noGui = getenv("CC_NOGUI") != nullptr;
-        if (noGui) { gui->EndDraw(); if (!shotPath.empty() && frameCount == shotFrame) { dumpFrontBuffer(shotPath, (int)window->GetWidth(), (int)window->GetHeight()); window->EndFrame(); break; } window->EndFrame(); frameCount++; continue; }
-        ImGui::SetNextWindowSize(ImVec2(380, 320), ImGuiCond_FirstUseEver);
-        ImGui::Begin("CharCompare - 3DS");
-        ImGui::Text("%s", zarPath.c_str());
-        if (!model.ok) {
-            ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "load failed: %s", model.error.c_str());
-        } else {
-            ImGui::Text("model id %d, %zu anims", model.modelId, model.anims.size());
-            if (animIdx >= 0) {
-                const char* cur = model.anims[animIdx].c_str();
-                if (ImGui::BeginCombo("anim", cur)) {
-                    for (int i = 0; i < (int)model.anims.size(); i++) {
-                        bool sel = (i == animIdx);
-                        if (ImGui::Selectable(model.anims[i].c_str(), sel)) {
-                            animIdx = i;
-                            frame = 0.0f;
-                        }
-                        if (sel) ImGui::SetItemDefaultFocus();
+        if (!noGui) {
+            // Cascading selectors: TYPE -> character -> ANIMATION. A top strip keeps the two
+            // model halves visible (it's draggable if it overlaps a head).
+            ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2((float)window->GetWidth(), 120), ImGuiCond_FirstUseEver);
+            ImGui::Begin("CharCompare  (N64 left | 3DS right)");
+
+            auto es = entriesInCategory(st.categories[st.catSel]);
+            const cc::IndexEntry& e = cc::CcIndex()[es.empty() ? 0 : es[std::clamp(st.entrySel, 0, (int)es.size() - 1)]];
+
+            // TYPE
+            ImGui::SetNextItemWidth(140);
+            if (ImGui::BeginCombo("type", st.categories[st.catSel].c_str())) {
+                for (int i = 0; i < (int)st.categories.size(); i++) {
+                    bool sel = (i == st.catSel);
+                    if (ImGui::Selectable(st.categories[i].c_str(), sel)) {
+                        st.catSel = i;
+                        st.entrySel = 0;
+                        loadSelection(st);
                     }
-                    ImGui::EndCombo();
+                    if (sel) ImGui::SetItemDefaultFocus();
                 }
+                ImGui::EndCombo();
             }
-            ImGui::Checkbox("play", &playing);
+            // CHARACTER
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::BeginCombo("character", e.name)) {
+                for (int i = 0; i < (int)es.size(); i++) {
+                    bool sel = (i == st.entrySel);
+                    if (ImGui::Selectable(cc::CcIndex()[es[i]].name, sel)) {
+                        st.entrySel = i;
+                        loadSelection(st);
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            // ANIMATION (label shows N64 anim -> mapped 3DS CSAB)
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(260);
+            const char* curAnim = (e.animCount > 0) ? e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].n64 : "(none)";
+            if (ImGui::BeginCombo("anim", curAnim)) {
+                for (int i = 0; i < e.animCount; i++) {
+                    bool sel = (i == st.animSel);
+                    char lbl[256];
+                    snprintf(lbl, sizeof(lbl), "%s  ->  %s", e.anims[i].n64,
+                             e.anims[i].csab[0] ? e.anims[i].csab : "(no csab)");
+                    if (ImGui::Selectable(lbl, sel)) {
+                        st.animSel = i;
+                        st.frame = 0.0f;
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::Text("%s  N64:%s  3DS-csab:%s", e.zar, st.n64.ok ? st.n64.skelName.c_str() : "FAIL",
+                        (e.animCount > 0 && e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].csab[0])
+                            ? e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].csab
+                            : "-");
+            if (!st.n64.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "N64: %s", st.n64.error.c_str());
+            if (!st.model.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "3DS: %s", st.model.error.c_str());
+
+            ImGui::Checkbox("play", &st.playing);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120);
-            ImGui::SliderFloat("speed", &playSpeed, 0.0f, 2.0f);
-            ImGui::SliderFloat("frame", &frame, 0.0f, 200.0f);
-            ImGui::SliderFloat("rotX", &rx, -180, 180);
-            ImGui::SliderFloat("rotY", &ry, -180, 180);
-            ImGui::SliderFloat("rotZ", &rz, -180, 180);
+            ImGui::SliderFloat("speed", &st.playSpeed, 0.0f, 2.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160);
+            ImGui::SliderFloat("frame", &st.frame, 0.0f, 200.0f);
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("rotY", &st.ry, -180, 180);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("rotX", &st.rx, -180, 180);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120);
+            ImGui::SliderFloat("rotZ", &st.rz, -180, 180);
+            ImGui::End();
         }
-        ImGui::End();
 
         gui->EndDraw();
 

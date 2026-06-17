@@ -20,8 +20,10 @@ add_executable(charcompare
     ${SOH_DIR}/soh/resource/importer/SkeletonFactory.cpp
     ${SOH_DIR}/soh/resource/importer/SkeletonLimbFactory.cpp
     ${SOH_DIR}/soh/resource/importer/AnimationFactory.cpp
+    ${SOH_DIR}/soh/resource/importer/ArrayFactory.cpp
     ${SOH_DIR}/soh/resource/type/SkeletonLimb.cpp
     ${SOH_DIR}/soh/resource/type/Animation.cpp
+    ${SOH_DIR}/soh/resource/type/Array.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d/soh3d_model.cpp
     ${SOH3D_ASSET_DIR}/ctr_rom.cpp
     ${SOH3D_ASSET_DIR}/zar.cpp

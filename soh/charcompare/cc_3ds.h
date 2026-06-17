@@ -51,6 +51,9 @@ void SetAnim(const Model3ds& m, const std::string& animName, float frame);
 struct DlistKeys {
     std::vector<std::unique_ptr<Mtx>> mtxStore; // stable addresses used as map keys
     std::vector<std::unique_ptr<Vp>> vpStore;
+    // Stable raw buffers (e.g. the N64 flex-skeleton per-limb fixed-point Mtx array bound to
+    // segment 0x0D); the dlist references these by address so they must outlive interp->Run.
+    std::vector<std::unique_ptr<std::vector<int32_t>>> blobs;
 };
 void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx, DlistKeys& keys,
                float rx, float ry, float rz);

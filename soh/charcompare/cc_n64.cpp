@@ -25,6 +25,7 @@
 #include "soh/resource/importer/SkeletonFactory.h"
 #include "soh/resource/importer/SkeletonLimbFactory.h"
 #include "soh/resource/importer/AnimationFactory.h"
+#include "soh/resource/importer/ArrayFactory.h"
 
 #include <fast/interpreter.h> // SCREEN_WIDTH/HEIGHT
 
@@ -99,6 +100,8 @@ void RegisterN64Factories() {
                                     "SkeletonLimb", static_cast<uint32_t>(SOH::ResourceType::SOH_SkeletonLimb), 0);
     loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryAnimationV0>(), RESOURCE_FORMAT_BINARY,
                                     "Animation", static_cast<uint32_t>(SOH::ResourceType::SOH_Animation), 0);
+    loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryArrayV0>(), RESOURCE_FORMAT_BINARY,
+                                    "Array", static_cast<uint32_t>(SOH::ResourceType::SOH_Array), 0);
     g_registered = true;
     fprintf(stderr, "[cc_n64] registered resource factories\n");
 }
@@ -156,59 +159,83 @@ static void sampleAnim(const ModelN64& m, float frame, std::vector<std::array<in
         out[i][1] = (ji[i].y >= smax) ? fd[ji[i].y + f] : fd[ji[i].y];
         out[i][2] = (ji[i].z >= smax) ? fd[ji[i].z + f] : fd[ji[i].z];
     }
+    // Diagnostic: zero all limb rotations (keep root position) to render the rest skeleton —
+    // isolates the matrix/jointPos composition from the animation sampling.
+    if (getenv("CC_N64_NOANIM"))
+        for (int i = 1; i < m.limbCount + 1; i++) out[i] = { 0, 0, 0 };
 }
 
-// Recursive limb walk mirroring SkelAnime_DrawLimbOpa. `parent` is the parent's MtxF; emit each
-// limb's loaded matrix + gSPDisplayList. fkBbox (non-null) => only FK: accumulate joint bbox, no emit.
-static void walkLimb(ModelN64& m, int limbIndex, const MtxF& parent,
-                     const std::vector<std::array<int16_t, 3>>& joints, std::vector<Gfx>* dl,
-                     std::unordered_map<Mtx*, MtxF>* mtx, DlistKeys* keys, float* lo, float* hi) {
+// Convert an MtxF to the N64 fixed-point Mtx layout the interpreter reads for a segmented matrix
+// (16 int32: [0..7] integer parts, [8..15] frac parts). Inverse of GfxSpMatrix's fixed-point read,
+// so the interpreter recovers mf.mf[i][j] exactly.
+static void guMtxF2L(const MtxF& mf, int32_t* out) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 2; j++) {
+            int e1 = (int)(mf.mf[i][2 * j] * 65536.0f);
+            int e2 = (int)(mf.mf[i][2 * j + 1] * 65536.0f);
+            out[i * 2 + j] = (int)((e1 & 0xffff0000u) | (((unsigned)e2 >> 16) & 0xffffu));
+            out[8 + i * 2 + j] = (int)((((unsigned)e1 << 16) & 0xffff0000u) | ((unsigned)e2 & 0xffffu));
+        }
+    }
+}
+
+// Limb-space transform helper shared by the two passes: cur = parent ∘ (T(pos) · R(rot)).
+static MtxF limbMatrix(ModelN64& m, int limbIndex, const MtxF& parent,
+                       const std::vector<std::array<int16_t, 3>>& joints) {
     auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
     SOH::StandardLimb* limb = seg[limbIndex];
-    bool isRoot = (limbIndex == 0);
     float pos[3] = { (float)limb->jointPos.x, (float)limb->jointPos.y, (float)limb->jointPos.z };
-    if (isRoot) { pos[0] = joints[0][0]; pos[1] = joints[0][1]; pos[2] = joints[0][2]; }
+    if (limbIndex == 0) { pos[0] = joints[0][0]; pos[1] = joints[0][1]; pos[2] = joints[0][2]; }
     const auto& r = joints[limbIndex + 1];
     int16_t rot[3] = { r[0], r[1], r[2] };
-
     MtxF cur = parent;
     matTranslateRotateZYX(&cur, pos, rot);
+    return cur;
+}
 
-    if (lo) { // FK bbox: track the limb origin (0,0,0 in limb space)
-        float o[3]; float zero[3] = { 0, 0, 0 };
-        matApply(cur, zero, o);
-        for (int k = 0; k < 3; k++) { lo[k] = std::min(lo[k], o[k]); hi[k] = std::max(hi[k], o[k]); }
-    } else if (limb->dList != nullptr) {
-        // limb->dList is an OTR PATH string ("__OTR__objects/.../someDL"), not a runnable Gfx*.
-        // Mirror the game's gSPDisplayList wrapper (GbiWrap.cpp): resolve the path to the
-        // DisplayList resource's real Gfx* at build time, then emit a plain G_DL of it.
+// Pass 1: FK — fill world[limbIndex] for every limb (so segment-0x0D refs to ANY limb resolve).
+static void computeWorld(ModelN64& m, int limbIndex, const MtxF& parent,
+                         const std::vector<std::array<int16_t, 3>>& joints, std::vector<MtxF>& world) {
+    auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
+    SOH::StandardLimb* limb = seg[limbIndex];
+    MtxF cur = limbMatrix(m, limbIndex, parent, joints);
+    world[limbIndex] = cur;
+    if (limb->child != LIMB_DONE) computeWorld(m, limb->child, cur, joints, world);
+    if (limb->sibling != LIMB_DONE) computeWorld(m, limb->sibling, parent, joints, world);
+}
+
+// Assign each dList-bearing limb a matrix SLOT in SkelAnime_DrawFlex draw order (root, child,
+// sibling) — matching the `mtx++` advance, so the segment-0x0D matrix array is indexed the way
+// the limb DLs (and their cross-limb references) expect. slot[limbIndex] = -1 if no dList.
+static void assignSlots(ModelN64& m, int limbIndex, int& counter, std::vector<int>& slot) {
+    auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
+    SOH::StandardLimb* limb = seg[limbIndex];
+    slot[limbIndex] = (limb->dList != nullptr) ? counter++ : -1;
+    if (limb->child != LIMB_DONE) assignSlots(m, limb->child, counter, slot);
+    if (limb->sibling != LIMB_DONE) assignSlots(m, limb->sibling, counter, slot);
+}
+
+// Pass 2: emit a matrix-load (from the segment-0x0D array slot) + the limb's geometry DL per limb.
+static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, std::vector<Gfx>& dl) {
+    auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
+    SOH::StandardLimb* limb = seg[limbIndex];
+    if (limb->dList != nullptr && slot[limbIndex] >= 0) {
+        // limb->dList is an OTR PATH string; resolve to the DisplayList resource's Gfx* (mirrors
+        // the game's gSPDisplayList wrapper). The flex limb DLs load their matrices from segment
+        // 0x0D themselves; we also load this limb's own matrix as the base (like SkelAnime_DrawFlex).
         std::string p = (const char*)limb->dList;
         if (p.rfind("__OTR__", 0) == 0) p = p.substr(7);
         auto res = rm()->LoadResource(p);
         Gfx* g = res ? (Gfx*)res->GetRawPointer() : nullptr;
-        if (g && getenv("CC_N64_DUMPDL")) {
-            fprintf(stderr, "[cc_n64] limb %d DL %s opcodes:", limbIndex, p.c_str());
-            for (int i = 0; i < 24; i++) {
-                uint8_t op = (uint8_t)((uintptr_t)g[i].words.w0 >> 24);
-                fprintf(stderr, " %02X", op);
-                if (op == 0xDF) break; // G_ENDDL (F3DEX2)
-            }
-            fprintf(stderr, "\n");
-        }
         if (g) {
-            m.limbRes.push_back(res); // keep the DL resource (and its resolved pointer) alive
-            keys->mtxStore.push_back(std::make_unique<Mtx>());
-            Mtx* key = keys->mtxStore.back().get();
-            (*mtx)[key] = cur;
-            { Gfx gm = gsSPMatrix(key, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl->push_back(gm); }
-            if (!getenv("CC_N64_NODL")) { Gfx gd = gsSPDisplayList(g); dl->push_back(gd); }
+            m.limbRes.push_back(res);
+            uintptr_t segMtx = 0x0D000000u | ((uintptr_t)slot[limbIndex] * 0x40u) | 1u; // segmented
+            { Gfx gm = gsSPMatrix((Mtx*)segMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl.push_back(gm); }
+            if (!getenv("CC_N64_NODL")) { Gfx gd = gsSPDisplayList(g); dl.push_back(gd); }
         }
     }
-
-    if (limb->child != LIMB_DONE)
-        walkLimb(m, limb->child, cur, joints, dl, mtx, keys, lo, hi);
-    if (limb->sibling != LIMB_DONE)
-        walkLimb(m, limb->sibling, parent, joints, dl, mtx, keys, lo, hi);
+    if (limb->child != LIMB_DONE) emitLimbs(m, limb->child, slot, dl);
+    if (limb->sibling != LIMB_DONE) emitLimbs(m, limb->sibling, slot, dl);
 }
 
 void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx,
@@ -217,10 +244,16 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     std::vector<std::array<int16_t, 3>> joints;
     sampleAnim(m, frame, joints);
 
-    // FK pass to get the posed joint bbox (auto-fit framing).
-    float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+    // Pass 1a (identity framing): joint world matrices -> bbox for the auto-fit.
+    std::vector<MtxF> worldId(m.limbCount);
     MtxF id; matIdentity(id);
-    walkLimb(m, 0, id, joints, nullptr, nullptr, nullptr, lo, hi);
+    computeWorld(m, 0, id, joints, worldId);
+    float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+    for (int i = 0; i < m.limbCount; i++) {
+        float o[3], zero[3] = { 0, 0, 0 };
+        matApply(worldId[i], zero, o);
+        for (int k = 0; k < 3; k++) { lo[k] = std::min(lo[k], o[k]); hi[k] = std::max(hi[k], o[k]); }
+    }
     float ctr[3], ext[3];
     for (int k = 0; k < 3; k++) {
         ctr[k] = (lo[k] + hi[k]) * 0.5f;
@@ -257,6 +290,20 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     }
     F.mf[3][3] = 1.0f;
 
+    // Pass 1b (with framing F): the posed world matrix of every limb, packed into the N64
+    // fixed-point Mtx array that segment 0x0D is bound to. Flex limb DLs load their matrices
+    // (their own + others', for multi-limb verts) from this segment, so ALL limbs must be filled.
+    std::vector<MtxF> world(m.limbCount);
+    computeWorld(m, 0, F, joints, world);
+    // Slot assignment (draw order) -> the segment-0x0D array is sized by dList-bearing limbs.
+    std::vector<int> slot(m.limbCount, -1);
+    int dlCount = 0;
+    assignSlots(m, 0, dlCount, slot);
+    keys.blobs.push_back(std::make_unique<std::vector<int32_t>>(std::max(dlCount, 1) * 16));
+    int32_t* mtxArray = keys.blobs.back()->data();
+    for (int i = 0; i < m.limbCount; i++)
+        if (slot[i] >= 0) guMtxF2L(world[i], &mtxArray[slot[i] * 16]);
+
     // Viewport + scissor (full screen for now; the side-by-side split is set in main/Phase 4).
     keys.vpStore.push_back(std::make_unique<Vp>());
     Vp* vp = keys.vpStore.back().get();
@@ -272,10 +319,11 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     MtxF& proj = mtx[projKey];
     matIdentity(proj);
     { Gfx g = gsSPMatrix(projKey, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION); dl.push_back(g); }
-    // A textured-tri combiner so the limb DLs (which set their own combiner) start from a sane state.
     { Gfx g = gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB); dl.push_back(g); }
+    // Bind the per-limb matrix array to segment 0x0D (what the flex limb DLs reference).
+    { Gfx g = gsSPSegment(0x0D, (uintptr_t)mtxArray); dl.push_back(g); }
 
-    walkLimb(m, 0, F, joints, &dl, &mtx, &keys, nullptr, nullptr);
+    emitLimbs(m, 0, slot, dl);
 }
 
 } // namespace cc

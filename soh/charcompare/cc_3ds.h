@@ -27,8 +27,13 @@ struct Model3ds {
     float bboxLo[3] = { 0, 0, 0 };
     float bboxHi[3] = { 0, 0, 0 };
     std::vector<std::string> anims; // CSAB base names (no "Anim/" / ".csab")
+    std::unordered_map<std::string, int> animLen; // CSAB base name -> frame count (Csab::duration)
     std::string error;
 };
+
+// Frame count of a CSAB (by base name) for this model, or 0 if unknown. Used to bound the GUI
+// frame slider / wrap playback to the animation's true length.
+int AnimLength(const Model3ds& m, const std::string& csabBase);
 
 // Open the ROM once (SOH3D_3DS_ROM). Returns false (and sets a message in `err`)
 // if the env var is unset or the image can't be parsed. Safe to call repeatedly.

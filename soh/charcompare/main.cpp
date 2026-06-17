@@ -12,6 +12,7 @@
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
 #include <ship/Context.h>
+#include <ship/config/Config.h>
 
 #include <imgui.h>
 
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -204,6 +206,23 @@ static std::string effectiveCsab(const AppState& s, const cc::IndexEntry& e, con
     return a.csab ? a.csab : "";
 }
 
+// The active animation's playback length (frames): the longer of the N64 anim and the mapped 3DS
+// CSAB, so the GUI frame slider / wrap covers both. Each side wraps internally to its own length
+// (N64 sampleAnim modulo animFrameCount; 3DS Csab::animFrame REPEATs), so a shared max just keeps
+// the frame counter bounded without desyncing either. Returns 0 if neither side has a length.
+static int activeAnimLen(const AppState& s) {
+    auto es = entriesInCategory(s.categories[s.catSel]);
+    if (es.empty()) return 0;
+    const cc::IndexEntry& e = cc::CcIndex()[es[std::clamp(s.entrySel, 0, (int)es.size() - 1)]];
+    int n64Len = s.n64.ok ? s.n64.animFrameCount : 0;
+    int ds3Len = 0;
+    if (e.animCount > 0) {
+        int ai = std::clamp(s.animSel, 0, e.animCount - 1);
+        ds3Len = cc::AnimLength(s.model, effectiveCsab(s, e, e.anims[ai]));
+    }
+    return std::max(n64Len, ds3Len);
+}
+
 // Apply the selected animation to both models for the current frame.
 static void applyAnim(AppState& s) {
     auto es = entriesInCategory(s.categories[s.catSel]);
@@ -235,6 +254,19 @@ int main(int argc, char** argv) {
     ctx->InitControlDeck();
     ctx->InitResourceManager(archivePaths, {}, 3, true);
     ctx->InitConsole();
+
+    // Window size: the default 640x480 is too small to read the side-by-side models. Force a much
+    // larger 4:3 default (matches the N64 320x240 native aspect, so no stretch); CC_WIDTH/CC_HEIGHT
+    // override. Fast3dWindow::Init reads Window.Width/Height from the config, so set it before
+    // InitWindow. The interpreter's render resolution (mCurDimensions) is taken from this launch
+    // size, so geometry rasterises at the full window resolution — not an upscaled 640x480.
+    {
+        int winW = getenv("CC_WIDTH") ? atoi(getenv("CC_WIDTH")) : 1280;
+        int winH = getenv("CC_HEIGHT") ? atoi(getenv("CC_HEIGHT")) : 960;
+        ctx->GetConfig()->SetInt("Window.Width", winW);
+        ctx->GetConfig()->SetInt("Window.Height", winH);
+        printf("[charcompare] window size %dx%d\n", winW, winH);
+    }
 
     auto window = std::make_shared<Fast::Fast3dWindow>(std::vector<std::shared_ptr<Ship::GuiWindow>>({}));
     ctx->InitWindow(window);
@@ -310,6 +342,10 @@ int main(int argc, char** argv) {
         }
 
         if (st.playing) st.frame += st.playSpeed;
+        // Wrap the frame counter to the active animation's length so playback loops instead of
+        // running forever (and so the slider has a meaningful range). 0 = unknown length -> leave it.
+        int animLen = activeAnimLen(st);
+        if (animLen > 0 && st.frame >= (float)animLen) st.frame = fmodf(st.frame, (float)animLen);
         applyAnim(st);
 
         // Build this frame's display list: N64 (Fast3D) left, 3DS (SoH3D) right, in one Run.
@@ -443,7 +479,12 @@ int main(int argc, char** argv) {
             ImGui::SliderFloat("speed", &st.playSpeed, 0.0f, 2.0f);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(160);
-            ImGui::SliderFloat("frame", &st.frame, 0.0f, 200.0f);
+            // Slider range = the active animation length (N64 / 3DS, whichever is longer); the
+            // "frame" label shows the count so the curation loop can read it.
+            float frameMax = (animLen > 0) ? (float)animLen : 200.0f;
+            char frameLbl[32];
+            snprintf(frameLbl, sizeof(frameLbl), "frame (/%d)", animLen);
+            ImGui::SliderFloat(frameLbl, &st.frame, 0.0f, frameMax);
             ImGui::SetNextItemWidth(120);
             ImGui::SliderFloat("rotY", &st.ry, -180, 180);
             ImGui::SameLine();

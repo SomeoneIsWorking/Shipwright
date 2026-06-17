@@ -48,6 +48,13 @@ struct ModelN64 {
     // DL's raw G_SETTIMG resolves the segment, sees the OTR signature, and loads the texture).
     // Without this the segment is unbound -> the face renders as a VOID.
     std::vector<std::pair<int, std::string>> faceSegs; // (segment number, "__OTR__<path>")
+    // Extra display lists the ACTOR draws in a PostLimbDraw callback, attached to a limb's matrix —
+    // geometry that is NOT part of the skeleton and so unreachable by the skeleton walk. Each entry is
+    // (limbIndex, OTR DL path); after that limb's own DL we re-load its matrix and emit this DL,
+    // mirroring e.g. EnGe1_PostLimbDraw drawing gGerudoWhiteHairstyleSpikyDL on GE1_LIMB_HEAD.
+    // Curated per skeleton (actor C callbacks can't be derived generically). limbIndex is 0-based
+    // (charcompare's limb numbering = SkelAnime limb index - 1, since SkelAnime limb 0 = LIMB_NONE).
+    std::vector<std::pair<int, std::string>> extraLimbDLs;
     // Model-space (FK-transformed) geometry bbox, measured once via the interpreter (Cc_BboxMeasure*).
     // Framing scales the DEPTH axis to this true mesh extent — the joint bbox is near-flat in Z and
     // crushes depth precision, z-fighting the head/face. meshMeasured stays false until the first

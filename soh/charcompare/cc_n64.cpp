@@ -181,6 +181,25 @@ static void scanFaceTextures(ModelN64& m) {
         fprintf(stderr, "[cc_n64] face textures: eye='%s' mouth='%s'\n", eye.c_str(), mouth.c_str());
 }
 
+// Curated table of actor-drawn extra geometry: DLs that an actor emits in a PostLimbDraw callback,
+// attached to a limb's matrix, that are NOT part of the skeleton (so the skeleton walk never reaches
+// them). These exist only in actor C code and cannot be derived from the object data, so they are
+// hand-listed here, keyed by skeleton symbol. limbIndex is 0-based (= SkelAnime limb index - 1).
+//   - Gerudo (gGerudoWhiteSkel, object_ge1): EnGe1_PostLimbDraw draws sHairstyleDLists[hairstyle] on
+//     GE1_LIMB_HEAD (SkelAnime 15 -> 0-based 14). The generic zelda_ge1.zar is the spiky red hair.
+static void scanExtraLimbDLs(ModelN64& m) {
+    struct Extra { const char* skel; int limb0; const char* dlObject; const char* dl; };
+    static const Extra kExtras[] = {
+        { "gGerudoWhiteSkel", 14, "objects/object_ge1", "gGerudoWhiteHairstyleSpikyDL" },
+    };
+    for (const auto& e : kExtras) {
+        if (m.skelName != e.skel) continue;
+        if (e.limb0 < 0 || e.limb0 >= m.limbCount) continue; // skeleton shape changed — skip safely
+        m.extraLimbDLs.emplace_back(e.limb0, std::string(e.dlObject) + "/" + e.dl);
+        fprintf(stderr, "[cc_n64] extra limb DL: limb %d -> %s/%s\n", e.limb0, e.dlObject, e.dl);
+    }
+}
+
 void SetAnimN64(ModelN64& m, const std::string& animName) {
     if (animName.empty()) return;
     std::string path = m.objectPath + "/" + animName;
@@ -235,6 +254,7 @@ ModelN64 LoadN64(const std::string& objectPath, const std::string& skelName,
     }
 
     scanFaceTextures(m); // bind neutral eye/mouth textures to the actor face segments (0x08-0x0A)
+    scanExtraLimbDLs(m); // actor PostLimbDraw extras (e.g. Gerudo hair) — see ModelN64::extraLimbDLs
 
     if (!animNames.empty()) SetAnimN64(m, animNames[0]);
 
@@ -392,6 +412,21 @@ static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, 
             uintptr_t segMtx = 0x0D000000u | ((uintptr_t)slot[limbIndex] * 0x40u) | 1u; // segmented
             { Gfx gm = gsSPMatrix((Mtx*)segMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl.push_back(gm); }
             if (!getenv("CC_N64_NODL")) { Gfx gd = gsSPDisplayList(g); dl.push_back(gd); }
+            // Actor PostLimbDraw extras (e.g. Gerudo hair): drawn with THIS limb's matrix, right after
+            // the limb's own DL — exactly when the game's PostLimbDraw runs (matrix stack still at the
+            // limb). Re-load the slot matrix (the limb DL may have loaded other 0x0D slots internally)
+            // then emit the extra DL. See ModelN64::extraLimbDLs / scanExtraLimbDLs.
+            if (!getenv("CC_N64_NODL") && !getenv("CC_N64_NOEXTRA")) {
+                for (const auto& [exLimb, exPath] : m.extraLimbDLs) {
+                    if (exLimb != limbIndex) continue;
+                    auto exRes = rm()->LoadResource(exPath);
+                    Gfx* exg = exRes ? (Gfx*)exRes->GetRawPointer() : nullptr;
+                    if (!exg) { fprintf(stderr, "[cc_n64] extra DL load failed: %s\n", exPath.c_str()); continue; }
+                    m.limbRes.push_back(exRes);
+                    { Gfx gm = gsSPMatrix((Mtx*)segMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl.push_back(gm); }
+                    { Gfx gd = gsSPDisplayList(exg); dl.push_back(gd); }
+                }
+            }
         }
     }
     if (limb->child != LIMB_DONE) emitLimbs(m, limb->child, slot, dl);

@@ -77,6 +77,9 @@ Model3ds Load(const std::string& zarPath) {
         if (base.rfind("Anim/", 0) == 0) base = base.substr(5);
         base = base.substr(0, base.size() - 5); // strip .csab
         m.anims.push_back(base);
+        // Record the animation's frame count so the GUI can bound/wrap playback to its true length.
+        SoH3D::Csab csab(zar.read(f));
+        m.animLen[base] = csab.ok() ? csab.duration() : 0;
     }
 
     // Register with the soh3d bridge for rendering (lazy-loads its own copy on first draw).
@@ -95,6 +98,12 @@ Model3ds Load(const std::string& zarPath) {
 void SetAnim(const Model3ds& m, const std::string& animName, float frame) {
     if (!m.ok) return;
     SoH3D_UpdateAnim(m.modelId, animName.empty() ? "" : animName.c_str(), frame);
+}
+
+int AnimLength(const Model3ds& m, const std::string& csabBase) {
+    if (csabBase.empty()) return 0;
+    auto it = m.animLen.find(csabBase);
+    return (it != m.animLen.end()) ? it->second : 0;
 }
 
 void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx, DlistKeys& keys,
@@ -118,7 +127,15 @@ void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*,
     static float fitTarget = [] { const char* e = getenv("CC_FIT3DS"); return e ? (float)atof(e) : 0.55f; }();
     const float fit = fitTarget / std::max(ext[0], ext[1]);
     const float fitZ = (fitTarget * 0.5f) / ext[2];
-    const float S[3] = { fit * xComp, fit, fitZ };
+    // X is NEGATED so this modelview has a NEGATIVE determinant, matching the GAME's handedness.
+    // Root cause (same as the N64 cc_n64.cpp X-flip): in the live game the SoH3D draw is submitted
+    // with the SAME camera MP_matrix as the N64 Fast3D path (interpreter.cpp gfx_soh3d_draw_handler
+    // passes mRsp->MP_matrix), whose 3x3 determinant is NEGATIVE (guPerspective handedness). This
+    // hand-built modelview was a pure rotation+scale (det>0), so the 3DS half rendered MIRRORED vs
+    // the game — and thus rotated OPPOSITE the (game-matched, det<0) N64 half. Negating clip-X makes
+    // this MP det negative too, so both charcompare halves rotate the same way AND match in-game.
+    // (SoH3D_GL disables backface culling, so the sign flip can't render the model inside-out.)
+    const float S[3] = { -fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));

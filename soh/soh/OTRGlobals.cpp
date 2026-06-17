@@ -1588,6 +1588,19 @@ extern "C" void InitOTR(int argc, char* argv[]) {
         CVarClear(CVAR_GENERAL("LetItSnow"));
     }
 
+    // SoH3D display/range defaults: applied ONCE (persisted), so the user can still change them
+    // in-menu afterward. Match the monitor refresh rate (smooth high-FPS interpolation), extend
+    // actor draw distance well past the N64 cull, and stop culling actors at the widescreen
+    // edges. Aspect ratio already follows the window when unset, so it needs no override. Gated
+    // on SOH3D mode (set by run.sh) so a plain SoH build is untouched.
+    if (getenv("SOH3D") != nullptr && CVarGetInteger(CVAR_GENERAL("SoH3DDefaults"), 0) < 1) {
+        CVarSetInteger(CVAR_SETTING("MatchRefreshRate"), 1);          // FPS follows monitor refresh
+        CVarSetInteger(CVAR_ENHANCEMENT("DisableDrawDistance"), 20);  // 20x actor forward draw/cull range
+        CVarSetInteger(CVAR_ENHANCEMENT("WidescreenActorCulling"), 1); // don't cull at widescreen X edges
+        CVarSetInteger(CVAR_GENERAL("SoH3DDefaults"), 1);
+        CVarSave();
+    }
+
     srand(static_cast<unsigned int>(now));
     SDLNet_Init();
     if (CVarGetInteger(CVAR_REMOTE_CROWD_CONTROL("Enabled"), 0)) {

@@ -180,4 +180,8 @@ int SoH3D_CollisionEnabled(void);
 // SOH3D_REPL is unset. Drive it with tools/soh3d_repl.py.
 void SoH3D_ReplPoll(PlayState* play);
 
+// Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
+// day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.
+void SoH3D_ApplyForceTime(void);
+
 #endif

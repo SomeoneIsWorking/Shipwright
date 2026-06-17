@@ -81,14 +81,14 @@ struct AssemblySpec {
     std::vector<std::string> cmbNames; // CMB name substrings to merge, in draw order
 };
 const AssemblySpec kAssemblies[] = {
-    // OBJECT_KANBAN (signpost): the bo_* CMBs are the vertical POST segments (each ~411 wide
-    // x N tall x 411 deep, stacked Y0-6014 at the XZ origin). The wide flat BOARD (ext
-    // 2000x1155x213) is the L_*/R_* pieces — the board is authored pre-divided into 8 cuttable
-    // segments whose BAKED positions (x=-1000 / +1000, width 2000 each) tile a contiguous
-    // board at x=-2000..+2000; the slash animation moves them at runtime but at rest they are
-    // the assembled board (NOT shattered debris). So the intact sign = post + all board
-    // segments. eff_modelT is a flat slash-effect sprite -> excluded.
-    { "zelda_kanban.zar", { "kanban_bo_", "kanban_L_", "kanban_R_" } },
+    // (No active entries.) The merge mechanism is kept for genuine multi-part static props.
+    // KANBAN was the first candidate but is EXCLUDED: although the merge renders the intact
+    // sign (post bo_* + the 8 board segments L_*/R_*), En_Kanban's cut behaviour spawns more
+    // En_Kanban actors for the broken pieces and the auto path re-replaces them as whole signs
+    // (slashing "spawns signs"). So kanban stays on N64 (skipped in SoH3D_TryAuto) until the
+    // break pieces are handled. Add an entry here only for a static prop with no break/spawn
+    // behaviour. See scratch/evidence/multicmb_finding.md.
+    { nullptr, {} },
 };
 
 // Loaded CPU data for a model, kept alive so the renderer can upload from it and
@@ -397,6 +397,7 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     // single-picking one (which would render one detached sub-piece). See kAssemblies.
     const AssemblySpec* asmSpec = nullptr;
     for (const auto& a : kAssemblies) {
+        if (!a.zarSuffix) continue; // sentinel / empty table
         size_t n = std::strlen(a.zarSuffix);
         if (zarPath.size() >= n && zarPath.compare(zarPath.size() - n, n, a.zarSuffix) == 0) { asmSpec = &a; break; }
     }

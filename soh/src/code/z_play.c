@@ -453,6 +453,11 @@ void Play_Init(GameState* thisx) {
         gSaveContext.skyboxTime = gSaveContext.nextDayTime;
     }
 
+    // SoH3D: force the requested time-of-day (env SOH3D_TIME) NOW, before the day/night scene
+    // setup layer + actor set are chosen below — else the scene loads the wrong NPC set (e.g.
+    // night villagers) and just looks recoloured to day.
+    SoH3D_ApplyForceTime();
+
     if (gSaveContext.dayTime > 0xC000 || gSaveContext.dayTime < 0x4555) {
         gSaveContext.nightFlag = 1;
     } else {

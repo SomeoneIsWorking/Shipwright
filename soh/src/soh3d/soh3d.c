@@ -206,6 +206,19 @@ static void SoH3D_InitForceTime(void) {
     }
 }
 
+// Apply the forced time-of-day to the save context NOW. Called from Play_Init BEFORE the
+// scene's day/night setup layer is chosen (and its actor set spawned): pinning dayTime only
+// per-frame in SoH3D_ReplPoll is too late — the scene already loaded the wrong (e.g. night)
+// NPC set, which the actors lock in at Init. Forcing it here makes the INITIAL load match the
+// clock (day NPCs for SOH3D_TIME=0x8000), and the per-frame pin keeps it there afterward.
+void SoH3D_ApplyForceTime(void) {
+    SoH3D_InitForceTime();
+    if (gSoH3dForceTime >= 0) {
+        gSaveContext.dayTime = (u16)gSoH3dForceTime;
+        gSaveContext.skyboxTime = (u16)gSoH3dForceTime;
+    }
+}
+
 static int SoH3D_TerrainWarpEnabled(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -728,12 +741,13 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
     if (zar == NULL) {
         return 0; // no OoT3D model for this object -> N64
     }
-    // Multi-part assemblies the "largest single CMB" auto-picker can't handle (it grabs one
-    // detached sub-piece) are now HAND-ASSEMBLED in the model bridge's kAssemblies table:
-    // those ZARs merge their listed CMBs into one model. OBJECT_KANBAN (signpost: bo_bottom
-    // + bo_center + bo_top) is the first such entry, so it no longer needs a skip here.
-    // Any new multi-part object that the single-pick floats: add it to kAssemblies (do NOT
-    // re-add a skip) — see scratch/evidence/multicmb_finding.md for why generic merge is unsound.
+    // OBJECT_KANBAN (signpost) stays on N64. The assembly-merge can render the intact sign, but
+    // En_Kanban's CUT behaviour spawns more En_Kanban actors for the broken pieces — those get
+    // auto-replaced as whole signs again, so slashing a sign "spawns more signs" instead of
+    // breaking. Until the break pieces are handled, keep the faithful N64 sign (it breaks right).
+    if (objId == OBJECT_KANBAN) {
+        return 0;
+    }
     e = &sAuto[objId];
     if (e->state == 3) {
         return 0; // known-unreplaceable -> N64

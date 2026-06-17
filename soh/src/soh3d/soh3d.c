@@ -98,7 +98,8 @@ int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
 float SoH3D_AutoModelBoneLenSum(int modelId); // Σ|trans| of non-root OoT3D bones (skeleton size)
 const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
-void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate); // play OoT3D's own CSAB
+void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
+                          float n64AnimLength); // play OoT3D's own CSAB, phase-locked to the N64 anim
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
@@ -163,6 +164,13 @@ static const char* SoH3D_ResolveAutoCsab(const char* n64AnimOtr) {
 // and func_80034BA0/CC4 via SoH3D_SetCurAnim), consumed by the auto branch of SoH3D_DoRetarget.
 // NULL -> no live anim known (default idle).
 static const char* gSoH3dPendingAnimOtr = NULL;
+
+// Live N64 animation playhead (curFrame) + length for the actor deferred for auto replacement,
+// captured from the SkelAnime in SoH3D_SkelAnimeDraw. Lets the auto branch phase-lock the OoT3D
+// CSAB to the N64 anim's actual progress (fixes "OoT3D anims too fast"). The raw (SkelAnime-less)
+// choke point has no playhead -> animLength stays 0 -> free-run.
+static float gSoH3dPendingN64CurFrame = 0.0f;
+static float gSoH3dPendingN64AnimLength = 0.0f;
 
 void SoH3D_SetCurAnim(void* animation) {
     if (gSoH3dAnimDebug) {
@@ -844,6 +852,10 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     // Per-actor reset of the live-anim capture: this is the single entry consulted once for every
     // actor, before its own Draw runs the SkelAnime choke points that record the current anim.
     gSoH3dPendingAnimOtr = NULL;
+    // Reset the N64 playhead too: if only the SkelAnime-less raw choke point fires for this actor,
+    // animLength stays 0 -> the auto branch free-runs (no stale phase-lock from a prior actor).
+    gSoH3dPendingN64CurFrame = 0.0f;
+    gSoH3dPendingN64AnimLength = 0.0f;
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.
     if (SoH3D_AutoMode() != 2) {
@@ -1011,12 +1023,16 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
             static int dbg = 0;
             if ((dbg++ % 30) == 0) {
                 const char* otr = gSoH3dPendingAnimOtr ? gSoH3dPendingAnimOtr : "(none)";
-                printf("SOH3D ANIM: model %d n64=%s -> csab=%s%s scale=%.5f\n", gSoH3dPendingModel, otr,
-                       csab ? csab : "(bind pose)", mapped ? "" : " [default-idle]", gSoH3dPendingScale);
+                int locked = (gSoH3dPendingN64AnimLength > 4.0f);
+                printf("SOH3D ANIM: model %d n64=%s -> csab=%s%s scale=%.5f n64frame=%.1f/%.1f %s\n",
+                       gSoH3dPendingModel, otr, csab ? csab : "(bind pose)", mapped ? "" : " [default-idle]",
+                       gSoH3dPendingScale, gSoH3dPendingN64CurFrame, gSoH3dPendingN64AnimLength,
+                       locked ? "[PHASE-LOCK]" : "[free-run]");
                 fflush(stdout);
             }
         }
-        SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate);
+        SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate, gSoH3dPendingN64CurFrame,
+                             gSoH3dPendingN64AnimLength);
         SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
         gSoH3dPendingModel = -1;
         gSoH3dPendingBoneMap = NULL;
@@ -1050,6 +1066,9 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     // This is the only choke point with a SkelAnime*, so it's where the live N64 animation pointer
     // (an OTR path string in SoH) is available — stash it for the auto CSAB resolver below.
     gSoH3dPendingAnimOtr = (const char*)skelAnime->animation;
+    // Capture the live N64 playhead so the auto branch can phase-lock the OoT3D CSAB to it.
+    gSoH3dPendingN64CurFrame = skelAnime->curFrame;
+    gSoH3dPendingN64AnimLength = skelAnime->animLength;
     return SoH3D_DoRetarget(play, skelAnime->skeleton, skelAnime->jointTable, skelAnime->limbCount);
 }
 

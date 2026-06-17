@@ -994,20 +994,45 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }
 
-// Drive an auto-replaced model by its OWN OoT3D CSAB (animName), with a self-managed per-model
-// playhead (the global gSoH3dGlAnim accumulators only cover the small hand-table ids). This is
-// the "own animation" path: the OoT3D model plays its authored animation (correct for its rig)
-// instead of retargeting N64 joints (which explodes on divergent rigs). animName==NULL -> bind
-// pose. The CSAB wraps the frame internally (Csab::animFrame REPEAT). `rate` = frames/draw.
-void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate) {
+// Drive an auto-replaced model by its OWN OoT3D CSAB (animName). Two playhead modes:
+//   PHASE-LOCK (n64AnimLength>4): the OoT3D CSAB is driven at the SAME fractional progress as the
+//     actor's live N64 animation (csab_frame = (n64CurFrame/n64AnimLength) * csab_duration). This
+//     is the fix for "OoT3D anims too fast" — the CSAB free-ran at a fixed `rate` regardless of how
+//     fast the N64 game logic was actually advancing the anim, so a slow N64 walk looked sped-up.
+//     Locking to N64 progress makes the OoT3D motion match the N64 motion's tempo exactly.
+//   FREE-RUN (stub idle, n64AnimLength<=4, or duration unknown): self-managed per-model playhead at
+//     `rate` frames/draw. N64 idles are often 2-frame fidget stubs with no meaningful progress to
+//     lock to (see memory n64-idle-stub-no-phaselock), so we free-run the full OoT3D idle instead.
+// animName==NULL -> bind pose. The CSAB wraps the frame internally (Csab::animFrame REPEAT).
+void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
+                          float n64AnimLength) {
     static std::unordered_map<int, float> frames;
     static std::unordered_map<int, std::string> lastCsab; // per-model: which CSAB the playhead is on
     if (!animName || !*animName) {
         frames.erase(modelId); lastCsab.erase(modelId);
         SoH3D_UpdateAnim(modelId, nullptr, 0); return;
     }
-    // Restart the playhead from 0 whenever the selected CSAB changes, so a one-shot (a wave, a
-    // hand-off) plays from its start instead of resuming at the previous anim's accumulated frame.
+    // PHASE-LOCK to the N64 anim's progress when it has a real (non-stub) length.
+    if (n64AnimLength > 4.0f && n64CurFrame >= 0.0f) {
+        LoadedModel* lm = loadModel(modelId);
+        float dur = 0.0f;
+        if (lm && lm->ok && lm->cmb && lm->zar) {
+            SoH3D::Csab* c = getCsab(lm, animName);
+            if (c) dur = (float)c->duration();
+        }
+        if (dur > 0.0f) {
+            float phase = n64CurFrame / n64AnimLength;
+            phase -= std::floor(phase); // wrap into [0,1)
+            float f = phase * dur;
+            frames[modelId] = f;      // keep the free-run playhead in sync for a later mode switch
+            lastCsab[modelId] = animName;
+            SoH3D_UpdateAnim(modelId, animName, f);
+            return;
+        }
+        // duration unavailable -> fall through to free-run
+    }
+    // FREE-RUN. Restart the playhead from 0 whenever the selected CSAB changes, so a one-shot (a
+    // wave, a hand-off) plays from its start instead of resuming at the previous anim's frame.
     float& f = frames[modelId];
     std::string& prev = lastCsab[modelId];
     if (prev != animName) { f = 0.0f; prev = animName; }

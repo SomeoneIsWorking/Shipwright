@@ -454,6 +454,22 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
         ctr[k] = (lo[k] + hi[k]) * 0.5f;
         ext[k] = std::max((hi[k] - lo[k]) * 0.5f, 1.0f);
     }
+    // STABLE framing: once the one-time interpreter mesh measure (Cc_Bbox*) has run, frame by the
+    // model's fixed GEOMETRY bbox — cached so it never changes with the animated pose. This is what
+    // stops the model rescaling/drifting as it animates, and matches how the 3DS side frames (by its
+    // geometry bbox), so the two halves are the same size. Until the measure completes (frame 0), fall
+    // back to this frame's joint bbox (one transient frame). worldId below still uses the live joints,
+    // so the limbs animate normally — only the camera frame F is held constant.
+    if (m.meshMeasured) {
+        if (!m.framingCached) {
+            for (int k = 0; k < 3; k++) {
+                m.frCtr[k] = (m.meshMin[k] + m.meshMax[k]) * 0.5f;
+                m.frHalf[k] = std::max((m.meshMax[k] - m.meshMin[k]) * 0.5f, 1.0f);
+            }
+            m.framingCached = true;
+        }
+        for (int k = 0; k < 3; k++) { ctr[k] = m.frCtr[k]; ext[k] = m.frHalf[k]; }
+    }
     if (getenv("CC_N64_DBG")) {
         fprintf(stderr, "[cc_n64] joint bbox x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f] ctr(%.0f,%.0f,%.0f) ext(%.0f,%.0f,%.0f)\n",
                 lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], ctr[0], ctr[1], ctr[2], ext[0], ext[1], ext[2]);
@@ -484,10 +500,11 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // past the joints (head/hands), so a tighter joint-fit would clip the mesh. (A proper fix would
     // bbox the transformed geometry like cc_3ds; the margin keeps the whole model on screen for now.)
     const float xComp = (float)SCREEN_WIDTH / vp.w;
-    // The bbox is over JOINTS; the limb MESH extends well past them (wings, hair, held weapons),
-    // so a joint-fit of ~0.6 NDC badly over-zooms (mesh overflows the frame). 0.32 leaves room for
-    // the mesh. (Proper fix: bbox the transformed geometry like cc_3ds; tunable via CC_FIT.)
-    static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.32f; }();
+    // Fit the GEOMETRY bbox (ext is the cached mesh half-extent once measured) into ~0.55 of NDC —
+    // the SAME target as the 3DS side (cc_3ds CC_FIT3DS), so the two halves render the same size.
+    // (Before the mesh measure completes, ext is the joint bbox for one transient frame.) CC_FIT
+    // overrides.
+    static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.55f; }();
     const float fit = fitTarget / std::max(ext[0], ext[1]);
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),

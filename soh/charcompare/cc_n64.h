@@ -61,6 +61,13 @@ struct ModelN64 {
     // measured frame; framing falls back to the joint bbox until then.
     bool meshMeasured = false;
     float meshMin[3] = { 0, 0, 0 }, meshMax[3] = { 0, 0, 0 };
+    // Stable framing, computed ONCE from the geometry (mesh) bbox and reused for every animation
+    // frame. Framing the model per-frame from the animated joint bbox made it rescale/recenter as
+    // limbs moved ("models abruptly change size / move around during animation"); caching a fixed
+    // geometry-based frame keeps the model put and constant-sized (and size-matched to the 3DS,
+    // which also frames by its geometry bbox). frCtr/frHalf are in model space.
+    bool framingCached = false;
+    float frCtr[3] = { 0, 0, 0 }, frHalf[3] = { 0, 0, 0 };
 };
 
 // Register the resource factories the N64 path needs (Fast DisplayList/Vertex/Texture/

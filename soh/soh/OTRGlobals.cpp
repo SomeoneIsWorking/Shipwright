@@ -1786,6 +1786,12 @@ extern "C" void Graph_StartFrame() {
 #endif
 }
 
+// SoH3D: per-subframe frame-interpolation step (parallel to mtx_replacements). Drives the OoT3D
+// skin-pose interpolation in libultraship (extern gSoH3dInterpStep) so replaced characters' limbs
+// animate at the render FPS instead of snapping at the 20fps logic rate, like N64 matrices already do.
+extern "C" float gSoH3dInterpStep;
+static std::vector<float> sSoH3dStepList;
+
 void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(OTRGlobals::Instance->context->GetWindow());
 
@@ -1802,10 +1808,14 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     UIWidgets::Colors themeColor =
         static_cast<UIWidgets::Colors>(CVarGetInteger(CVAR_SETTING("Menu.Theme"), UIWidgets::Colors::LightBlue));
     ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
+    size_t idx = 0;
     for (const auto& m : mtx_replacements) {
+        gSoH3dInterpStep = (idx < sSoH3dStepList.size()) ? sSoH3dStepList[idx] : 1.0f;
         wnd->DrawAndRunGraphicsCommands(Commands, m);
         intp->mInterpolationIndex++;
+        idx++;
     }
+    gSoH3dInterpStep = 1.0f; // leave at the final pose for any non-interpolated path
     ImGui::PopStyleColor();
 }
 
@@ -1837,12 +1847,15 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // time_base = fps * original_fps (one second)
     int next_original_frame = fps;
 
+    sSoH3dStepList.clear(); // SoH3D: record each subframe's interpolation step (parallel to mtx_replacements)
     while (time + original_fps <= next_original_frame) {
         time += original_fps;
         if (time != next_original_frame) {
             mtx_replacements.push_back(FrameInterpolation_Interpolate((float)time / next_original_frame));
+            sSoH3dStepList.push_back((float)time / next_original_frame);
         } else {
             mtx_replacements.emplace_back();
+            sSoH3dStepList.push_back(1.0f);
         }
     }
 
@@ -1856,6 +1869,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     if (GfxDebuggerIsDebugging()) {
         mtx_replacements.clear();
         mtx_replacements.emplace_back();
+        sSoH3dStepList.assign(1, 1.0f); // keep the SoH3D step list in lockstep with mtx_replacements
     }
 
     RunCommands(commands, mtx_replacements);

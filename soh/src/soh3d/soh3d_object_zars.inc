@@ -2,7 +2,7 @@
 // N64 object id (ObjectID enum, == object_table.h row index) -> OoT3D actor
 // model archive /actor/zelda_<name>.zar (NULL = no OoT3D ZAR; N64 fallback).
 // Paths only; no ROM-derived asset bytes. Used by the SOH3D_AUTO actor path.
-// 303/402 object ids mapped to a ZAR.
+// 305/402 object ids mapped to a ZAR.
 static const char* const kSoH3dObjectZars[] = {
     /* 0x0000 (unset)                              */ NULL,
     /* 0x0001 OBJECT_GAMEPLAY_KEEP                 */ NULL,
@@ -94,7 +94,7 @@ static const char* const kSoH3dObjectZars[] = {
     /* 0x0057 OBJECT_OA10                          */ NULL,
     /* 0x0058 OBJECT_OA11                          */ NULL,
     /* 0x0059 OBJECT_MIZU_OBJECTS                  */ "/actor/zelda_mizu_objects.zar",
-    /* 0x005A OBJECT_FHG                           */ NULL,
+    /* 0x005A OBJECT_FHG                           */ "/actor/zelda_fantomHG.zar",
     /* 0x005B OBJECT_OSSAN                         */ NULL,
     /* 0x005C OBJECT_MORI_HINERI1                  */ "/actor/zelda_mori_hineri1.zar",
     /* 0x005D OBJECT_BB                            */ "/actor/zelda_bb.zar",
@@ -402,7 +402,7 @@ static const char* const kSoH3dObjectZars[] = {
     /* 0x018B OBJECT_COW                           */ "/actor/zelda_cow.zar",
     /* 0x018C OBJECT_COB                           */ "/actor/zelda_cob.zar",
     /* 0x018D OBJECT_GI_SWORD_1                    */ "/actor/zelda_gi_sword_1.zar",
-    /* 0x018E OBJECT_DOOR_KILLER                   */ NULL,
+    /* 0x018E OBJECT_DOOR_KILLER                   */ "/actor/zelda_killer_door.zar",
     /* 0x018F OBJECT_OUKE_HAKA                     */ "/actor/zelda_ouke_haka.zar",
     /* 0x0190 OBJECT_TIMEBLOCK                     */ "/actor/zelda_timeblock.zar",
     /* 0x0191 OBJECT_ZL4                           */ "/actor/zelda_zl4.zar",

@@ -12,16 +12,21 @@ set(SOH3D_ASSET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d/asset)
 
 add_executable(charcompare
     main.cpp
+    cc_3ds.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d/soh3d_model.cpp
     ${SOH3D_ASSET_DIR}/ctr_rom.cpp
     ${SOH3D_ASSET_DIR}/zar.cpp
     ${SOH3D_ASSET_DIR}/cmb.cpp
     ${SOH3D_ASSET_DIR}/csab.cpp
+    ${SOH3D_ASSET_DIR}/zsi.cpp
+    ${SOH3D_ASSET_DIR}/zcol.cpp
     ${SOH3D_ASSET_DIR}/pica_texture.cpp
 )
 
 target_include_directories(charcompare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d   # so "asset/..." resolves like in soh3d_model.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libultraship/include
 )
 
@@ -34,7 +39,9 @@ target_link_libraries(charcompare PRIVATE
     ${CMAKE_DL_LIBS}
 )
 
-# ENABLE_OPENGL guards the GL code paths we reuse (matches the libultraship build).
-target_compile_definitions(charcompare PRIVATE ENABLE_OPENGL)
+# ENABLE_OPENGL guards the GL code paths we reuse. F3DEX_GBI_2 selects the gbi.h
+# opcode macros to match the interpreter's loaded ucode (else gsSP* emit F3D-era
+# opcodes the F3DEX2 interpreter rejects, runs off the end, and crashes).
+target_compile_definitions(charcompare PRIVATE ENABLE_OPENGL F3DEX_GBI_2)
 
 add_dependencies(charcompare libultraship)

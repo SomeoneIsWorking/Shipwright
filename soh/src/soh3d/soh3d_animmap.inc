@@ -13,73 +13,76 @@ typedef struct {
 #define SOH3D_ANIMMAP(otr_, csab_) { otr_, csab_ }
 
 static const SoH3DAnimMap kSoH3dAnimMaps[] = {
-    // ==== /actor/zelda_am.zar (object_am) ====
+    // GENERATED-then-OWNED: bootstrapped by tools/soh3d_anim_export.py (name-first matcher),
+    // hand-reviewable. Key = N64 anim OTR path; value = OoT3D CSAB base. Unlisted -> default idle.
+    // Regenerate the seed with the tool; edit specific entries here by hand as verified.
+    // ---- /actor/zelda_am.zar (object_am) ----
     SOH3D_ANIMMAP("objects/object_am/gArmosRicochetAnim", "am_mamori"),
     SOH3D_ANIMMAP("objects/object_am/gArmosHopAnim", "am_jump"),
     SOH3D_ANIMMAP("objects/object_am/gArmosDamagedAnim", "am_yarare"),
-    // ==== /actor/zelda_ani.zar (object_ani) ====
+    // ---- /actor/zelda_ani.zar (object_ani) ----
     SOH3D_ANIMMAP("objects/object_ani/gRoofManKnockbackAnim", "ani_nanyarona"),
     SOH3D_ANIMMAP("objects/object_ani/gRoofManGettingUpAfterKnockbackAnim", "ani_nanyarona"),
     SOH3D_ANIMMAP("objects/object_ani/gRoofManIdleAnim", "ani_suwari_wait"),
-    // ==== /actor/zelda_bg.zar (object_bg) ====
+    // ---- /actor/zelda_av.zar (object_anubice) ----
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceFallDownAnim", "av_dmg"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAttackingAnim", "av_fire"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceIdleAnim", "av_wait"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceLaughingAnim", "av_jump"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceStandUpAnim", "av_getup"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAnim_000A48", "av_jump"),
+    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAnim_000BAC", "av_getup"),
+    // ---- /actor/zelda_bb.zar (object_Bb) ----
+    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_000184", "bb_fly"),
+    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_0002AC", "bb_damage"),
+    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_000444", "bb_fly"),
+    // ---- /actor/zelda_bg.zar (object_bg) ----
     SOH3D_ANIMMAP("objects/object_bg/gChuGirlWakeUpAnim", "bg_getup"),
     SOH3D_ANIMMAP("objects/object_bg/gChuGirlNoddingOffAnim", "bg_sleeping"),
     SOH3D_ANIMMAP("objects/object_bg/gChuGirlLeanOverCounterAnim", "bg_wait"),
-    // ==== /actor/zelda_bl.zar (object_bl) ====
+    // ---- /actor/zelda_bl.zar (object_bl) ----
     SOH3D_ANIMMAP("objects/object_bl/gBiriDischargeLightningAnim", "bl_elec_a"),
     SOH3D_ANIMMAP("objects/object_bl/gBiriClimbAnim", "bl_jump"),
     SOH3D_ANIMMAP("objects/object_bl/gBiriDefaultAnim", "bl_nomral"),
-    // ==== /actor/zelda_box.zar (object_box) ====
+    // ---- /actor/zelda_box.zar (object_box) ----
     SOH3D_ANIMMAP("objects/object_box/gTreasureChestAnim_000128", "cdemo_box_boxA"),
     SOH3D_ANIMMAP("objects/object_box/gTreasureChestAnim_00024C", "demo_box_boxA"),
     SOH3D_ANIMMAP("objects/object_box/gTreasureChestAnim_00043C", "demo_box_boxB"),
-    // ==== /actor/zelda_brob.zar (object_brob) ====
+    // ---- /actor/zelda_brob.zar (object_brob) ----
     SOH3D_ANIMMAP("objects/object_brob/object_brob_Anim_000290", "br_dmg"),
     SOH3D_ANIMMAP("objects/object_brob/object_brob_Anim_001678", "br_elec"),
     SOH3D_ANIMMAP("objects/object_brob/object_brob_Anim_001750", "br_start"),
     SOH3D_ANIMMAP("objects/object_brob/object_brob_Anim_001958", "br_unyo"),
-    // ==== /actor/zelda_bv.zar (object_bv) ====
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeBodyAnim", "bl2"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportAttachedAnim", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeZapperIdleAnim", "bva_wait"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeStumpAnim", "bvc_break"),
+    // ---- /actor/zelda_bv.zar (object_bv) ----
     SOH3D_ANIMMAP("objects/object_bv/gBarinadeBariAnim", "bl2"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportDamage1Anim", "bl2"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportDamage2Anim", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportCutAnim", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportDetachedAnim", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeZapperDamage1Anim", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeZapperDamage2Anim", "bl2"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeAnim_018A00", "bvc_break"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeAnim_015F10", "bl2"),
-    SOH3D_ANIMMAP("objects/object_bv/gBarinadeAnim_015D10", "bl2"),
-    // ==== /actor/zelda_bw.zar (object_bw) ====
+    SOH3D_ANIMMAP("objects/object_bv/gBarinadeSupportDamage2Anim", "bv_arm_dmg"),
+    // ---- /actor/zelda_bw.zar (object_bw) ----
     SOH3D_ANIMMAP("objects/object_bw/gTorchSlugEyestalkWaveAnim", "bw_aruku"),
     SOH3D_ANIMMAP("objects/object_bw/gTorchSlugEyestalkRaiseAnim", "bw_hakken"),
     SOH3D_ANIMMAP("objects/object_bw/gTorchSlugEyestalkFlailAnim", "bw_hakken"),
-    // ==== /actor/zelda_cow.zar (object_cow) ====
+    // ---- /actor/zelda_cow.zar (object_cow) ----
     SOH3D_ANIMMAP("objects/object_cow/gCowBodyChewAnim", "usi_mogmog"),
     SOH3D_ANIMMAP("objects/object_cow/gCowBodyMoveHeadAnim", "usi_mogmog"),
     SOH3D_ANIMMAP("objects/object_cow/gCowTailIdleAnim", "ust_daran"),
     SOH3D_ANIMMAP("objects/object_cow/gCowTailSwishAnim", "ust_furifuri"),
-    // ==== /actor/zelda_crow.zar (object_crow) ====
+    // ---- /actor/zelda_crow.zar (object_crow) ----
     SOH3D_ANIMMAP("objects/object_crow/gGuayFlyAnim", "df_flygue"),
-    // ==== /actor/zelda_cs.zar (object_cs) ====
+    // ---- /actor/zelda_cs.zar (object_cs) ----
     SOH3D_ANIMMAP("objects/object_cs/gGraveyardKidWalkAnim", "cs_aruku"),
     SOH3D_ANIMMAP("objects/object_cs/gGraveyardKidSwingStickUpAnim", "cs_aruku"),
     SOH3D_ANIMMAP("objects/object_cs/gGraveyardKidGrabStickTwoHandsAnim", "cs_matsu02"),
-    SOH3D_ANIMMAP("objects/object_cs/gGraveyardKidIdleAnim", "cs_matsu03"),
-    // ==== /actor/zelda_daiku.zar (object_daiku) ====
+    SOH3D_ANIMMAP("objects/object_cs/gGraveyardKidIdleAnim", "cs_matsu"),
+    // ---- /actor/zelda_daiku.zar (object_daiku) ----
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_000600", "dk2_hanasi"),
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_000C44", "dk2_hashiru"),
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_001AB0", "dk2_matsu"),
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_007DE0", "dk2_roya"),
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_008164", "dk2_suwari"),
     SOH3D_ANIMMAP("objects/object_daiku/object_daiku_Anim_00885C", "dk2_roya"),
-    // ==== /actor/zelda_dekubaba.zar (object_dekubaba) ====
+    // ---- /actor/zelda_dekubaba.zar (object_dekubaba) ----
     SOH3D_ANIMMAP("objects/object_dekubaba/gDekuBabaPauseChompAnim", "db_P_kougeki"),
     SOH3D_ANIMMAP("objects/object_dekubaba/gDekuBabaFastChompAnim", "db_P_tobidasu"),
-    // ==== /actor/zelda_dekunuts.zar (object_dekunuts) ====
+    // ---- /actor/zelda_dekunuts.zar (object_dekunuts) ----
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsSpitAnim", "dn_atack"),
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsDamageAnim", "dn_damage"),
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsBurrowAnim", "dn_dig"),
@@ -90,7 +93,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsStandAnim", "dn_wait"),
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsGaspAnim", "dn_wait02"),
     SOH3D_ANIMMAP("objects/object_dekunuts/gDekuNutsRunAnim", "dn_atack"),
-    // ==== /actor/zelda_dh.zar (object_dh) ====
+    // ---- /actor/zelda_dh.zar (object_dh) ----
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_0015B0", "dead_hand_dig_20f"),
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_001A3C", "dead_hand_greeting_20f"),
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_002148", "dead_hand_dig_20f"),
@@ -100,7 +103,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_003D6C", "dead_hand_hit_20f"),
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_004658", "dead_hand_wait_20f"),
     SOH3D_ANIMMAP("objects/object_dh/object_dh_Anim_005880", "dead_hand_wait_20f"),
-    // ==== /actor/zelda_dnk.zar (object_dnk) ====
+    // ---- /actor/zelda_dnk.zar (object_dnk) ----
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageSpitAnim", "dnk_atack"),
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageHideAnim", "dnk_jump"),
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageDanceAnim", "dnk_wait"),
@@ -108,7 +111,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageUpAnim", "dnk_start"),
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageWalkAnim", "dnk_walk"),
     SOH3D_ANIMMAP("objects/object_dnk/gDntStageWaitAnim", "dnk_wait"),
-    // ==== /actor/zelda_dns.zar (object_dns) ====
+    // ---- /actor/zelda_dns.zar (object_dns) ----
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiBurrowAnim", "dns_jump"),
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiCowerAnim", "dns_hintdig01"),
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiHideAnim", "dns_hintdig01"),
@@ -120,18 +123,18 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiDanceAnim", "dns_happy"),
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiUnkAnim", "dns_hintdig01"),
     SOH3D_ANIMMAP("objects/object_dns/gDntJijiWaitAnim", "dns_wait"),
-    // ==== /actor/zelda_dodojr.zar (object_dodojr) ====
+    // ---- /actor/zelda_dodojr.zar (object_dodojr) ----
     SOH3D_ANIMMAP("objects/object_dodojr/object_dodojr_Anim_0004A0", "dd_damage"),
     SOH3D_ANIMMAP("objects/object_dodojr/object_dodojr_Anim_0005F0", "dd_wait"),
     SOH3D_ANIMMAP("objects/object_dodojr/object_dodojr_Anim_000724", "dd_jump"),
     SOH3D_ANIMMAP("objects/object_dodojr/object_dodojr_Anim_000860", "dd_move"),
     SOH3D_ANIMMAP("objects/object_dodojr/object_dodojr_Anim_0009D4", "dd_wait"),
-    // ==== /actor/zelda_dodongo.zar (object_dodongo) ====
+    // ---- /actor/zelda_dodongo.zar (object_dodongo) ----
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoDieAnim", "da_die"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoDamageAnim", "da_dmg"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoBreatheFireAnim", "da_fire"),
-    SOH3D_ANIMMAP("objects/object_dodongo/gDodongoAfterBreatheFireAnim", "da_wait"),
-    SOH3D_ANIMMAP("objects/object_dodongo/gDodongoSweepTailRightAnim", "da_right"),
+    SOH3D_ANIMMAP("objects/object_dodongo/gDodongoAfterBreatheFireAnim", "da_fire_wait"),
+    SOH3D_ANIMMAP("objects/object_dodongo/gDodongoSweepTailRightAnim", "da_left"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoSweepTailLeftAnim", "da_left"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoWaitAnim", "da_wait"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoWalkAnim", "da_walk"),
@@ -140,55 +143,45 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoLowerTailAnim", "da_walk_start"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoRightStepAnim", "da_walk_start"),
     SOH3D_ANIMMAP("objects/object_dodongo/gDodongoLeftStepAnim", "da_walk_start"),
-    // ==== /actor/zelda_dog.zar (object_dog) ====
+    // ---- /actor/zelda_dog.zar (object_dog) ----
     SOH3D_ANIMMAP("objects/object_dog/gDogBarkAnim", "dog_bark"),
     SOH3D_ANIMMAP("objects/object_dog/gDogBowAnim", "dog_fuse"),
     SOH3D_ANIMMAP("objects/object_dog/gDogBow2Anim", "dog_fusetamama"),
     SOH3D_ANIMMAP("objects/object_dog/gDogRunAnim", "dog_run"),
-    SOH3D_ANIMMAP("objects/object_dog/gDogSitAnim", "dog_bark"),
+    SOH3D_ANIMMAP("objects/object_dog/gDogSitAnim", "dog_sit"),
     SOH3D_ANIMMAP("objects/object_dog/gDogWalkAnim", "dog_walk"),
-    // ==== /actor/zelda_ds.zar (object_ds) ====
+    // ---- /actor/zelda_ds.zar (object_ds) ----
     SOH3D_ANIMMAP("objects/object_ds/gPotionShopLadyAnim", "ds_matsu"),
-    // ==== /actor/zelda_ds2.zar (object_ds2) ====
+    // ---- /actor/zelda_ds2.zar (object_ds2) ----
     SOH3D_ANIMMAP("objects/object_ds2/object_ds2_Anim_0002E4", "ds2_matsu"),
-    // ==== /actor/zelda_du.zar (object_du) ====
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaIdleAnim", "dal_banzai_wait"),
+    // ---- /actor/zelda_du.zar (object_du) ----
     SOH3D_ANIMMAP("objects/object_du/gDaruniaItemGiveAnim", "dal_banzai"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaItemGiveIdleAnim", "dal_banzai_wait"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaHitLinkAnim", "dal_bashi"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaHitBreastAnim", "dal_kangeki"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaStandUpAfterFallingAnim", "dalnia_end_wait"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaDancingLoop1Anim", "dalnia_base_to_dai"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaDancingLoop2Anim", "dalnia_base_to_dai"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaDancingLoop3Anim", "dalnia_base_to_chotto"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaDancingLoop4Anim", "dalnia_base_to_dai"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaDancingEndAnim", "dalnia_base_to_chotto"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaWrongSongAnim", "dalnia_base_to_chotto"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaWrongSongEndAnim", "dalnia_base_to_dai"),
     SOH3D_ANIMMAP("objects/object_du/gDaruniaSageFormationAnim", "dalnia_base_to_dai"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaLookingUpToSariaAnim", "dalnia_base_to_chotto"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaCreditsHitBreastAnim", "dalnia_base_to_chotto"),
-    SOH3D_ANIMMAP("objects/object_du/gDaruniaCreditsIdleAnim", "dal_banzai_wait"),
-    // ==== /actor/zelda_dy_obj.zar (object_dy_obj) ====
+    // ---- /actor/zelda_dy_obj.zar (object_dy_obj) ----
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAnim_000108", "yousei_end"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairySpellFountainSpinShrinkAnim", "DY_kieruu"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyLayingSidewaysAnim", "DY_n_wait"),
-    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyLayingDownTransitionAnim", "DY_t_wait"),
-    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAfterSpellAnim", "DY_t_wait"),
-    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAnim_005810", "DY_t_wait"),
+    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyLayingDownTransitionAnim", "DY_sanjyou"),
+    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAfterSpellAnim", "DY_sanjyou"),
+    SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAnim_005810", "DY_sanjyou"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyJewelFountainSpinShrinkAnim", "yousei_end"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyGivingUpgradeAnim", "yousei_nagekiss"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairyAfterUpgradeAnim", "DY_n_wait"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairySittingTransitionAnim", "yousei_nagekiss"),
     SOH3D_ANIMMAP("objects/object_dy_obj/gGreatFairySittingAnim", "DY_n_wait"),
-    // ==== /actor/zelda_ec.zar (object_ec) ====
+    // ---- /actor/zelda_ec.zar (object_ec) ----
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcCuccoLadyAnim", "ane_dance"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcCarpenterAnim", "kz_miageru"),
-    SOH3D_ANIMMAP("objects/object_ec/gDemoEcWindmillManAnim", "km1_out_in_pose"),
+    SOH3D_ANIMMAP("objects/object_ec/gDemoEcWindmillManAnim", "km1_motsu"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcGerudoAnim", "ane_dance"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcGoronAnim", "goron_dance"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcGoron2Anim", "goron_dance"),
-    SOH3D_ANIMMAP("objects/object_ec/gDemoEcIngoAnim", "ingo_katakumi"),
+    SOH3D_ANIMMAP("objects/object_ec/gDemoEcIngoAnim", "kz_utsumuki_wait"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcDancingKokiriAnim", "mido_utsumuki_wait"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcKokiriAnim", "km1_motsu"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcOldManAnim", "kyotsu_swing_1"),
@@ -204,72 +197,75 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcPotionShopOwnerAnim", "kz_miageru"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcTalonAnim", "kz_utsumuki_wait"),
     SOH3D_ANIMMAP("objects/object_ec/gDemoEcDancingZoraAnim", "mido_utsumuki_wait"),
-    // ==== /actor/zelda_ei.zar (object_ei) ====
+    // ---- /actor/zelda_ei.zar (object_ei) ----
     SOH3D_ANIMMAP("objects/object_ei/gStingerPopOutAnim", "ei_die"),
     SOH3D_ANIMMAP("objects/object_ei/gStingerDiveAnim", "ei_dmg"),
     SOH3D_ANIMMAP("objects/object_ei/gStingerBackflipAnim", "ei_dmg"),
-    SOH3D_ANIMMAP("objects/object_ei/gStingerHitAnim", "ei_swim"),
+    SOH3D_ANIMMAP("objects/object_ei/gStingerHitAnim", "ei_dmg"),
     SOH3D_ANIMMAP("objects/object_ei/gStingerIdleAnim", "ei_wait"),
-    // ==== /actor/zelda_fd.zar (object_fd) ====
-    SOH3D_ANIMMAP("objects/object_fd/gVolvagiaLeftArmEmergeAnim", "vb_FWDtest"),
-    SOH3D_ANIMMAP("objects/object_fd/gVolvagiaRightArmEmergeAnim", "vb_FWDtest"),
-    SOH3D_ANIMMAP("objects/object_fd/gVolvagiaHeadEmergeAnim", "vb_FWDtest"),
+    // ---- /actor/zelda_fantomHG.zar (object_fhg) ----
+    SOH3D_ANIMMAP("objects/object_fhg/gPhantomHorseUnusedRearingAnim", "hgf_damage"),
+    SOH3D_ANIMMAP("objects/object_fhg/gPhantomHorseStillAnim", "hgf_fastrun"),
+    // ---- /actor/zelda_fd.zar (object_fd) ----
     SOH3D_ANIMMAP("objects/object_fd/gVolvagiaBodyStaticAnim", "vb_FWDtest"),
-    // ==== /actor/zelda_fr.zar (object_fr) ====
+    // ---- /actor/zelda_ff.zar (object_firefly) ----
+    SOH3D_ANIMMAP("objects/object_firefly/gKeeseFlyAnim", "firefly_foot_fly"),
+    // ---- /actor/zelda_fr.zar (object_fr) ----
     SOH3D_ANIMMAP("objects/object_fr/object_fr_Anim_0007BC", "Jump"),
     SOH3D_ANIMMAP("objects/object_fr/object_fr_Anim_0011C0", "swing"),
     SOH3D_ANIMMAP("objects/object_fr/object_fr_Anim_001534", "wait"),
-    // ==== /actor/zelda_fu.zar (object_fu) ====
+    // ---- /actor/zelda_fu.zar (object_fu) ----
     SOH3D_ANIMMAP("objects/object_fu/gWindmillManPlayAndMoveHeadAnim", "are_are"),
     SOH3D_ANIMMAP("objects/object_fu/gWindmillManPlayStillAnim", "are_are"),
-    // ==== /actor/zelda_fw.zar (object_fw) ====
+    // ---- /actor/zelda_fw.zar (object_fw) ----
     SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCastingFireAnim", "fire_dancer_greeting"),
     SOH3D_ANIMMAP("objects/object_fw/gFlareDancerBackflipAnim", "fire_dancer_landing"),
     SOH3D_ANIMMAP("objects/object_fw/gFlareDancerGettingUpAnim", "fire_dancer_landing"),
     SOH3D_ANIMMAP("objects/object_fw/gFlareDancerChasingAnim", "fire_dancer_run"),
     SOH3D_ANIMMAP("objects/object_fw/gFlareDancerTwirlAnim", "fire_dancer_turn_20f"),
-    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreInitRunCycleAnim", "fire_walker_greeting_20f"),
-    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreRunCycleAnim", "fire_walker_jump_20f"),
-    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreEndRunCycleAnim", "fire_dancer_turn_20f"),
-    // ==== /actor/zelda_ganon2.zar (object_ganon2) ====
+    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreInitRunCycleAnim", "fire_walker_run_20f"),
+    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreRunCycleAnim", "fire_walker_run_20f"),
+    SOH3D_ANIMMAP("objects/object_fw/gFlareDancerCoreEndRunCycleAnim", "fire_walker_run_20f"),
+    // ---- /actor/zelda_ganon2.zar (object_ganon2) ----
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonFinalBlowAnim", "Last_hit_motion2"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonDeadStartAnim", "Last_hit_motion2"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonDeadLoopAnim", "GF_tijimu_wait"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardToWalk", "gn2_K_to_walk"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonLeftSwordSwingAnim", "gn2_Katack01L"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonRightSwordSwingAnim", "gn2_Katack01R"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDamageAnim", "GF_aw"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardWalkAnim", "GF_sw"),
+    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDamageAnim", "Last_hit_motion2"),
+    SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardWalkAnim", "gn2_K_to_walk"),
     SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardSidestepAnim", "GF_sw"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardIdleAnim", "gn2_Kwait"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonStunStartAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonStunLoopAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonStunEndAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDownedStartAnim", "gn2_K_to_walk"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonStunEndToWalkAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDuplicateStunStartAnim", "gn2_K_to_walk"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDuplicateStunLoopAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonGetUpAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonDownedLoopAnim", "LG_DANGO"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonWalkAnim", "gn2_K_to_walk"),
-    SOH3D_ANIMMAP("objects/object_ganon2/gGanonWalkToGuardAnim", "gn2_K_to_walk"),
-    // ==== /actor/zelda_ge1.zar (object_ge1) ====
+    SOH3D_ANIMMAP("objects/object_ganon2/gGanonGuardIdleAnim", "GF_tijimu_wait"),
+    // ---- /actor/zelda_ge1.zar (object_ge1) ----
     SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteUnusedFoldingArmsAnim", "ge1_hanasi"),
-    SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteIdleAnim", "ge1_s_wait"),
+    SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteIdleAnim", "ge1_matsu"),
     SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteClapAnim", "ge1_mon_akeru"),
-    SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteDismissiveAnim", "ge1_hanasi"),  // HAND-FIX
-    // ==== /actor/zelda_gla.zar (object_gla) ====
+    SOH3D_ANIMMAP("objects/object_ge1/gGerudoWhiteDismissiveAnim", "ge1_hanasi"),
+    // ---- /actor/zelda_gelb.zar (object_geldb) ----
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedJumpAnim", "geldB_start"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedNeutralAnim", "geldB_wait"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSidestepAnim", "geldB_attackA"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedFlipAnim", "geldB_back_ten"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedWalkAnim", "geldB_side_walk"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSlashAnim", "geldB_attackA"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSpinAttackAnim", "geldB_attackB"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedDamageAnim", "geldB_hit"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedDefeatAnim", "geldB_down"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedBlockAnim", "geldB_defense"),
+    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedStandAnim", "geldB_wait"),
+    // ---- /actor/zelda_gla.zar (object_gla) ----
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleUnusedHorizontalSlashAnim", "geldA_attack"),
-    SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleUnusedSlashToStandingAnim", "geldA_find_wait"),
+    SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleUnusedSlashToStandingAnim", "geldA_attack"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleFallingToGroundAnim", "geldA_down"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleUnusedStandingToCrouchAnim", "geldA_find_wait"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleUnusedCrouchingLookAroundAnim", "geldA_find_wait"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleChargingAnim", "geldA_run"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleLookingAboutAnim", "geldA_wait"),
     SOH3D_ANIMMAP("objects/object_gla/gGerudoPurpleWalkingAnim", "geldA_walk"),
-    // ==== /actor/zelda_gm.zar (object_gm) ====
+    // ---- /actor/zelda_gm.zar (object_gm) ----
     SOH3D_ANIMMAP("objects/object_gm/object_gm_Anim_0002B8", "oF1d_chyu_goron"),
-    // ==== /actor/zelda_gnd.zar (object_gnd) ====
+    // ---- /actor/zelda_gnd.zar (object_gnd) ----
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonRideAnim", "gnf_fastrun"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonMaskOnAnim", "gnf_Dhenshin"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonRidePoseAnim", "gnf_Dsaigo"),
@@ -283,11 +279,11 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonReturn1Anim", "gnf_Dhenshin"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonReturn2Anim", "gnf_lonlyATACK02"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonBlockAnim", "gnf_lonlyGUARD"),
-    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeWindupAnim", "gnf_lonlyGUARD"),
-    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeStartAnim", "gnf_lonlyTSUKI"),
-    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeAnim", "gnf_lonlyGUARD"),
-    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonAirDamageAnim", "gnf_fastrun"),
-    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonGroundDamageAnim", "gnf_jump02"),
+    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeWindupAnim", "gnf_fastrun"),
+    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeStartAnim", "gnf_fastrun"),
+    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonChargeAnim", "gnf_fastrun"),
+    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonAirDamageAnim", "gnf_damage"),
+    SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonGroundDamageAnim", "gnf_damage"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonStunnedAnim", "gnf_lonlyGUARD"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonDeathBlowAnim", "gnf_lonlyMAHI"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonLimpAnim", "gnf_fastrun"),
@@ -297,29 +293,29 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonAnim_00D398", "gnf_Dfurafura"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonAnim_00CC84", "gnf_lonlyTSUKI02"),
     SOH3D_ANIMMAP("objects/object_gnd/gPhantomGanonAnim_012320", "gnf_lonlyTSUKI"),
-    // ==== /actor/zelda_gndd.zar (object_gndd) ====
+    // ---- /actor/zelda_gndd.zar (object_gndd) ----
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackRideAnim", "gnd_anim_fastrun"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackMagicChargeUpStartAnim", "gnd_anim_mahou"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackMagicChargeUpStartAnim", "gnd_anim_fastrun"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackMagicChargeUpLoopAnim", "gnd_anim_fastrun"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackLookSidewaysStartAnim", "gnd_anim_mahou"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackLookSidewaysLoopAnim", "gnd_anim_fastrun"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackLookSidewaysStartAnim", "gnd_demo_ojigi_furimuki"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackLookSidewaysLoopAnim", "gnd_demo_ojigi_furimuki"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackRearAnim", "gnd_anim_stand"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfHorsebackIdleAnim", "gnd_anim_mahou_wait"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfKneelStartAnim", "gnd_demo_ojigi"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfKneelLookSidewaysAnim", "gnd_anim_mahou"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfKneelLookSidewaysAnim", "gnd_demo_ojigi_furimuki"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfKneelLoopAnim", "gnd_demo_ojigi"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfArmsCrossedAnim", "gnd_demo_ojigi"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfLaughStartAnim", "gnd_anim_mahou"),
-    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfLaughLoopAnim", "gnd_demo_ojigi"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfLaughStartAnim", "gnd_demo_ukabi_warai"),
+    SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfLaughLoopAnim", "gnd_demo_ukabi_warai_wait"),
     SOH3D_ANIMMAP("objects/object_gndd/gYoungGanondorfWalkAnim", "gnd_walk"),
-    // ==== /actor/zelda_goma.zar (object_goma) ====
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaStandAnim", "go_Await"),
+    // ---- /actor/zelda_goma.zar (object_goma) ----
+    SOH3D_ANIMMAP("objects/object_goma/gGohmaStandAnim", "go_wait"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaHangAnim", "go_Uwait"),
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaWalkAnim", "go_Await"),
+    SOH3D_ANIMMAP("objects/object_goma/gGohmaWalkAnim", "go_walk"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaPrepareEggsAnim", "go_Await"),
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaAttackAnim", "go_atack01"),
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaRestAfterAttackAnim", "go_atack01"),
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaRecoverAfterAttackAnim", "go_atack01"),
+    SOH3D_ANIMMAP("objects/object_goma/gGohmaAttackAnim", "go_pre_atack"),
+    SOH3D_ANIMMAP("objects/object_goma/gGohmaRestAfterAttackAnim", "go_pre_atack"),
+    SOH3D_ANIMMAP("objects/object_goma/gGohmaRecoverAfterAttackAnim", "go_pre_atack"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaCrashAnim", "go_chakuchi"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaLandAnim", "go_chakuchi02"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaClimbAnim", "go_damage"),
@@ -331,51 +327,56 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_goma/gGohmaEyeRollAnim", "go_startdemo02"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaLayEggsAnim", "go_pre_atack"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaIdleCrouchedAnim", "go_wait"),
-    SOH3D_ANIMMAP("objects/object_goma/gGohmaWalkCrouchedAnim", "go_after_umu"),
     SOH3D_ANIMMAP("objects/object_goma/gGohmaViolentAttackAnim", "go_pre_atack"),
-    // ==== /actor/zelda_gr.zar (object_gr) ====
+    // ---- /actor/zelda_gr.zar (object_gr) ----
     SOH3D_ANIMMAP("objects/object_gr/gNiwGirlRunAnim", "gr_run"),
     SOH3D_ANIMMAP("objects/object_gr/gNiwGirlJumpAnim", "gr_wait"),
-    // ==== /actor/zelda_hata.zar (object_hata) ====
+    // ---- /actor/zelda_hata.zar (object_hata) ----
     SOH3D_ANIMMAP("objects/object_hata/gFlagpoleFlapAnim", "ht_hata"),
-    // ==== /actor/zelda_hintnuts.zar (object_hintnuts) ====
+    // ---- /actor/zelda_hintnuts.zar (object_hintnuts) ----
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsSpitAnim", "dnh_atack"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsBurrowAnim", "dnh_dig"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsUnburrowAnim", "dnh_jump"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsUpAnim", "dnh_start"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsLookAroundAnim", "dnh_lookaround"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsFreezeAnim", "dnh_jump"),
-    SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsTalkAnim", "dnh_talk"),
+    SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsTalkAnim", "dnh_jump"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsStandAnim", "dnh_wait"),
     SOH3D_ANIMMAP("objects/object_hintnuts/gHintNutsRunAnim", "dnh_dig"),
-    // ==== /actor/zelda_hni.zar (object_hni) ====
+    // ---- /actor/zelda_hlc.zar (object_horse_link_child) ----
+    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaIdleAnim", "hlc_anim_wait"),
+    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaWhinnyAnim", "hlc_anim_wait02"),
+    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaWalkingAnim", "hlc_anim_walk"),
+    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaTrottingAnim", "hlc_anim_slowrun"),
+    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaGallopingAnim", "hlc_anim_fastrun"),
+    // ---- /actor/zelda_hni.zar (object_hni) ----
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoIdleAnim", "hni_wait"),
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoWhinnyAnim", "hni_jump200"),
-    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoRefuseAnim", "hni_stop_s"),
+    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoRefuseAnim", "hni_stop"),
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoRearingAnim", "hni_stand"),
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoWalkingAnim", "hni_walk"),
-    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoTrottingAnim", "hni_jump200"),
-    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoGallopingAnim", "hni_jump100"),
+    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoTrottingAnim", "hni_slowrun_to_fastrun"),
+    SOH3D_ANIMMAP("objects/object_hni/gHorseIngoGallopingAnim", "hni_fastrun_30"),
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoJumpingAnim", "hni_jump100"),
     SOH3D_ANIMMAP("objects/object_hni/gHorseIngoJumpingHighAnim", "hni_jump200"),
-    // ==== /actor/zelda_horse.zar (object_horse) ====
+    // ---- /actor/zelda_horse.zar (object_horse) ----
     SOH3D_ANIMMAP("objects/object_horse/gEponaIdleAnim", "hl_anim_wait2"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaWhinnyAnim", "hl_anim_wait022"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaRefuseAnim", "hl_anim_stop2"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaRearingAnim", "hl_anim_stand2"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaWalkingAnim", "hl_anim_carrotrun"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaTrottingAnim", "hl_anim_wait022"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaGallopingAnim", "hl_anim_jump1002"),
+    SOH3D_ANIMMAP("objects/object_horse/gEponaWalkingAnim", "hl_anim_slowrun_to_fastrun"),
+    SOH3D_ANIMMAP("objects/object_horse/gEponaTrottingAnim", "hl_anim_slowrun_to_fastrun"),
+    SOH3D_ANIMMAP("objects/object_horse/gEponaGallopingAnim", "hl_anim_slowrun_to_fastrun"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaJumpingAnim", "hl_anim_jump1002"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaJumpingHighAnim", "hl_anim_wait022"),
-    // ==== /actor/zelda_horse_ganon.zar (object_horse_ganon) ====
+    // ---- /actor/zelda_horse_ganon.zar (object_horse_ganon) ----
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonIdleAnim", "hg_anim_wait"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonWhinnyAnim", "hg_anim_wait02"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonWalkingAnim", "hg_anim_walk"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonTrottingAnim", "hg_anim_slowrun"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonGallopingAnim", "hg_anim_fastrun"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonRearingAnim", "hg_anim_stand"),
-    // ==== /actor/zelda_horse_normal.zar (object_horse_normal) ====
+    // ---- /actor/zelda_horse_normal.zar (object_horse_normal) ----
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalGallopingAnim", "hn_anim_fastrun"),
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalJumpingAnim", "hn_anim_fastrun"),
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalJumpingHighAnim", "hn_anim_wait02"),
@@ -385,13 +386,13 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalIdleAnim", "hn_anim_wait"),
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalWhinnyAnim", "hn_anim_wait02"),
     SOH3D_ANIMMAP("objects/object_horse_normal/gHorseNormalWalkingAnim", "hn_anim_walk"),
-    // ==== /actor/zelda_horse_zelda.zar (object_horse_zelda) ====
+    // ---- /actor/zelda_horse_zelda.zar (object_horse_zelda) ----
     SOH3D_ANIMMAP("objects/object_horse_zelda/gHorseZeldaGallopingAnim", "hz_fastrun_2"),
-    // ==== /actor/zelda_hs.zar (object_hs) ====
+    // ---- /actor/zelda_hs.zar (object_hs) ----
     SOH3D_ANIMMAP("objects/object_hs/object_hs_Anim_000304", "h_tanomuu"),
     SOH3D_ANIMMAP("objects/object_hs/object_hs_Anim_000528", "h_tanomuu"),
     SOH3D_ANIMMAP("objects/object_hs/object_hs_Anim_0005C0", "h_tanomuu"),
-    // ==== /actor/zelda_ik.zar (object_ik) ====
+    // ---- /actor/zelda_ik.zar (object_ik) ----
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_00035C", "front_armer_drop"),
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_000634", "naborknack_damage_demo"),
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_0008DC", "frontarmer_damage_demo"),
@@ -408,13 +409,13 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleFrontHitAnim", "ironknack_back_hit"),
     SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleRunAnim", "ironknack_run"),
     SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleNabooruSummonAxeAnim", "ironknack_stand_demo"),
-    SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleStandUpAnim", "ironknack_wait"),
+    SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleStandUpAnim", "ironknack_stand_up"),
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_00DD50", "ironknack_wait"),
     SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleWalkAnim", "ironknack_walk"),
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_01EB14", "frontarmer_damage_demo"),
     SOH3D_ANIMMAP("objects/object_ik/object_ik_Anim_01EE34", "frontarmer_damage_demo"),
     SOH3D_ANIMMAP("objects/object_ik/gIronKnuckleNabooruDeathAnim", "frontarmer_damage_demo"),
-    // ==== /actor/zelda_im.zar (object_im) ====
+    // ---- /actor/zelda_im.zar (object_im) ----
     SOH3D_ANIMMAP("objects/object_im/gImpaRaiseArmsAnim", "impa_banzai"),
     SOH3D_ANIMMAP("objects/object_im/gImpaPresentShadowMedallionAnim", "impa_banzai"),
     SOH3D_ANIMMAP("objects/object_im/gImpaThrowDekuNutAnim", "impa_banzai"),
@@ -425,7 +426,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_im/gImpaWhistlingAnim", "inpa_y_roop"),
     SOH3D_ANIMMAP("objects/object_im/gImpaPrepareSealGanonAnim", "km_inp1"),
     SOH3D_ANIMMAP("objects/object_im/gImpaSealGanonAnim", "km_inp2"),
-    // ==== /actor/zelda_in.zar (object_in) ====
+    // ---- /actor/zelda_in.zar (object_in) ----
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_0003B4", "in2_fusagu"),
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_000CB0", "in2_kachi"),
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_001BE0", "in2_kuyasii"),
@@ -442,87 +443,102 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_0175D0", "ingo_anim_stop_muti"),
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_017B58", "in_matsu2"),
     SOH3D_ANIMMAP("objects/object_in/object_in_Anim_018C38", "ingo_anim_wait2"),
-    // ==== /actor/zelda_jj.zar (object_jj) ====
+    // ---- /actor/zelda_jj.zar (object_jj) ----
     SOH3D_ANIMMAP("objects/object_jj/gJabuJabuAnim", "jj_wait"),
-    // ==== /actor/zelda_js.zar (object_js) ====
+    // ---- /actor/zelda_js.zar (object_js) ----
     SOH3D_ANIMMAP("objects/object_js/gCarpetMerchantSlappingKneeAnim", "js_matsu"),
     SOH3D_ANIMMAP("objects/object_js/gCarpetMerchantIdleAnim", "js_matsu"),
-    // ==== /actor/zelda_ka.zar (object_ka) ====
+    // ---- /actor/zelda_ka.zar (object_ka) ----
     SOH3D_ANIMMAP("objects/object_ka/object_ka_Anim_000214", "ka_dance"),
     SOH3D_ANIMMAP("objects/object_ka/object_ka_Anim_0067AC", "ka_dance"),
-    // ==== /actor/zelda_kz.zar (object_kz) ====
+    // ---- /actor/zelda_kdodongo.zar (object_kingdodongo) ----
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_000690", "kd_die_b"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_001074", "kd_damage"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_002D0C", "kd_die_a"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_003CF8", "kd_die_b"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_0042A8", "kd_down"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_004E0C", "kd_explode"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_0061D4", "kd_fire"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_006924", "kd_down"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_008EEC", "kd_fire_standby"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_009D10", "kd_getup"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00AA9C", "kd_bombwait"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00DF38", "kd_rolling"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00E848", "kd_die_b"),
+    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00F0D8", "kd_down"),
+    // ---- /actor/zelda_kz.zar (object_kz) ----
     SOH3D_ANIMMAP("objects/object_kz/gKzMweepAnim", "kz_kani"),
     SOH3D_ANIMMAP("objects/object_kz/gKzIdleAnim", "kz_matsu"),
-    // ==== /actor/zelda_ma1.zar (object_ma1) ====
+    // ---- /actor/zelda_ma1.zar (object_ma1) ----
     SOH3D_ANIMMAP("objects/object_ma1/gMalonChildRaiseHandsAnim", "ma1_hanasi"),
     SOH3D_ANIMMAP("objects/object_ma1/gMalonChildIdleAnim", "ma1_matsu"),
     SOH3D_ANIMMAP("objects/object_ma1/gMalonChildSingAnim", "ma1_utau"),
-    // ==== /actor/zelda_ma2.zar (object_ma2) ====
+    // ---- /actor/zelda_ma2.zar (object_ma2) ----
     SOH3D_ANIMMAP("objects/object_ma2/gMalonAdultIdleAnim", "ma2_matsu"),
     SOH3D_ANIMMAP("objects/object_ma2/gMalonAdultSingToIdleAnim", "ma2_matsu"),
     SOH3D_ANIMMAP("objects/object_ma2/gMalonAdultStandStillAnim", "ma2_matsu"),
     SOH3D_ANIMMAP("objects/object_ma2/gMalonAdultSingAnim", "ma2_utau"),
-    // ==== /actor/zelda_mastergolon.zar (object_mastergolon) ====
+    // ---- /actor/zelda_mastergolon.zar (object_mastergolon) ----
     SOH3D_ANIMMAP("objects/object_mastergolon/gGoronShopkeeperAnim", "oF1d_omise"),
-    // ==== /actor/zelda_masterzoora.zar (object_masterzoora) ====
+    // ---- /actor/zelda_masterzoora.zar (object_masterzoora) ----
     SOH3D_ANIMMAP("objects/object_masterzoora/gZoraShopkeeperAnim", "zo_omise"),
-    // ==== /actor/zelda_mb.zar (object_mb) ====
+    // ---- /actor/zelda_mb.zar (object_mb) ----
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearFallFaceDownAnim", "mbV_b_die"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearDamagedFromBehindAnim", "mbV_f_dmg"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearDamagedUngrabSpearAnim", "mbV_r_turn90"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearDamagedUngrabSpearAnim", "mn_dmg"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearFallOnItsBackAnim", "mbV_b_die"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearDamagedFromFrontAnim", "mbV_f_dmg"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearStandStillAnim", "mbV_n_wait"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearPrepareChargeAnim", "mbV_b_dmg"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearPrepareChargeAnim", "mbV_pose"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearChargeAnim", "mbV_run"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearLookLeftAndRightAnim", "mbV_s_wait"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearSlowDownAnim", "mbV_b_dmg"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearSlowDownAnim", "mbV_pose"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearLookLeftAnim", "mbV_turn"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearWalkAnim", "mbV_walk"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearUngrabSpearAnim", "mbV_walk_start"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearUngrabSpearAnim", "mbV_run"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbSpearGrabSpearAnim", "mbV_walk_start"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubStrikeDownAnim", "mn_attack"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubLiftClubAnim", "mn_brandish"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubFallOnItsBackAnim", "mn_brandish"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbClubDamagedKneelAnim", "mbV_walk_end"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbClubDamagedKneelAnim", "mn_dmg"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubStandStillClubUpAnim", "mbV_s_wait"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubKneelingAnim", "mn_sit"),
-    SOH3D_ANIMMAP("objects/object_mb/gEnMbClubBeatenKneelingAnim", "mbV_b_dmg"),
+    SOH3D_ANIMMAP("objects/object_mb/gEnMbClubBeatenKneelingAnim", "mbV_pose"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubStandUpAnim", "mbV_s_wait"),
     SOH3D_ANIMMAP("objects/object_mb/gEnMbClubStandStillClubDownAnim", "mbV_s_wait"),
-    // ==== /actor/zelda_md.zar (object_md) ====
-    SOH3D_ANIMMAP("objects/object_md/gMidoHandsOnHipsIdleAnim", "md_matsu_kani"),
+    // ---- /actor/zelda_md.zar (object_md) ----
+    SOH3D_ANIMMAP("objects/object_md/gMidoHandsOnHipsIdleAnim", "mido_stop_wait"),
     SOH3D_ANIMMAP("objects/object_md/gMidoSlamAnim", "mido_are_to_okoru_a"),
     SOH3D_ANIMMAP("objects/object_md/gMidoAngryHeadTurnAnim", "mido_are_to_okoru_b"),
-    SOH3D_ANIMMAP("objects/object_md/gMidoAnnoyedPointedHeadIdle1Anim", "mido_are_wait"),
+    SOH3D_ANIMMAP("objects/object_md/gMidoAnnoyedPointedHeadIdle1Anim", "mido_stop_wait"),
     SOH3D_ANIMMAP("objects/object_md/gMidoHandsOnHipsTransitionAnim", "mido_kihon_to_okoru"),
     SOH3D_ANIMMAP("objects/object_md/gMidoRaiseHand1Anim", "mido_kihon_to_stop"),
     SOH3D_ANIMMAP("objects/object_md/gMidoAnim_92B0", "mido_kihon_to_okoru"),
     SOH3D_ANIMMAP("objects/object_md/gMidoRaiseHand2Anim", "mido_okoru_to_stop"),
-    SOH3D_ANIMMAP("objects/object_md/gMidoAnnoyedPointedHeadIdle2Anim", "md_matsu_kani"),
+    SOH3D_ANIMMAP("objects/object_md/gMidoAnnoyedPointedHeadIdle2Anim", "mido_stop_wait"),
     SOH3D_ANIMMAP("objects/object_md/gMidoPutHandDownAnim", "mido_stop_to_are"),
     SOH3D_ANIMMAP("objects/object_md/gMidoHaltAnim", "mido_stop_wait"),
     SOH3D_ANIMMAP("objects/object_md/gMidoWalkingAnim", "mido_walk_loop"),
-    // ==== /actor/zelda_mk.zar (object_mk) ====
+    // ---- /actor/zelda_mk.zar (object_mk) ----
     SOH3D_ANIMMAP("objects/object_mk/object_mk_Anim_000368", "h_odoroku"),
     SOH3D_ANIMMAP("objects/object_mk/object_mk_Anim_000724", "h_sagyou"),
     SOH3D_ANIMMAP("objects/object_mk/object_mk_Anim_000AC0", "h_yorokobu"),
-    SOH3D_ANIMMAP("objects/object_mk/object_mk_Anim_000D88", "mk_matsu"),
-    // ==== /actor/zelda_mm.zar (object_mm) ====
+    SOH3D_ANIMMAP("objects/object_mk/object_mk_Anim_000D88", "h_yorokobu"),
+    // ---- /actor/zelda_mm.zar (object_mm) ----
     SOH3D_ANIMMAP("objects/object_mm/gRunningManRunAnim", "mm_run01"),
     SOH3D_ANIMMAP("objects/object_mm/gRunningManSitStandAnim", "mm_tatsu"),
     SOH3D_ANIMMAP("objects/object_mm/gRunningManSitWaitAnim", "mm_yoru"),
     SOH3D_ANIMMAP("objects/object_mm/gRunningManSprintAnim", "hasiruu"),
     SOH3D_ANIMMAP("objects/object_mm/gRunningManExcitedAnim", "uttekure"),
     SOH3D_ANIMMAP("objects/object_mm/gRunningManHappyAnim", "yorokobi_long"),
-    // ==== /actor/zelda_ms.zar (object_ms) ====
+    // ---- /actor/zelda_ms.zar (object_ms) ----
     SOH3D_ANIMMAP("objects/object_ms/gBeanSalesmanEatingAnim", "ms_matsu"),
-    // ==== /actor/zelda_mu.zar (object_mu) ====
+    // ---- /actor/zelda_mu.zar (object_mu) ----
     SOH3D_ANIMMAP("objects/object_mu/object_mu_Anim_0003F4", "mu_matsu"),
     SOH3D_ANIMMAP("objects/object_mu/gDancingCoupleAnim", "mu_matsu"),
-    // ==== /actor/zelda_nb.zar (object_nb) ====
+    // ---- /actor/zelda_nb.zar (object_nb) ----
     SOH3D_ANIMMAP("objects/object_nb/gNabooruPuttingHandsTogetherCastingMagicAnim", "km_nabo"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruSittingCrossLeggedAnim", "nabor_furimuki_l_wait"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruSittingCrossLeggedAnim", "nabor_agura_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruTrappedInVortexRaisingArmAnim", "nabor_miageru"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruSuckedByVortexAnim", "nabor_furimuki_r"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruTrappedInVortexPushingGroundAnim", "nabor_suna_wait"),
@@ -532,40 +548,79 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_nb/gNabooruOnOneKneeLookingLeftAnim", "nabor_furimuki_l_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruOnAllFoursToOnOneKneeLookingRightTransitionAnim", "nabor_furimuki_r"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruOnOneKneeLookingRightAnim", "nabor_furimuki_l_wait"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruOnAllFoursAnim", "nabor_furimuki_l_wait"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruOnAllFoursAnim", "nabor_agura_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruStandingHandsOnHipsAnim", "nabor_kihon_talk_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruStandingToWalkingTransitionAnim", "nabor_kihon_to_walk"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruSittingCrossLeggedLookingUpRightAnim", "nabor_furimuki_l_wait"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruSittingCrossLeggedTurningToLookUpRightTransitionAnim", "nabor_miageru"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruSittingCrossLeggedTurningToLookUpRightTransitionAnim", "nabor_furimuki_l_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruKneeingToRunningToHitAnim", "nabor_run_to_hit"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruUnusedKneelingAtCrawlspaceToStandingTransitionAnim", "nabor_shagami_to_kihon"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruKneeingAtCrawlspaceAnim", "nabor_furimuki_l_wait"),
-    SOH3D_ANIMMAP("objects/object_nb/gNabooruCollapseFromStandingToKneelingTransitionAnim", "nabor_suna_wait"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruUnusedKneelingAtCrawlspaceToStandingTransitionAnim", "nabor_kihon_talk_wait"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruKneeingAtCrawlspaceAnim", "nabor_agura_wait"),
+    SOH3D_ANIMMAP("objects/object_nb/gNabooruCollapseFromStandingToKneelingTransitionAnim", "nabor_kihon_talk_wait"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruWalkingAnim", "nabor_walk_loop"),
     SOH3D_ANIMMAP("objects/object_nb/gNabooruStandingHandsOnHipsChamberOfSagesAnim", "nabor_kihon_talk_wait"),
-    // ==== /actor/zelda_os.zar (object_os) ====
+    // ---- /actor/zelda_nw.zar (object_niw) ----
+    SOH3D_ANIMMAP("objects/object_niw/gCuccoAnim", "nw_wait"),
+    // ---- /actor/zelda_oF1d.zar (object_oF1d_map) ----
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_000750", "Goro_een"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_000D5C", "Goro_een"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_00161C", "Goron_mukuri"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_001A00", "oF1d_omise"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0021D0", "Goron_mukuri"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0029A8", "goron_demo_walk"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_002D80", "oF1d_dai_goron_ii"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_003768", "oF1d_dai_goron_kaii"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0038E4", "oF1d_dai_goron_megusuri"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_004930", "oF1d_dai_goron_kaii"),
+    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_010590", "oF1d_yokoaruki"),
+    // ---- /actor/zelda_oc2.zar (object_okuta) ----
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokShootAnim", "oc_atack"),
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokDieAnim", "oc_dead"),
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokHideAnim", "oc_down"),
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokFloatAnim", "oc_float"),
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokHitAnim", "oc_predead"),
+    SOH3D_ANIMMAP("objects/object_okuta/gOctorokAppearAnim", "oc_up"),
+    // ---- /actor/zelda_ocd.zar (object_bigokuta) ----
+    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000444", "ocd_damagejump"),
+    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000A74", "ocd_damagejump"),
+    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000D1C", "ocd_stop"),
+    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_0014B8", "ocd_dead"),
+    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_001CA4", "ocd_walk"),
+    // ---- /actor/zelda_os.zar (object_os) ----
     SOH3D_ANIMMAP("objects/object_os/gHappyMaskSalesmanIdleAnim", "os_matsu"),
-    // ==== /actor/zelda_owl.zar (object_owl) ====
+    // ---- /actor/zelda_owl.zar (object_owl) ----
     SOH3D_ANIMMAP("objects/object_owl/gOwlTakeoffAnim", "hovering"),
-    SOH3D_ANIMMAP("objects/object_owl/gOwlFlyAnim", "owl_openwing"),
+    SOH3D_ANIMMAP("objects/object_owl/gOwlFlyAnim", "owl_fly"),
     SOH3D_ANIMMAP("objects/object_owl/gOwlGlideAnim", "owl_kakku"),
     SOH3D_ANIMMAP("objects/object_owl/gOwlUnfoldWingsAnim", "owl_openwing"),
     SOH3D_ANIMMAP("objects/object_owl/gOwlPerchAnim", "owl_openwing"),
-    // ==== /actor/zelda_po_composer.zar (object_po_composer) ====
-    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerAttackAnim", "pom_escape"),
+    // ---- /actor/zelda_ph.zar (object_peehat) ----
+    SOH3D_ANIMMAP("objects/object_peehat/gPeehatLandingAnim", "ph_end"),
+    SOH3D_ANIMMAP("objects/object_peehat/gPeehatFlyingAnim", "ph_fly"),
+    SOH3D_ANIMMAP("objects/object_peehat/gPeehatRecoilAnim", "ph_fly"),
+    SOH3D_ANIMMAP("objects/object_peehat/gPeehatRisingAnim", "ph_start"),
+    // ---- /actor/zelda_po.zar (object_poh) ----
+    SOH3D_ANIMMAP("objects/object_poh/gPoeAttackAnim", "po_atack"),
+    SOH3D_ANIMMAP("objects/object_poh/gPoeDamagedAnim", "po_damage"),
+    SOH3D_ANIMMAP("objects/object_poh/gPoeFleeAnim", "po_escape"),
+    SOH3D_ANIMMAP("objects/object_poh/gPoeFloatAnim", "po_fly"),
+    SOH3D_ANIMMAP("objects/object_poh/gPoeAppearAnim", "po_start"),
+    SOH3D_ANIMMAP("objects/object_poh/gPoeDisappearAnim", "po_start"),
+    // ---- /actor/zelda_po_composer.zar (object_po_composer) ----
+    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerAttackAnim", "pom_atack"),
     SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerDamagedAnim", "pom_damage"),
     SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerFleeAnim", "pom_escape"),
-    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerFloatAnim", "pom_damage"),
+    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerFloatAnim", "pom_fly"),
     SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerAppearAnim", "pom_start"),
-    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerDisappearAnim", "pom_wait"),
-    // ==== /actor/zelda_po_field.zar (object_po_field) ====
-    SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldAttackAnim", "pog_escape"),
+    SOH3D_ANIMMAP("objects/object_po_composer/gPoeComposerDisappearAnim", "pom_start"),
+    // ---- /actor/zelda_po_field.zar (object_po_field) ----
+    SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldAttackAnim", "pog_atack"),
     SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldDamagedAnim", "pog_damage"),
     SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldFleeAnim", "pog_escape"),
     SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldFloatAnim", "pog_fly"),
     SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldAppearAnim", "pog_start"),
-    SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldDisappearAnim", "pog_wait"),
-    // ==== /actor/zelda_po_sisters.zar (object_po_sisters) ====
+    SOH3D_ANIMMAP("objects/object_po_field/gPoeFieldDisappearAnim", "pog_start"),
+    // ---- /actor/zelda_po_sisters.zar (object_po_sisters) ----
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersAttackAnim", "pob_atack"),
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersMegCryAnim", "pob_start"),
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersDamagedAnim", "pob_damage"),
@@ -573,12 +628,14 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersFloatAnim", "pob_fly"),
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersAppearDisappearAnim", "pob_start"),
     SOH3D_ANIMMAP("objects/object_po_sisters/gPoeSistersSwayAnim", "pob_wait"),
-    // ==== /actor/zelda_ps.zar (object_ps) ====
+    // ---- /actor/zelda_ps.zar (object_ps) ----
     SOH3D_ANIMMAP("objects/object_ps/gPoeSellerIdleAnim", "ps_matsu"),
     SOH3D_ANIMMAP("objects/object_ps/gPoeSellerSwingStickAnim", "ps_tataku"),
-    // ==== /actor/zelda_rd.zar (object_rd) ====
+    // ---- /actor/zelda_rb.zar (object_reeba) ----
+    SOH3D_ANIMMAP("objects/object_reeba/object_reeba_Anim_0001E4", "reeba_rb_move"),
+    // ---- /actor/zelda_rd.zar (object_rd) ----
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadGrabAttackAnim", "re_dead_attack_20f"),
-    SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadGrabEndAnim", "re_dead_attack_20f"),
+    SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadGrabEndAnim", "re_dead_attack_end_20f"),
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadGrabStartAnim", "re_dead_attack_start_20f"),
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadLookBackAnim", "re_dead_back_turn_20f"),
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadWipingTearsAnim", "re_dead_cryB_20f"),
@@ -588,17 +645,17 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadStandUpAnim", "re_dead_wait_20f"),
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadIdleAnim", "re_dead_wait_20f"),
     SOH3D_ANIMMAP("objects/object_rd/gGibdoRedeadWalkAnim", "re_dead_walk_20f"),
-    // ==== /actor/zelda_rl.zar (object_rl) ====
+    // ---- /actor/zelda_rl.zar (object_rl) ----
     SOH3D_ANIMMAP("objects/object_rl/object_rl_Anim_00040C", "raul_banzai"),
     SOH3D_ANIMMAP("objects/object_rl/object_rl_Anim_000830", "raul_banzai"),
     SOH3D_ANIMMAP("objects/object_rl/object_rl_Anim_000A3C", "rl_matsu"),
-    // ==== /actor/zelda_rs.zar (object_rs) ====
+    // ---- /actor/zelda_rs.zar (object_rs) ----
     SOH3D_ANIMMAP("objects/object_rs/gBombchuShopkeeperIdleAnim", "rs_matsu"),
-    // ==== /actor/zelda_ru1.zar (object_ru1) ====
+    // ---- /actor/zelda_ru1.zar (object_ru1) ----
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWaitHandsBehindBackAnim", "cyu_matsu"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWaitHandsOnHipsAnim", "demo_okori_wait"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionHandsOnHipToCrossArmsAndLegsAnim", "puhaaruto"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWaitSittingAnim", "demo_okori_wait"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionHandsOnHipToCrossArmsAndLegsAnim", "demo_suwari"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWaitSittingAnim", "demo_suwari_wait"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWaitInBlueWarpAnim", "koruto_shagami_wait"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildBringHandsDownAnim", "koruto_banzai_modoru"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildHoldArmsUpAnim", "koruto_banzai_wait"),
@@ -607,36 +664,36 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSquirmAnim", "koruto_jitabata"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSeesSapphireAnim", "koruto_jitabata"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildShutterAnim", "koruto_banzai_modoru"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWalkToAndHoldUpSapphireAnim", "koruto_run_banzai"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSittingAnim", "koruto_shagami_wait"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSitAnim", "koruto_shagamu"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWalkToAndHoldUpSapphireAnim", "koruto_walk_2"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSittingAnim", "demo_suwari"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSitAnim", "demo_suwari"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWalkAnim", "koruto_walk_2"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionFromSwimOnBackAnim", "koruto_shagami_wait"),
-    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionToSwimOnBackAnim", "koruto_shagami_wait"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionFromSwimOnBackAnim", "demo_suwari"),
+    SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTransitionToSwimOnBackAnim", "demo_suwari"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildAnim_009060", "puhaaruto"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildWait2Anim", "ru1_matsu"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildSwimOnBackAnim", "seoyogi"),
     SOH3D_ANIMMAP("objects/object_ru1/gRutoChildTreadWaterAnim", "tatioyogu"),
-    // ==== /actor/zelda_ru2.zar (object_ru2) ====
+    // ---- /actor/zelda_ru2.zar (object_ru2) ----
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoCrossingArmsAnim", "km_luto"),
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoIdleAnim", "ru2_matsu"),
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoRaisingArmsUpAnim", "ruto_banzai"),
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoHeadTurnDownLeftAnim", "ruto_end_furimuki"),
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoIdleHandsOnHipsAnim", "ruto_end_wait"),
-    SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoLookingDownLeftAnim", "ruto_end_wait"),
+    SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoLookingDownLeftAnim", "ruto_furimuki_wait"),
     SOH3D_ANIMMAP("objects/object_ru2/gAdultRutoSwimmingUpAnim", "ruto_end_furimuki"),
-    // ==== /actor/zelda_sa.zar (object_sa) ====
+    // ---- /actor/zelda_sa.zar (object_sa) ----
     SOH3D_ANIMMAP("objects/object_sa/gSariaSealGanonAnim", "km_saria"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaOcarinaToMouthAnim", "sa_okarina"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaWaitArmsToSideAnim", "saria_matteru_wait"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaPlayingOcarinaAnim", "saria_furikaeru"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaStopPlayingOcarinaAnim", "sa_okarina"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaLinkLearnedSariasSongAnim", "sa_hanasi_modoru"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaReturnToOcarinaAnim", "saria_banzai"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaPlayingOcarinaAnim", "sa_umai_okarina"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaStopPlayingOcarinaAnim", "sa_okarina_hanasi_wait"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaLinkLearnedSariasSongAnim", "sa_okarina"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaReturnToOcarinaAnim", "sa_okarina_hanasi_wait"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaGiveForestMedallionAnim", "saria_banzai"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaGiveForestMedallionStandAnim", "saria_odoroki_to_kihon"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaLookUpArmExtendedAnim", "saria_kihon_to_okoru"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaRunAnim", "saria_demo_aogimi"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaGiveForestMedallionStandAnim", "saria_matteru_wait"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaLookUpArmExtendedAnim", "saria_end_miorosi"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaRunAnim", "saria_demo_run"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaWaveAnim", "saria_banzai_wait"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaSitting1Anim", "saria_ok_ageru"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaSitting2Anim", "saria_end_modoru"),
@@ -649,26 +706,26 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_sa/gSariaHandsBehindBackWaitAnim", "saria_matteru_wait"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaTransitionHandsSideToChestToSideAnim", "saria_odoroki_to_kihon"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaRightArmExtendedWaitAnim", "saria_matteru_wait"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaGiveLinkOcarinaAnim", "saria_ok_ageru"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaHoldOutOcarinaAnim", "saria_demo_yahho"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaHoldOcarinaAnim", "saria_demo_yahho"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaGiveLinkOcarinaAnim", "saria_banzai_wait"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaHoldOutOcarinaAnim", "sa_okarina_hanasi_wait"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaHoldOcarinaAnim", "sa_okarina_hanasi_wait"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaStandHandsOnHipsAnim", "saria_matteru_wait"),
-    SOH3D_ANIMMAP("objects/object_sa/gSariaExtendRightArmAnim", "saria_tomodachi"),
+    SOH3D_ANIMMAP("objects/object_sa/gSariaExtendRightArmAnim", "saria_end_miorosi"),
     SOH3D_ANIMMAP("objects/object_sa/gSariaHandsOnFaceAnim", "saria_uresi"),
-    // ==== /actor/zelda_sb.zar (object_sb) ====
+    // ---- /actor/zelda_sb.zar (object_sb) ----
     SOH3D_ANIMMAP("objects/object_sb/object_sb_Anim_00004C", "sb_close"),
     SOH3D_ANIMMAP("objects/object_sb/object_sb_Anim_0000B4", "sb_open"),
     SOH3D_ANIMMAP("objects/object_sb/object_sb_Anim_000124", "sb_open"),
     SOH3D_ANIMMAP("objects/object_sb/object_sb_Anim_000194", "sb_open"),
     SOH3D_ANIMMAP("objects/object_sb/object_sb_Anim_002C8C", "sb_wait"),
-    // ==== /actor/zelda_sd.zar (object_sd) ====
+    // ---- /actor/zelda_sd.zar (object_sd) ----
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiSlamSpearAnim", "sd_akeru"),
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiWalkAnim", "sd_aruku"),
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiIdleAnim", "sd_matsu"),
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiDyingGuardTalkAnim", "sd_suwari_hanasi"),
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiDyingGuardDieAnim", "sd_shini"),
     SOH3D_ANIMMAP("objects/object_sd/gEnHeishiDyingGuardAnim_00C444", "sd_suwari_hanasi"),
-    // ==== /actor/zelda_shopnuts.zar (object_shopnuts) ====
+    // ---- /actor/zelda_shopnuts.zar (object_shopnuts) ----
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubAnim_1EC", "dnu_atack"),
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubAnim_39C", "dnu_dig"),
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubRotateAnim", "dnu_shop"),
@@ -676,17 +733,39 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubLookAroundAnim", "dnu_lookaround"),
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubNervousIdleAnim", "dnu_wait"),
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubAnim_139C", "dnu_start"),
-    SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubLeaveBurrowAnim", "dnu_jump_to_shop"),
+    SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubLeaveBurrowAnim", "dnu_to_end"),
     SOH3D_ANIMMAP("objects/object_shopnuts/gBusinessScrubAnim_4574", "dnu_wait"),
-    // ==== /actor/zelda_skb.zar (object_skb) ====
+    // ---- /actor/zelda_skb.zar (object_skb) ----
     SOH3D_ANIMMAP("objects/object_skb/gStalchildUncurlingAnim", "stal_baby_start"),
     SOH3D_ANIMMAP("objects/object_skb/gStalchildDyingAnim", "stal_baby_down"),
     SOH3D_ANIMMAP("objects/object_skb/gStalchildDamagedAnim", "stal_baby_hit"),
-    SOH3D_ANIMMAP("objects/object_skb/gStalchildWalkingAnim", "stal_baby_down"),
+    SOH3D_ANIMMAP("objects/object_skb/gStalchildWalkingAnim", "stal_baby_walk"),
     SOH3D_ANIMMAP("objects/object_skb/gStalchildAttackingAnim", "stal_baby_attack"),
-    // ==== /actor/zelda_skj.zar (object_skj) ====
+    // ---- /actor/zelda_skelton.zar (object_sk2) ----
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFlinchFromHitBehindAnim", "skelton_back_damage"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFallOverBackwardsAnim", "skelton_back_down"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpBackwardsAnim", "skelton_back_jump"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosBlockWithShieldAnim", "skelton_defend"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosStandAttentionAnim", "skelton_fighting_wait"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFastAdvanceAnim", "skelton_fighting_run"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosMiddleGuardAnim", "skelton_defend"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosSlowAdvanceAnim", "skelton_fighting_walk"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFlinchFromHitFrontAnim", "skelton_front_damage"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFallOverForwardsAnim", "skelton_front_down"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLeapAnim", "skelton_jump"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpAnim", "skelton_jump_kiru"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpslashAnim", "skelton_jump_kiru_end"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosDownSlashAnim", "skelton_jump_kiru_end"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosRecoverFromDownSlashAnim", "skelton_jump_kiru"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosUpSlashAnim", "skelton_kiru_finsh"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLandFromLeapAnim", "skelton_jump_kiru_end"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLaughAnim", "skelton_laugh"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLookAroundAnim", "skelton_front_down"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosSidestepAnim", "skelton_side_walk"),
+    SOH3D_ANIMMAP("objects/object_sk2/gStalfosReleaseAttentionAnim", "skelton_fighting_run"),
+    // ---- /actor/zelda_skj.zar (object_skj) ----
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidBackflipAnim", "skeltonJR_back_jump"),
-    SOH3D_ANIMMAP("objects/object_skj/gSkullKidShootNeedleAnim", "skeltonJR_walk"),
+    SOH3D_ANIMMAP("objects/object_skj/gSkullKidShootNeedleAnim", "skeltonJR_blowgun_attack"),
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidPlayFluteAnim", "skeltonJR_dance_walk"),
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidDieAnim", "skeltonJR_down"),
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidHitAnim", "skeltonJR_hit"),
@@ -695,43 +774,43 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidFightingStanceAnim", "skeltonJR_walk"),
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidWaitAnim", "skeltonJR_wait"),
     SOH3D_ANIMMAP("objects/object_skj/gSkullKidWalkToPlayerAnim", "skeltonJR_walk"),
-    // ==== /actor/zelda_ssh.zar (object_ssh) ====
+    // ---- /actor/zelda_ssh.zar (object_ssh) ----
     SOH3D_ANIMMAP("objects/object_ssh/object_ssh_Anim_000304", "st_matsu"),
     SOH3D_ANIMMAP("objects/object_ssh/object_ssh_Anim_0055F8", "st_otchiru"),
     SOH3D_ANIMMAP("objects/object_ssh/object_ssh_Anim_005BE8", "st_yarare"),
-    // ==== /actor/zelda_sst.zar (object_sst) ====
-    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandIdleAnim", "ss_towait"),
+    // ---- /actor/zelda_sst.zar (object_sst) ----
+    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandIdleAnim", "ss_wait_close"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandFlatPoseAnim", "slh_pose_b"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandOpenPoseAnim", "slh_pose_b"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandOpenPoseAnim", "ss_dmg_open"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandFistPoseAnim", "slh_pose_b"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandClenchAnim", "slh_pose_a"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandDamagePoseAnim", "slh_pose_b"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandDamagePoseAnim", "ss_dmg"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandPushoffPoseAnim", "slh_pose_b"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoLeftHandHangPoseAnim", "slh_pose_b"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandIdleAnim", "ss_towait"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandIdleAnim", "ss_wait_close"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandFlatPoseAnim", "slh_pose_b"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandOpenPoseAnim", "slh_pose_b"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandOpenPoseAnim", "ss_dmg_open"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandFistPoseAnim", "slh_pose_b"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandClenchAnim", "slh_pose_a"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandDamagePoseAnim", "slh_pose_b"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandDamagePoseAnim", "ss_dmg"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandPushoffPoseAnim", "slh_pose_b"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoRightHandHangPoseAnim", "slh_pose_b"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadStunnedAnim", "ss_after"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadChargeAnim", "ss_attack"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadKnockoutAnim", "ss_bowhit"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeCloseAnim", "ss_close"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadDamagedHandAnim", "slh_pose_a"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeOpenAnim", "slh_pose_a"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadDamageAnim", "ss_after"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadDamagedHandAnim", "ss_dmg"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeOpenAnim", "ss_dmg_open"),
+    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadDamageAnim", "ss_dmg"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadRecoverAnim", "ss_towait"),
     SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeCloseIdleAnim", "ss_wait_close"),
-    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeOpenIdleAnim", "ss_wait_close"),
-    // ==== /actor/zelda_st.zar (object_st) ====
+    SOH3D_ANIMMAP("objects/object_sst/gBongoHeadEyeOpenIdleAnim", "ss_wait_open"),
+    // ---- /actor/zelda_st.zar (object_st) ----
     SOH3D_ANIMMAP("objects/object_st/object_st_Anim_000304", "st_matsu"),
     SOH3D_ANIMMAP("objects/object_st/object_st_Anim_0055A8", "st_yarare"),
     SOH3D_ANIMMAP("objects/object_st/object_st_Anim_005B98", "st_matsu"),
-    // ==== /actor/zelda_ta.zar (object_ta) ====
-    SOH3D_ANIMMAP("objects/object_ta/gTalonSitSleepingAnim", "ta_inemuri"),
+    // ---- /actor/zelda_ta.zar (object_ta) ----
+    SOH3D_ANIMMAP("objects/object_ta/gTalonSitSleepingAnim", "taron_sleep_wait"),
     SOH3D_ANIMMAP("objects/object_ta/gTalonStandAnim", "ta_matsu"),
     SOH3D_ANIMMAP("objects/object_ta/gTalonSitHandsUpAnim", "ta_nageru"),
     SOH3D_ANIMMAP("objects/object_ta/gTalonSitWakeUpAnim", "ta_okiru"),
@@ -739,98 +818,94 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_ta/gTalonSleepAnim", "taron_sleep_wait"),
     SOH3D_ANIMMAP("objects/object_ta/gTalonRunTransitionAnim", "taron_wait_run"),
     SOH3D_ANIMMAP("objects/object_ta/gTalonWakeUpAnim", "taron_wakeup"),
-    // ==== /actor/zelda_tk.zar (object_tk) ====
+    // ---- /actor/zelda_tk.zar (object_tk) ----
     SOH3D_ANIMMAP("objects/object_tk/gDampeDigAnim", "tk_ana_hori"),
     SOH3D_ANIMMAP("objects/object_tk/gDampeWalkAnim", "tk_aruku"),
     SOH3D_ANIMMAP("objects/object_tk/gDampeRestAnim", "tk_aruku"),
     SOH3D_ANIMMAP("objects/object_tk/gDampeFloatAnim", "tk_yuurei"),
-    // ==== /actor/zelda_toryo.zar (object_toryo) ====
+    // ---- /actor/zelda_toryo.zar (object_toryo) ----
     SOH3D_ANIMMAP("objects/object_toryo/object_toryo_Anim_000E50", "dk1_matsu"),
-    // ==== /actor/zelda_tr.zar (object_tr) ====
+    // ---- /actor/zelda_tr.zar (object_tr) ----
     SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookOverRightShoulderAnim", "kotake_furimuki"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookingOverRightShoulderAnim", "kotake_wait"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverLeftShoulderAnim", "kotake_wait"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookingOverRightShoulderAnim", "kotake_furimuki_wait"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverLeftShoulderAnim", "kotake_furimuki_wait"),
     SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookOverLeftShoulderAnim", "koume_furimuki"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookingOverLeftShoulderAnim", "kotake_wait"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverRightShoulderAnim", "kotake_wait"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeFlyAnim", "kotake_wait"),
-    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverRightShoulderUnusedAnim", "kotake_wait"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeLookingOverLeftShoulderAnim", "kotake_furimuki_wait"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverRightShoulderAnim", "kotake_furimuki_wait"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeFlyAnim", "trT_fly"),
+    SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeStandingBroomOverRightShoulderUnusedAnim", "kotake_furimuki_wait"),
     SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeTPoseAnim", "kotake_wait"),
     SOH3D_ANIMMAP("objects/object_tr/gKotakeKoumeCastMagicAnim", "twin_shoot"),
-    // ==== /actor/zelda_ts.zar (object_ts) ====
+    // ---- /actor/zelda_ts.zar (object_ts) ----
     SOH3D_ANIMMAP("objects/object_ts/object_ts_Anim_000498", "ts_matsu"),
-    // ==== /actor/zelda_tw.zar (object_tw) ====
+    // ---- /actor/zelda_tt.zar (object_tite) ----
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0001D4", "tt_move"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0004F8", "tt_jump"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_00069C", "tt_jump_start"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_00083C", "tt_jump_start"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000A14", "tt_move"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000C70", "tt_smalljump"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000F50", "tt_jump"),
+    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0012E4", "tt_jump"),
+    // ---- /actor/zelda_tw.zar (object_tw) ----
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeIdleLoopAnim", "btT_DEMOwait"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeIdleEndAnim", "btT_DEMOwait_to_fly"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeBickerAnim", "btT_DEMOwait"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeFloatLookUpAnim", "btT_EDmiage"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeFloatLookForwardAnim", "btT_EDmiage"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeFloatLookUpAnim", "btW_mahi_to_fly"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeFloatLookForwardAnim", "btW_mahi_to_fly"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeShakeHandAnim", "btT_EDyaruki"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeAttackStartAnim", "btT_atack"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeAttackLoopAnim", "btT_EDmiage"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeAttackEndAnim", "btT_beeem_to_fly"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeDamageStartAnim", "btW_ufufu"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeDamageEndAnim", "btT_damage02"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeAttackLoopAnim", "btT_atack"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeAttackEndAnim", "btT_atack"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeDamageStartAnim", "btW_hit"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeDamageEndAnim", "btW_hit"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeFlyAnim", "btT_fly"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeChargeUpAttackStartAnim", "btT_beeem_to_fly"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeSpinAnim", "btT_beeem_to_fly"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeChargeUpAttackStartAnim", "btT_atack"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeSpinAnim", "btT_atack"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeLaughAnim", "btT_hihihi"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeChargeUpAttackLoopAnim", "btT_fly"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeChargeUpAttackLoopAnim", "btT_atack"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaKotakeKoumeTPoseAnim", "btW_default"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaDeathAnim", "btW_EDdamage"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaIceAttackAnim", "btT_fly"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaFireAttackAnim", "btT_fly"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaIceAttackAnim", "btT_atack"),
+    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaFireAttackAnim", "btT_atack"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaDamageAnim", "btW_damage"),
     SOH3D_ANIMMAP("objects/object_tw/gTwinrovaTPoseAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaHoverAnim", "btT_damage01"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaChargedAttackHitAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaStunStartAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaStunLoopAnim", "btT_damage01"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaStunEndAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaWindUpAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaIntroAnim", "btW_default"),
-    SOH3D_ANIMMAP("objects/object_tw/gTwinrovaLaughAnim", "btT_atack"),
-    // ==== /actor/zelda_vali.zar (object_vali) ====
+    // ---- /actor/zelda_vali.zar (object_vali) ----
     SOH3D_ANIMMAP("objects/object_vali/gBariWaitingAnim", "vl_attack"),
     SOH3D_ANIMMAP("objects/object_vali/gBariRetaliatingAnim", "vl_dmg"),
     SOH3D_ANIMMAP("objects/object_vali/gBariMovingArmsDownAnim", "vl_dmg_normal"),
     SOH3D_ANIMMAP("objects/object_vali/gBariUnusedAnim_000D9C", "vl_elec_a"),
     SOH3D_ANIMMAP("objects/object_vali/gBariLurkingAnim", "vl_normal"),
-    // ==== /actor/zelda_vm.zar (object_vm) ====
+    // ---- /actor/zelda_vm.zar (object_vm) ----
     SOH3D_ANIMMAP("objects/object_vm/gBeamosAnim", "vm_akesime"),
-    // ==== /actor/zelda_warp1.zar (object_warp1) ====
+    // ---- /actor/zelda_warp1.zar (object_warp1) ----
     SOH3D_ANIMMAP("objects/object_warp1/gWarpCrystalAnim", "warp_2_modelT_end"),
-    // ==== /actor/zelda_wf.zar (object_wf) ====
+    // ---- /actor/zelda_wf.zar (object_wf) ----
     SOH3D_ANIMMAP("objects/object_wf/gWolfosSlashingAnim", "wolfman_attack"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosBackflippingAnim", "wolfman_back_jump"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosBlockingAnim", "wolfman_defense"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosRearingUpFallingOverAnim", "wolfman_down"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosRunningAnim", "wolfman_run"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosSidesteppingAnim", "wolfman_side_walk"),
-    SOH3D_ANIMMAP("objects/object_wf/gWolfosDamagedAnim", "wolfman_side_walk"),
+    SOH3D_ANIMMAP("objects/object_wf/gWolfosDamagedAnim", "wolfman_tail_hit"),
     SOH3D_ANIMMAP("objects/object_wf/gWolfosWaitingAnim", "wolfman_wait"),
-    // ==== /actor/zelda_xc.zar (object_xc) ====
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPlayingHarpAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikShowingTriforceOnHandAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikShowingTriforceOnHandIdleAnim", "xechu_daiza_wait"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPlayingHarp2Anim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPlayingHarp3Anim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPlayingHarp4Anim", "mizunoserenaade"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikIdleAnim", "xechu_daiza_wait"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikWalkingAnim", "mizunoserenaade"),
+    // ---- /actor/zelda_wm2.zar (object_wallmaster) ----
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterDamageAnim", "wm_damage"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterRecoverFromDamageAnim", "wm_damage_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterJumpAnim", "wm_f_jump"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterWalkAnim", "wm_move"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterStopWalkAnim", "wm_move_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterHoverAnim", "wm_move_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterWaitAnim", "wm_damage_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterStandUpAnim", "wm_move_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterLungeAnim", "wm_link_hangup"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gFloormasterTurnAnim", "wm_l_turn"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gFloormasterTapFingerAnim", "wm_damage_wait"),
+    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterMissAnim", "wm_miss"),
+    // ---- /actor/zelda_xc.zar (object_xc) ----
     SOH3D_ANIMMAP("objects/object_xc/gSheikArmsCrossedIdleAnim", "xc_matsu"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikFallingFromContortionsAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikContortionsAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPlayingHarp5Anim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikInitialHarpAnim", "mizunoserenaade"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikDefenseStanceAnim", "mizunoserenaade"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikThrowingNutAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikKneelingAnim", "mizunoserenaade"),
     SOH3D_ANIMMAP("objects/object_xc/gSheikHittingGroundAnim", "mizunoserenaade"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikAnim_01A048", "mizunoserenaade"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikPullingOutHarpAnim", "xechu_tobikomi"),
-    SOH3D_ANIMMAP("objects/object_xc/gSheikFallingFromSkyAnim", "mizunoserenaade"),
-    // ==== /actor/zelda_zf.zar (object_zf) ====
+    // ---- /actor/zelda_zf.zar (object_zf) ----
     SOH3D_ANIMMAP("objects/object_zf/gZfWalkingAnim", "zf_aruku"),
     SOH3D_ANIMMAP("objects/object_zf/gZfLandingAnim", "zf_jump"),
     SOH3D_ANIMMAP("objects/object_zf/gZfJumpingAnim", "zf_jump"),
@@ -844,7 +919,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_zf/gZfDyingAnim", "zf_shini"),
     SOH3D_ANIMMAP("objects/object_zf/gZfKnockedBackAnim", "zf_jump"),
     SOH3D_ANIMMAP("objects/object_zf/gZfSidesteppingAnim", "zf_yokoaruki"),
-    // ==== /actor/zelda_zl1.zar (object_zl1) ====
+    // ---- /actor/zelda_zl1.zar (object_zl1) ----
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_00438", "demo_kasige_wait"),
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_10B38", "demo_furimuki"),
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_11348", "demo_furimuki_wait"),
@@ -857,7 +932,7 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_138E0", "demo_tetataki_1"),
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_13F10", "demo_tetataki_1"),
     SOH3D_ANIMMAP("objects/object_zl1/gChildZelda1Anim_143A8", "demo_kasige_wait"),
-    // ==== /actor/zelda_zl4.zar (object_zl4) ====
+    // ---- /actor/zelda_zl4.zar (object_zl4) ----
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_000654", "demo_aisatu_wait"),
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_00E5C8", "demo_aisatu"),
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_00EBC4", "demo_aisatu_wait"),
@@ -891,146 +966,10 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_01C7B0", "demo_aisatu"),
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_00F0A4", "demo_arigato"),
     SOH3D_ANIMMAP("objects/object_zl4/gChildZeldaAnim_00F894", "demo_arigato_wait"),
-    // ==== /actor/zelda_zo.zar (object_zo) ====
-    SOH3D_ANIMMAP("objects/object_zo/gZoraIdleAnim", "zo_riku_matsu"),
+    // ---- /actor/zelda_zo.zar (object_zo) ----
+    SOH3D_ANIMMAP("objects/object_zo/gZoraIdleAnim", "zo_mizu_matsu"),
     SOH3D_ANIMMAP("objects/object_zo/gZoraSurfaceAnim", "zo_mizu_talk"),
     SOH3D_ANIMMAP("objects/object_zo/gZoraThrowRupeesAnim", "Zola_maku"),
     SOH3D_ANIMMAP("objects/object_zo/gZoraHandsOnHipsTappingFootAnim", "zo_mizu_talk"),
     SOH3D_ANIMMAP("objects/object_zo/gZoraOpenArmsAnim", "zo_mizu_talk"),
-
-    // ===== session-23 creature aliases (cucco, octorok, stalfos, goron, ...): woven from
-    // tools/skeldata/animmap.json (frame+name seed), hand-reviewed; obvious semantic ties fixed.
-    // Skipped: object_fhg (bad frameCount reads), object_door_killer (no skel anims).
-    // ---- object_niw ----
-    SOH3D_ANIMMAP("objects/object_niw/gCuccoAnim", "nw_wait"),
-    // ---- object_okuta ----
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokShootAnim", "oc_atack"),
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokDieAnim", "oc_dead"),
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokHideAnim", "oc_down"),
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokFloatAnim", "oc_float"),
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokHitAnim", "oc_predead"),
-    SOH3D_ANIMMAP("objects/object_okuta/gOctorokAppearAnim", "oc_up"),
-    // ---- object_bigokuta ----
-    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000444", "ocd_damagejump"),
-    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000A74", "ocd_damagejump"),
-    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_000D1C", "ocd_stop"),
-    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_0014B8", "ocd_dead"),
-    SOH3D_ANIMMAP("objects/object_bigokuta/object_bigokuta_Anim_001CA4", "ocd_walk"),
-    // ---- object_peehat ----
-    SOH3D_ANIMMAP("objects/object_peehat/gPeehatLandingAnim", "ph_end"),
-    SOH3D_ANIMMAP("objects/object_peehat/gPeehatFlyingAnim", "ph_fly"),
-    SOH3D_ANIMMAP("objects/object_peehat/gPeehatRecoilAnim", "ph_fly"),
-    SOH3D_ANIMMAP("objects/object_peehat/gPeehatRisingAnim", "ph_start"),
-    // ---- object_poh ----
-    SOH3D_ANIMMAP("objects/object_poh/gPoeAttackAnim", "po_atack"),
-    SOH3D_ANIMMAP("objects/object_poh/gPoeDamagedAnim", "po_damage"),
-    SOH3D_ANIMMAP("objects/object_poh/gPoeFleeAnim", "po_escape"),
-    SOH3D_ANIMMAP("objects/object_poh/gPoeFloatAnim", "po_fly"),
-    SOH3D_ANIMMAP("objects/object_poh/gPoeAppearAnim", "po_start"),
-    SOH3D_ANIMMAP("objects/object_poh/gPoeDisappearAnim", "po_wait"),
-    // ---- object_reeba ----
-    SOH3D_ANIMMAP("objects/object_reeba/object_reeba_Anim_0001E4", "reeba_rb_move"),
-    // ---- object_tite ----
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0001D4", "tt_move"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0004F8", "tt_jump"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_00069C", "tt_jump_start"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_00083C", "tt_jump_start"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000A14", "tt_move"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000C70", "tt_smalljump"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_000F50", "tt_jump"),
-    SOH3D_ANIMMAP("objects/object_tite/object_tite_Anim_0012E4", "tt_jump"),
-    // ---- object_wallmaster ----
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterDamageAnim", "wm_damage"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterRecoverFromDamageAnim", "wm_damage_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterJumpAnim", "wm_f_jump"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterWalkAnim", "wm_move"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterStopWalkAnim", "wm_move_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterHoverAnim", "wm_move_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterWaitAnim", "wm_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterStandUpAnim", "wm_move_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterLungeAnim", "wm_link_hangup"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gFloormasterTurnAnim", "wm_l_turn"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gFloormasterTapFingerAnim", "wm_wait"),
-    SOH3D_ANIMMAP("objects/object_wallmaster/gWallmasterMissAnim", "wm_miss"),
-    // ---- object_kingdodongo ----
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_000690", "kd_die_b"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_001074", "kd_damage"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_002D0C", "kd_die_a"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_003CF8", "kd_die_b"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_0042A8", "kd_down"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_004E0C", "kd_explode"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_0061D4", "kd_fire"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_006924", "kd_down"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_008EEC", "kd_fire_standby"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_009D10", "kd_getup"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00AA9C", "kd_bombwait"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00DF38", "kd_rolling"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00E848", "kd_die_b"),
-    SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_00F0D8", "kd_down"),
-    // ---- object_firefly ----
-    SOH3D_ANIMMAP("objects/object_firefly/gKeeseFlyAnim", "firefly_foot_fly"),
-    // ---- object_anubice ----
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceFallDownAnim", "av_dmg"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAttackingAnim", "av_fire"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceIdleAnim", "av_wait"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceLaughingAnim", "av_jump"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceStandUpAnim", "av_getup"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAnim_000A48", "av_jump"),
-    SOH3D_ANIMMAP("objects/object_anubice/gAnubiceAnim_000BAC", "av_getup"),
-    // ---- object_geldb ----
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedJumpAnim", "geldB_start"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedNeutralAnim", "geldB_wait"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSidestepAnim", "geldB_side_walk"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedFlipAnim", "geldB_back_ten"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedWalkAnim", "geldB_run"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSlashAnim", "geldB_attackA"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedSpinAttackAnim", "geldB_attackB"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedDamageAnim", "geldB_hit"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedDefeatAnim", "geldB_down"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedBlockAnim", "geldB_defense"),
-    SOH3D_ANIMMAP("objects/object_geldb/gGerudoRedStandAnim", "geldB_wait"),
-    // ---- object_sk2 ----
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFlinchFromHitBehindAnim", "skelton_back_damage"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFallOverBackwardsAnim", "skelton_back_down"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpBackwardsAnim", "skelton_back_jump"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosBlockWithShieldAnim", "skelton_defend"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosStandAttentionAnim", "skelton_fight_wait2wait"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFastAdvanceAnim", "skelton_fighting_run"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosMiddleGuardAnim", "skelton_back_down"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosSlowAdvanceAnim", "skelton_fighting_walk"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFlinchFromHitFrontAnim", "skelton_front_damage"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosFallOverForwardsAnim", "skelton_front_down"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLeapAnim", "skelton_jump"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpAnim", "skelton_jump_kiru"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosJumpslashAnim", "skelton_jump_kiru_end"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosDownSlashAnim", "skelton_landing"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosRecoverFromDownSlashAnim", "skelton_back_damage"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosUpSlashAnim", "skelton_kiru_finsh"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLandFromLeapAnim", "skelton_landing"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLaughAnim", "skelton_fighting_walk"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosLookAroundAnim", "skelton_front_down"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosSidestepAnim", "skelton_side_walk"),
-    SOH3D_ANIMMAP("objects/object_sk2/gStalfosReleaseAttentionAnim", "skelton_fighting_run"),
-    // ---- object_oF1d_map ----
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_000750", "Goro_een"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_000D5C", "Goro_een"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_00161C", "Goron_mukuri"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_001A00", "oF1d_omise"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0021D0", "Goron_mukuri"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0029A8", "goron_demo_walk"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_002D80", "oF1d_dai_goron_ii"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_003768", "oF1d_dai_goron_kaii"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_0038E4", "oF1d_dai_goron_megusuri"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_004930", "oF1d_dai_goron_kaii"),
-    SOH3D_ANIMMAP("objects/object_oF1d_map/gGoronAnim_010590", "oF1d_yokoaruki"),
-    // ---- object_Bb ----
-    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_000184", "bb_fly"),
-    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_0002AC", "bb_damage"),
-    SOH3D_ANIMMAP("objects/object_Bb/object_Bb_Anim_000444", "bb_fly"),
-    // ---- object_horse_link_child ----
-    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaIdleAnim", "hlc_anim_wait"),
-    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaWhinnyAnim", "hlc_anim_wait02"),
-    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaWalkingAnim", "hlc_anim_walk"),
-    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaTrottingAnim", "hlc_anim_slowrun"),
-    SOH3D_ANIMMAP("objects/object_horse_link_child/gChildEponaGallopingAnim", "hlc_anim_fastrun"),
 };

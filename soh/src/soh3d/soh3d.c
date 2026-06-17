@@ -58,6 +58,7 @@ static struct {
 // (runtime-loaded 3DS asset, our own GL shader) instead of the legacy N64 dlist.
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_GL_FrameBegin(void); // drop any SoH3D draws left unrendered from a prior frame
+void SoH3D_GL_SetLightDir(const float dirWorld[3]); // scene sun dir (world space) for the form term
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 // Retarget a live N64 SkelAnime pose onto the OoT3D skeleton (GPU skinning). jointRots =
 // &jointTable[1] (per-limb binang Vec3s; root translation jointTable[0] is skipped),
@@ -1096,10 +1097,45 @@ static void SoH3D_DrawRoomGL(PlayState* play, int modelId) {
 // (libultraship SoH3D_GL_RenderPass) — so OoT3D content composites after Fast3D's opaque 3D and
 // before the 2D/UI pass, and our GL state never leaks into Fast3D's. Called from Play_Draw right
 // after the actor draw-all (func_800315AC).
+// Feed the GL form-light its world-space key direction from the scene's live (time-of-day
+// interpolated) directional light. lightSettings.light1Dir is the F3DEX "direction TO the light"
+// (OoT copies it straight into dirLight1.params.dir), which is exactly the L the half-Lambert
+// term wants. NO view transform is needed: OoT folds the camera into the PROJECTION matrix
+// (z_view.c loads viewing with G_MTX_PROJECTION), so the GL shader's normal is in WORLD space —
+// same frame as light1Dir. Degenerate (near-zero) dirs are skipped so the previous value holds.
+// REPL `lightdir`: when set, hold a fixed world-space light dir instead of the scene's, so the
+// plumbing can be exercised / a direction A/B'd live. Also remembers the last live dir for `state`.
+int gSoH3dLightDirOverride = 0;
+float gSoH3dLightDirLast[3] = { 0.40f, 0.55f, 0.73f };
+
+static void SoH3D_UpdateLight(PlayState* play) {
+    EnvLightSettings* ls = &play->envCtx.lightSettings;
+    float d[3];
+    float len;
+    if (gSoH3dLightDirOverride) {
+        return; // held by REPL `lightdir x y z`
+    }
+    d[0] = (float)ls->light1Dir[0];
+    d[1] = (float)ls->light1Dir[1];
+    d[2] = (float)ls->light1Dir[2];
+    len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len < 1.0f) {
+        return; // no usable directional light this frame; keep the last/default dir
+    }
+    d[0] /= len;
+    d[1] /= len;
+    d[2] /= len;
+    gSoH3dLightDirLast[0] = d[0];
+    gSoH3dLightDirLast[1] = d[1];
+    gSoH3dLightDirLast[2] = d[2];
+    SoH3D_GL_SetLightDir(d);
+}
+
 void SoH3D_EmitRenderPass(PlayState* play) {
     if (!SoH3D_Enabled()) {
         return;
     }
+    SoH3D_UpdateLight(play);
     OPEN_DISPS(play->state.gfxCtx);
     gSPSoH3DRenderPass(POLY_OPA_DISP++);
     CLOSE_DISPS(play->state.gfxCtx);
@@ -1585,6 +1621,26 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dLightEnable = (int)f1;
         SoH3D_ReplReply(outPath, "light=%d (1=half-Lambert form on characters/props, 0=flat tint)",
                         gSoH3dLightEnable);
+    } else if (strcmp(cmd, "lightdir") == 0) {
+        // `lightdir x y z` overrides the world-space form-light dir (held until `lightdir auto`);
+        // `lightdir auto` returns to the scene's live light1Dir; `lightdir` alone prints the dir.
+        float v[3];
+        char sub[32];
+        if (sscanf(line, "%*s %f %f %f", &v[0], &v[1], &v[2]) == 3) {
+            float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (len < 1e-4f) len = 1.0f;
+            v[0] /= len; v[1] /= len; v[2] /= len;
+            gSoH3dLightDirOverride = 1;
+            gSoH3dLightDirLast[0] = v[0]; gSoH3dLightDirLast[1] = v[1]; gSoH3dLightDirLast[2] = v[2];
+            SoH3D_GL_SetLightDir(v);
+            SoH3D_ReplReply(outPath, "lightdir OVERRIDE=(%.3f,%.3f,%.3f)", v[0], v[1], v[2]);
+        } else if (sscanf(line, "%*s %31s", sub) == 1 && strcmp(sub, "auto") == 0) {
+            gSoH3dLightDirOverride = 0;
+            SoH3D_ReplReply(outPath, "lightdir AUTO (scene light1Dir)");
+        } else {
+            SoH3D_ReplReply(outPath, "lightdir=(%.3f,%.3f,%.3f) %s", gSoH3dLightDirLast[0], gSoH3dLightDirLast[1],
+                            gSoH3dLightDirLast[2], gSoH3dLightDirOverride ? "(override)" : "(auto/live light1Dir)");
+        }
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

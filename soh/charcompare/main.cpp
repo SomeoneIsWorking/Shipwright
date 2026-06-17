@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "cc_3ds.h"
+#include "cc_n64.h"
 
 namespace fs = std::filesystem;
 
@@ -115,6 +116,14 @@ int main(int argc, char** argv) {
     cc::Model3ds model = cc::Load(zarPath);
     if (!model.ok) fprintf(stderr, "[charcompare] 3DS load failed: %s\n", model.error.c_str());
 
+    // Load the N64 character (ge1 = object_geldb / gGerudoRedSkel). TEMP hardcoded for Phase 3
+    // validation; Phase 4 will derive the N64 object/skel/anims from the skeldata JSONs.
+    cc::ModelN64 n64 = cc::LoadN64("objects/object_geldb", "gGerudoRedSkel",
+                                   { "gGerudoRedNeutralAnim", "gGerudoRedJumpAnim" });
+    if (!n64.ok) fprintf(stderr, "[charcompare] N64 load failed: %s\n", n64.error.c_str());
+    int n64AnimIdx = 0;
+    float n64Frame = 0.0f;
+
     // UI / animation state.
     int animIdx = model.anims.empty() ? -1 : 0;
     float frame = 0.0f;
@@ -139,11 +148,19 @@ int main(int argc, char** argv) {
         if (playing && !animName.empty()) frame += playSpeed;
         cc::SetAnim(model, animName, frame);
 
-        // Build this frame's display list (3DS viewport for now).
+        // Build this frame's display list. Default: the working 3DS viewport (Phase 2).
+        // CC_N64=1 renders the WIP N64 viewport instead (Phase 3; limb-DL geometry still
+        // crashes in the flex-matrix path — see scratch/charcompare/PHASE3_PLAN.md).
+        static const bool useN64 = getenv("CC_N64") != nullptr;
         std::vector<Gfx> dl;
         std::unordered_map<Mtx*, MtxF> mtx;
         cc::DlistKeys keys;
-        cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz);
+        if (useN64 && n64.ok) {
+            if (playing) n64Frame += playSpeed;
+            cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz);
+        } else {
+            cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz);
+        }
         Gfx end = gsSPEndDisplayList();
         dl.push_back(end);
 

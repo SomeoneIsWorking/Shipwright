@@ -10,9 +10,18 @@
 
 set(SOH3D_ASSET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d/asset)
 
+set(SOH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 add_executable(charcompare
     main.cpp
     cc_3ds.cpp
+    cc_n64.cpp
+    cc_skeleton_stub.cpp                 # trimmed SOH::Skeleton (no game-coupled SkeletonPatcher)
+    ${SOH_DIR}/soh/resource/importer/SkeletonFactory.cpp
+    ${SOH_DIR}/soh/resource/importer/SkeletonLimbFactory.cpp
+    ${SOH_DIR}/soh/resource/importer/AnimationFactory.cpp
+    ${SOH_DIR}/soh/resource/type/SkeletonLimb.cpp
+    ${SOH_DIR}/soh/resource/type/Animation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d/soh3d_model.cpp
     ${SOH3D_ASSET_DIR}/ctr_rom.cpp
     ${SOH3D_ASSET_DIR}/zar.cpp
@@ -27,6 +36,8 @@ target_include_directories(charcompare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/soh3d   # so "asset/..." resolves like in soh3d_model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/..             # so "soh/resource/..." resolves in the SOH factories
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include     # z64animation.h / z64math.h / libc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../libultraship/include
 )
 

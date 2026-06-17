@@ -667,16 +667,18 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // Bind the per-limb matrix array to segment 0x0D (what the flex limb DLs reference).
     { Gfx g = gsSPSegment(0x0D, (uintptr_t)mtxArray); dl.push_back(g); }
     // Safety net: some actors' limb DLs gsSPDisplayList()/reference a SCRATCH SEGMENT the game sets
-    // up at draw time (e.g. Darunia's limbs call seg 0x0C; Bari stores geometry in seg 0x08/0x09).
-    // We can't reproduce that actor-specific setup; left unbound, SegAddr returns the raw segmented
-    // address and the interpreter executes/reads it -> SEGV. Point the common actor scratch segments
-    // at a large ZERO buffer whose first word is G_ENDDL: a gSPDisplayList branch/call there ends
-    // immediately, and a stray gSPVertex/data read from such a segment stays in-bounds (reads zeros
-    // -> degenerate geometry) instead of running off into unmapped memory. The model just renders
-    // without that actor-provided geometry, rather than crashing.
+    // up at draw time (e.g. Darunia's limbs call seg 0x0C; Bari stores geometry in seg 0x08/0x09;
+    // Dinolfos' jaw gSPDisplayLists seg 0x09 at a MISALIGNED offset like 0x09000001). We can't
+    // reproduce that actor-specific setup; left unbound, SegAddr returns the raw segmented address and
+    // the interpreter executes/reads it -> SEGV. Point the common actor scratch segments at a buffer
+    // filled with byte 0xDF: G_ENDDL is opcode 0xDF, so a branch/call to ANY offset — aligned OR
+    // misaligned — reads op=(w0>>24)&0xFF == 0xDF and ends the DL IMMEDIATELY. (The old "ENDDL only at
+    // offset 0, zeros after" failed when a DL branched to offset>0: the zeros decode as G_SPNOOP, so
+    // execution walked through the whole buffer and ran off the end into unmapped memory -> the
+    // nondeterministic Dinolfos/"zf" crash.) The model renders without that actor-provided geometry.
     static std::vector<Gfx> kScratchSeg = [] {
-        std::vector<Gfx> v(0x4000, Gfx{}); // 256 KB of zeros (covers typical segment offsets)
-        v[0] = gsSPEndDisplayList();
+        std::vector<Gfx> v(0x4000, Gfx{}); // 0x4000 * sizeof(Gfx)
+        memset(v.data(), 0xDF, v.size() * sizeof(Gfx)); // every byte 0xDF -> any (mis)aligned read = G_ENDDL
         return v;
     }();
     // Bind ALL actor scratch segments (0x01..0x0C) — limb DLs reference various ones for matrices

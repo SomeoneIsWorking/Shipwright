@@ -23,11 +23,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <csetjmp>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +40,28 @@
 #include "cc_index.h"
 
 namespace fs = std::filesystem;
+
+// --- N64 render sandbox -------------------------------------------------------------------------
+// charcompare deliberately executes N64 actor limb DLs WITHOUT the actor's runtime setup. Some
+// actors (e.g. Dinolfos / "zf") build limb geometry into actor-provided segments and reference
+// it from their DLs (gSPDisplayList/gSPVertex to seg 0x08/0x09…, or — when an OTR-encoded ref
+// resolves to an out-of-range segment number — an out-of-bounds segment-table read). We can't
+// reproduce that, so executing such a DL eventually runs garbage and SEGVs. Rather than crash the
+// whole tool, wrap interp->Run in a SIGSEGV/SIGBUS sandbox: on fault, longjmp out, mark the model's
+// N64 side unsafe, and keep running (the 3DS half + GUI stay alive). This is safe because Run() begins
+// with SpReset(), so the next frame's Run starts from clean RSP/segment state.
+static sigjmp_buf g_renderJmp;
+static volatile sig_atomic_t g_inRender = 0;
+static void renderFaultHandler(int sig) {
+    if (g_inRender) {
+        g_inRender = 0;
+        siglongjmp(g_renderJmp, 1);
+    }
+    // Fault outside the guarded render — not ours; restore default disposition and re-raise so it
+    // still produces a normal crash/core instead of being silently swallowed.
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
 
 // The Fast3D interpreter's OTR_G_SOH3D_MEASURE opcode handler calls back into this
 // game-provided symbol (soh3d.c) to report an actor's measured world height for the
@@ -110,6 +135,11 @@ struct AppState {
     std::map<std::string, std::string> overrides;
     std::string overridesPath;
     std::string saveMsg;
+    // N64 render sandbox: ZARs whose N64 limb DLs faulted under interp->Run (see renderFaultHandler).
+    // Once a character faults, its N64 side is disabled and not retried (so it can't crash-loop).
+    std::set<std::string> n64CrashedZars;
+    std::string curZar;        // the currently loaded character's ZAR (key for n64CrashedZars)
+    std::string n64SkipMsg;    // shown in the GUI when the N64 side is skipped
 };
 
 static std::string overrideKey(const char* zar, const char* n64) {
@@ -173,8 +203,17 @@ static void loadSelection(AppState& s) {
 
     std::vector<std::string> animSyms;
     for (int a = 0; a < e.animCount; a++) animSyms.push_back(e.anims[a].n64);
+    s.curZar = e.zar;
     s.n64 = cc::LoadN64Auto(std::string("objects/") + e.object, animSyms);
     if (!s.n64.ok) fprintf(stderr, "[charcompare] N64 load failed (%s): %s\n", e.object, s.n64.error.c_str());
+    // If this character's N64 DLs faulted on a previous load this session, don't render them again
+    // (the render sandbox recorded it) — show the 3DS half only instead of crash-looping.
+    s.n64SkipMsg.clear();
+    if (s.n64.ok && s.n64CrashedZars.count(e.zar)) {
+        s.n64.ok = false;
+        s.n64SkipMsg = "N64 side disabled - its limb DLs fault (unsupported actor-segment geometry)";
+        fprintf(stderr, "[charcompare] %s: %s\n", e.zar, s.n64SkipMsg.c_str());
+    }
 
     // Print the available 3DS CSABs (the override candidates) so the CLI/curation loop can see them.
     fprintf(stderr, "[charcompare] %s 3DS CSABs (%zu):", e.zar, s.model.anims.size());
@@ -335,6 +374,32 @@ int main(int argc, char** argv) {
     const cc::Rect rightHalf{ SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
 
     auto gui = window->GetGui();
+
+    // Scale the ImGui UI for HiDPI / readability. ImGui does NOT respect display scaling, so on a
+    // HiDPI/scaled desktop (e.g. KDE Plasma @ 2x) the font + widgets render tiny. Detect the system
+    // scale from the display DPI (SDL_GetDisplayDPI; on X11/XWayland this reflects the KDE/Xft.dpi
+    // setting — 192 dpi = 2x) and scale the font + all style metrics by it. CC_UISCALE overrides.
+    // ScaleAllSizes is one-shot (it multiplies the current style), so call it exactly once here.
+    float uiScale = 1.0f;
+    if (const char* e = getenv("CC_UISCALE")) {
+        uiScale = (float)atof(e);
+    } else {
+        float ddpi = 0, hdpi = 0, vdpi = 0;
+        if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) == 0 && hdpi > 1.0f)
+            uiScale = hdpi / 96.0f; // 96 dpi = 1.0 (unscaled); KDE 2x sets 192
+        printf("[charcompare] display DPI %.0f -> UI scale %.2f\n", hdpi, uiScale);
+    }
+    if (uiScale < 1.0f) uiScale = 1.0f;
+    if (ImGui::GetCurrentContext() && uiScale > 0.0f) {
+        ImGui::GetIO().FontGlobalScale = uiScale;
+        ImGui::GetStyle().ScaleAllSizes(uiScale);
+        printf("[charcompare] ImGui UI scale %.2f\n", uiScale);
+    }
+
+    // Install the N64 render-fault sandbox (SIGSEGV/SIGBUS -> skip the offending model, see above).
+    signal(SIGSEGV, renderFaultHandler);
+    signal(SIGBUS, renderFaultHandler);
+
     while (window->IsRunning()) {
         window->HandleEvents();
         if (!window->IsFrameReady()) {
@@ -370,24 +435,36 @@ int main(int argc, char** argv) {
         // the depth axis by true geometry (fixes the head/face z-fighting from a joint-bbox z-scale).
         bool measuring = st.n64.ok && !st.n64.meshMeasured;
         if (measuring) Cc_BboxMeasureBegin();
-        interp->Run(dl.data(), mtx);
-        if (measuring) {
-            Cc_BboxMeasureEnd(st.n64.meshMin, st.n64.meshMax);
-            if (st.n64.meshMax[0] >= st.n64.meshMin[0]) st.n64.meshMeasured = true; // valid bbox captured
+        // Sandboxed render: if an N64 limb DL faults (see renderFaultHandler), disable this
+        // character's N64 side and keep the tool alive instead of crashing.
+        if (sigsetjmp(g_renderJmp, 1) == 0) {
+            g_inRender = 1;
+            interp->Run(dl.data(), mtx);
+            g_inRender = 0;
+            if (measuring) {
+                Cc_BboxMeasureEnd(st.n64.meshMin, st.n64.meshMax);
+                if (st.n64.meshMax[0] >= st.n64.meshMin[0]) st.n64.meshMeasured = true; // valid bbox captured
+            }
+        } else {
+            // interp->Run SEGV'd — almost always the N64 limb DLs (the 3DS path is plain GL).
+            if (!st.curZar.empty()) st.n64CrashedZars.insert(st.curZar);
+            st.n64.ok = false;
+            st.n64SkipMsg = "N64 side disabled - its limb DLs fault (unsupported actor-segment geometry)";
+            fprintf(stderr, "[charcompare] N64 render fault on %s — disabling its N64 side\n", st.curZar.c_str());
         }
 
         if (!noGui) {
             // Cascading selectors: TYPE -> character -> ANIMATION. A top strip keeps the two
             // model halves visible (it's draggable if it overlaps a head).
             ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2((float)window->GetWidth(), 120), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2((float)window->GetWidth(), 120 * uiScale), ImGuiCond_FirstUseEver);
             ImGui::Begin("CharCompare  (N64 left | 3DS right)");
 
             auto es = entriesInCategory(st.categories[st.catSel]);
             const cc::IndexEntry& e = cc::CcIndex()[es.empty() ? 0 : es[std::clamp(st.entrySel, 0, (int)es.size() - 1)]];
 
             // TYPE
-            ImGui::SetNextItemWidth(140);
+            ImGui::SetNextItemWidth(140 * uiScale);
             if (ImGui::BeginCombo("type", st.categories[st.catSel].c_str())) {
                 for (int i = 0; i < (int)st.categories.size(); i++) {
                     bool sel = (i == st.catSel);
@@ -402,7 +479,7 @@ int main(int argc, char** argv) {
             }
             // CHARACTER
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(160);
+            ImGui::SetNextItemWidth(160 * uiScale);
             if (ImGui::BeginCombo("character", e.name)) {
                 for (int i = 0; i < (int)es.size(); i++) {
                     bool sel = (i == st.entrySel);
@@ -416,7 +493,7 @@ int main(int argc, char** argv) {
             }
             // N64 ANIMATION (a "*" marks anims with a hand override)
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(240);
+            ImGui::SetNextItemWidth(240 * uiScale);
             int ai = (e.animCount > 0) ? std::clamp(st.animSel, 0, e.animCount - 1) : 0;
             const char* curAnim = (e.animCount > 0) ? e.anims[ai].n64 : "(none)";
             if (ImGui::BeginCombo("N64 anim", curAnim)) {
@@ -470,7 +547,9 @@ int main(int argc, char** argv) {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(0.5f, 1, 0.5f, 1), "[%s]", st.saveMsg.c_str());
             }
-            if (!st.n64.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "N64: %s", st.n64.error.c_str());
+            if (!st.n64SkipMsg.empty())
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "N64: %s", st.n64SkipMsg.c_str());
+            else if (!st.n64.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "N64: %s", st.n64.error.c_str());
             if (!st.model.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "3DS: %s", st.model.error.c_str());
 
             ImGui::Checkbox("play", &st.playing);

@@ -396,9 +396,11 @@ int main(int argc, char** argv) {
         printf("[charcompare] ImGui UI scale %.2f\n", uiScale);
     }
 
-    // Install the N64 render-fault sandbox (SIGSEGV/SIGBUS -> skip the offending model, see above).
+    // Install the N64 render-fault sandbox: SIGSEGV/SIGBUS (bad memory) and SIGABRT (a libultraship
+    // assert tripped mid-draw) -> skip the offending model instead of taking down the whole tool.
     signal(SIGSEGV, renderFaultHandler);
     signal(SIGBUS, renderFaultHandler);
+    signal(SIGABRT, renderFaultHandler);
 
     while (window->IsRunning()) {
         window->HandleEvents();

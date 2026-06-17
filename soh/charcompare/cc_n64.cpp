@@ -706,6 +706,22 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
         Gfx g = gsSPSegment(seg, (uintptr_t)kScratchSeg.data());
         dl.push_back(g);
     }
+    // Segment 0x09: several actors (En_Zf/Dinolfos+Lizalfos, En_Bw) point seg 0x09 at the shared
+    // render-mode setup DL `D_80116280` (z_actor.c) and their limb DLs gSPDisplayList into it to set
+    // the XLU render mode + alpha-threshold, then return. Left as the 0xDF stub the branch just
+    // ENDDLs (geometry then draws with the wrong/previous render mode); recreate D_80116280 here so
+    // the branch does its real job. This is what lets the N64 Dinolfos/Lizalfos render correctly.
+    static std::vector<Gfx> kSeg9DL = [] {
+        std::vector<Gfx> v;
+        Gfx a = gsDPSetRenderMode(G_RM_FOG_SHADE_A, AA_EN | Z_CMP | Z_UPD | IM_RD | CLR_ON_CVG | CVG_DST_WRAP |
+                                                        ZMODE_XLU | FORCE_BL | GBL_c2(G_BL_CLR_IN, G_BL_A_IN,
+                                                                                      G_BL_CLR_MEM, G_BL_1MA));
+        Gfx b = gsDPSetAlphaCompare(G_AC_THRESHOLD);
+        Gfx c = gsSPEndDisplayList();
+        v.push_back(a); v.push_back(b); v.push_back(c);
+        return v;
+    }();
+    { Gfx g = gsSPSegment(0x09, (uintptr_t)kSeg9DL.data()); dl.push_back(g); }
     // Override the actor face segments (0x08 eyes, 0x0A mouth) with the neutral default textures
     // scanned from the object. The path strings live in m.faceSegs (stable for this model's life);
     // gSPSegment binds the segment to the "__OTR__<path>" pointer, and the limb DL's raw G_SETTIMG

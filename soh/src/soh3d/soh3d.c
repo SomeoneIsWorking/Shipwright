@@ -1279,6 +1279,141 @@ int SoH3D_AutoWarpEntrance(void) {
     return ENTR_KAKARIKO_VILLAGE_FRONT_GATE;
 }
 
+// ===========================================================================
+// OoT3D get-item ("gi") models — replace the N64 get-item draw.
+//
+// N64 renders every get-item (chest contents, held-aloft reward, shop display,
+// cutscene) through ONE choke: GetItem_Draw(play, drawId), which positions the
+// item via the CURRENT matrix stack (the caller sets world pos/scale; there is no
+// Actor). We hook that choke (SoH3D_TryDrawGetItem, called from GetItem_Draw): map
+// the drawId (a GID_* enum, == the sDrawItemTable index) to an OoT3D
+// /actor/zelda_gi_*.zar "menu" model and draw it at that SAME current matrix times a
+// per-model scale (OoT3D menu units -> the N64 item's local units), so it lands at
+// the identical world transform regardless of which caller invoked GetItem_Draw.
+//
+// The menu CMBs are rigid (non-skeletal); they emit at bind pose with form lighting,
+// exactly like the static props (pot/gs/kibako). Only single-CMB gi archives are
+// mapped here (the auto loader picks the main CMB); the multi-variant ones
+// (gi_m_liquid = 3 potions, gi_bigghost = bottle+effect) are left to N64.
+// ===========================================================================
+float gSoH3dGiScaleMul = 1.0f; // global scale multiplier over the per-model scale (REPL `giscale`)
+float gSoH3dGiRotX = 0.0f;     // orientation correction (deg), model rest -> N64 up (REPL `girot`)
+float gSoH3dGiRotY = 0.0f;
+float gSoH3dGiRotZ = 0.0f;
+static int gSoH3dItemsOn = -1; // sub-toggle (env SOH3D_ITEMS, default ON when SOH3D=1)
+int gSoH3dSpawnGi = -2;         // debug get-item drawId to spawn (-2 = read env SOH3D_SPAWNGI; REPL `gi`)
+float gSoH3dGiDisp = 0.2f;      // debug-spawn display matrix scale (REPL `gidisp`); = real held-item 0.2
+
+static int SoH3D_ItemsEnabled(void) {
+    if (gSoH3dItemsOn < 0) {
+        const char* v = getenv("SOH3D_ITEMS");
+        gSoH3dItemsOn = (v == NULL || v[0] != '0') ? 1 : 0; // default ON
+    }
+    return gSoH3dItemsOn;
+}
+
+typedef struct {
+    s16 drawId;      // GID_* — the GetItem_Draw arg / sDrawItemTable index
+    const char* zar; // OoT3D model archive (/actor/zelda_gi_*.zar)
+    float scale;     // per-model OoT3D-menu-units -> N64-item-local-units
+} SoH3dGetItemModel;
+
+// Per-model OoT3D-menu-units -> N64-item-local-units. The OoT3D menu CMBs (~68-77 units
+// tall) and the N64 get-item models are authored at a similar unit scale and both drawn
+// through the same held-item matrix (scale 0.2, Player_DrawGetItemImpl), so ~1.0 lands the
+// OoT3D model at a believable held-item size (~1/3 child-Link height). Tunable live via REPL
+// `giscale`; the precise per-item value still wants an A/B against a real chest get-item
+// (the synthetic SOH3D_SPAWNGI harness can't render the N64 jewels — they need the caller's
+// segment-7 hilite — and the magic arrows carry a glow halo), see scratch handoff.
+#define SOH3D_GI_SCALE 1.0f
+static const SoH3dGetItemModel kGetItemModels[] = {
+    { GID_KOKIRI_EMERALD, "/actor/zelda_gi_jade.zar",        SOH3D_GI_SCALE },
+    { GID_GORON_RUBY,     "/actor/zelda_gi_ruby.zar",        SOH3D_GI_SCALE },
+    { GID_ZORA_SAPPHIRE,  "/actor/zelda_gi_sapphire.zar",    SOH3D_GI_SCALE },
+    { GID_ARROW_FIRE,     "/actor/zelda_gi_fire_arrow.zar",  SOH3D_GI_SCALE },
+    { GID_ARROW_ICE,      "/actor/zelda_gi_ice_arrow.zar",   SOH3D_GI_SCALE },
+    { GID_ARROW_LIGHT,    "/actor/zelda_gi_light_arrow.zar", SOH3D_GI_SCALE },
+};
+
+// Draw the OoT3D model at the CURRENT matrix (the caller's item transform) times `scale`.
+// Static/rigid: bind pose + form lighting (lit bit), like the props. Matrix_Push/Pop keep
+// the caller's stack intact so the N64 fallback path is unaffected if this is ever a no-op.
+static void SoH3D_EmitGetItem(PlayState* play, int modelId, float scale) {
+    u8 tint[3];
+    OPEN_DISPS(play->state.gfxCtx);
+    SoH3D_EnsureModelProvider();
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    Matrix_Push();
+    Matrix_Scale(scale, scale, scale, MTXMODE_APPLY); // in the caller's (world-positioned) frame
+    if (gSoH3dGiRotX != 0.0f) Matrix_RotateX(gSoH3dGiRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dGiRotY != 0.0f) Matrix_RotateY(gSoH3dGiRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dGiRotZ != 0.0f) Matrix_RotateZ(gSoH3dGiRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    SoH3D_SceneTint(play, tint);
+    SoH3D_GL_EmitPose(modelId); // non-skinned -> identity skin matrices (same call the props make)
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
+    Matrix_Pop();
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// Called from GetItem_Draw. If SoH3D + items are enabled and this drawId has an OoT3D
+// gi model, draw it at the caller's current matrix and return 1 (caller skips the N64
+// item DL). Returns 0 otherwise (caller draws the N64 item as normal).
+int SoH3D_TryDrawGetItem(PlayState* play, s16 drawId) {
+    const SoH3dGetItemModel* m;
+    int modelId;
+    size_t i;
+    if (!SoH3D_Enabled() || !SoH3D_ItemsEnabled()) {
+        return 0;
+    }
+    m = NULL;
+    for (i = 0; i < ARRAY_COUNT(kGetItemModels); i++) {
+        if (kGetItemModels[i].drawId == drawId) {
+            m = &kGetItemModels[i];
+            break;
+        }
+    }
+    if (m == NULL) {
+        return 0; // no OoT3D model for this item -> N64 fallback
+    }
+    modelId = SoH3D_AutoModelId(m->zar);
+    if (modelId < 0) {
+        return 0;
+    }
+    SoH3D_EmitGetItem(play, modelId, m->scale * gSoH3dGiScaleMul);
+    return 1;
+}
+
+void SoH3D_DebugDrawGetItem(PlayState* play) {
+    // Verification: env SOH3D_SPAWNGI=<gid decimal> draws that get-item every frame in front of
+    // Link via the REAL GetItem_Draw choke, so SOH3D=0 (N64 model) vs SOH3D=1 (OoT3D model) is a
+    // true same-frame A/B. Tune size/orientation live with REPL giscale / girot, then bake into
+    // kGetItemModels. Must run during the draw pass BEFORE SoH3D_EmitRenderPass drains the draws.
+    int gid = gSoH3dSpawnGi;
+    Player* p;
+    s16 yaw;
+    float fx, fz, fy;
+    if (gid == -2) { // uninit -> latch the env value once (REPL `gi <n>` overrides live)
+        const char* sp = getenv("SOH3D_SPAWNGI");
+        gSoH3dSpawnGi = (sp != NULL && sp[0] != '\0') ? atoi(sp) : -1;
+        gid = gSoH3dSpawnGi;
+    }
+    if (gid < 0) {
+        return;
+    }
+    p = GET_PLAYER(play);
+    yaw = p->actor.shape.rot.y;
+    // Replicate the REAL held-aloft get-item matrix (Player_DrawGetItemImpl): above Link's head,
+    // 3.3 units forward, spinning, scale 0.2 — so this synthetic view matches actual gameplay.
+    fx = p->actor.world.pos.x + 3.3f * Math_SinS(yaw);
+    fz = p->actor.world.pos.z + 3.3f * Math_CosS(yaw);
+    fy = p->actor.world.pos.y + 14.0f;
+    Matrix_Translate(fx, fy, fz, MTXMODE_NEW);
+    Matrix_RotateZYX(0, play->gameplayFrames * 1000, 0, MTXMODE_APPLY); // slow spin like the real item
+    Matrix_Scale(gSoH3dGiDisp, gSoH3dGiDisp, gSoH3dGiDisp, MTXMODE_APPLY);
+    GetItem_Draw(play, (s16)gid);
+}
+
 void SoH3D_DebugDrawPot(PlayState* play) {
     // Verification: spawn one real Obj_Tsubo beside Link (env SOH3D_SPAWNPOT=1) so
     // the actual ObjTsubo_Draw path runs. SOH3D=0 draws the N64 pot, SOH3D=1 the
@@ -1707,6 +1842,24 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "rotz") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dRotZ = f1;
         SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);
+    } else if (strcmp(cmd, "gi") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        extern int gSoH3dSpawnGi;
+        gSoH3dSpawnGi = iv;
+        SoH3D_ReplReply(outPath, "gi spawn drawId=%d (-1=off)", gSoH3dSpawnGi);
+    } else if (strcmp(cmd, "gidisp") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        extern float gSoH3dGiDisp;
+        gSoH3dGiDisp = f1;
+        SoH3D_ReplReply(outPath, "gidisp=%.4f (debug get-item display scale)", gSoH3dGiDisp);
+    } else if (strcmp(cmd, "giscale") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        extern float gSoH3dGiScaleMul;
+        gSoH3dGiScaleMul = f1;
+        SoH3D_ReplReply(outPath, "giscale=%.4f (multiplier over per-model gi scale)", gSoH3dGiScaleMul);
+    } else if (strcmp(cmd, "girot") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
+        extern float gSoH3dGiRotX, gSoH3dGiRotY, gSoH3dGiRotZ;
+        gSoH3dGiRotX = f1;
+        gSoH3dGiRotY = f2;
+        gSoH3dGiRotZ = f3;
+        SoH3D_ReplReply(outPath, "girot=(%.0f,%.0f,%.0f)", gSoH3dGiRotX, gSoH3dGiRotY, gSoH3dGiRotZ);
     } else if (strcmp(cmd, "light") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         extern int gSoH3dLightEnable; // libultraship soh3d_gl.cpp: character/prop form lighting
         gSoH3dLightEnable = (int)f1;

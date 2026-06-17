@@ -80,6 +80,7 @@
 #include "objects/object_st/object_st.h"
 
 #include "soh_assets.h"
+#include "soh3d/soh3d.h" // SoH3D get-item replacement (SoH3D_TryDrawGetItem)
 
 // "Get Item" Model Draw Functions
 void GetItem_DrawMaskOrBombchu(PlayState* play, s16 drawId);
@@ -399,6 +400,9 @@ DrawItemTableEntry sDrawItemTable[] = {
  * Calls the corresponding draw function for the given draw ID
  */
 void GetItem_Draw(PlayState* play, s16 drawId) {
+    if (SoH3D_TryDrawGetItem(play, drawId)) {
+        return; // OoT3D get-item model drawn at the caller's matrix; skip the N64 item DL
+    }
     sDrawItemTable[drawId].drawFunc(play, drawId);
 }
 

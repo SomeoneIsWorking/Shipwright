@@ -140,6 +140,18 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 int SoH3D_AutoWarpEnabled(void);
 int SoH3D_AutoWarpEntrance(void);
 
+// OoT3D get-item replacement, called from GetItem_Draw (the single get-item draw choke).
+// When SoH3D + items are enabled and the drawId has an OoT3D /actor/zelda_gi_*.zar model,
+// draws that model at the caller's current matrix and returns 1 so GetItem_Draw skips the
+// N64 item DL; returns 0 otherwise (N64 item draws as normal). Covers chest contents,
+// held-aloft rewards, shop displays and cutscene items uniformly (all route through here).
+int SoH3D_TryDrawGetItem(PlayState* play, s16 drawId);
+
+// Verification helper, called each frame from Play_Draw (before SoH3D_EmitRenderPass).
+// When env SOH3D_SPAWNGI=<gid> is set, draws that get-item in front of Link via the real
+// GetItem_Draw path so SOH3D=0 (N64) vs SOH3D=1 (OoT3D) can be A/B'd. No-op otherwise.
+void SoH3D_DebugDrawGetItem(PlayState* play);
+
 // Verification helper, called each frame from Play_Draw. When env
 // SOH3D_SPAWNPOT=1, spawns one real Obj_Tsubo beside Link so the actual
 // ObjTsubo_Draw path can be A/B'd (SOH3D=0 N64 pot vs SOH3D=1 OoT3D pot) in the

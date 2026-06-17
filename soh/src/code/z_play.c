@@ -1572,6 +1572,10 @@ void Play_Draw(PlayState* play) {
             func_800315AC(play, &play->actorCtx);
         }
 
+        // SoH3D: get-item A/B verification draws into this frame's lists (must precede the
+        // render-pass drain below). No-op unless env SOH3D_SPAWNGI is set.
+        SoH3D_DebugDrawGetItem(play);
+
         // SoH3D: all 3D actors are drawn; emit the render-pass marker so the OoT3D content
         // collected this frame (rooms + replaced actors) is drawn in one GL-state-bracketed
         // pass, after Fast3D's opaque 3D and before the 2D/UI pass.

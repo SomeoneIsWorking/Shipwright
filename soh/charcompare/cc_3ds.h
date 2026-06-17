@@ -54,6 +54,8 @@ struct DlistKeys {
     // Stable raw buffers (e.g. the N64 flex-skeleton per-limb fixed-point Mtx array bound to
     // segment 0x0D); the dlist references these by address so they must outlive interp->Run.
     std::vector<std::unique_ptr<std::vector<int32_t>>> blobs;
+    // Stable light blocks (N64 F3D lighting: gSPLight points at these by address).
+    std::vector<std::unique_ptr<Lights1>> lightStore;
 };
 void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx, DlistKeys& keys,
                float rx, float ry, float rz);

@@ -168,7 +168,9 @@ int main(int argc, char** argv) {
         window->StartFrame();
         interp->Run(dl.data(), mtx);
 
-        // ImGui controls.
+        // ImGui controls. (CC_NOGUI hides the panel so the full scene is visible for diagnostics.)
+        static const bool noGui = getenv("CC_NOGUI") != nullptr;
+        if (noGui) { gui->EndDraw(); if (!shotPath.empty() && frameCount == shotFrame) { dumpFrontBuffer(shotPath, (int)window->GetWidth(), (int)window->GetHeight()); window->EndFrame(); break; } window->EndFrame(); frameCount++; continue; }
         ImGui::SetNextWindowSize(ImVec2(380, 320), ImGuiCond_FirstUseEver);
         ImGui::Begin("CharCompare - 3DS");
         ImGui::Text("%s", zarPath.c_str());

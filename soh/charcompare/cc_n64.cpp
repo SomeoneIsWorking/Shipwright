@@ -219,7 +219,9 @@ static void assignSlots(ModelN64& m, int limbIndex, int& counter, std::vector<in
 static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, std::vector<Gfx>& dl) {
     auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
     SOH::StandardLimb* limb = seg[limbIndex];
-    if (limb->dList != nullptr && slot[limbIndex] >= 0) {
+    static const char* onlyEnv = getenv("CC_N64_ONLYLIMB");
+    bool drawThis = !onlyEnv || atoi(onlyEnv) == limbIndex;
+    if (drawThis && limb->dList != nullptr && slot[limbIndex] >= 0) {
         // limb->dList is an OTR PATH string; resolve to the DisplayList resource's Gfx* (mirrors
         // the game's gSPDisplayList wrapper). The flex limb DLs load their matrices from segment
         // 0x0D themselves; we also load this limb's own matrix as the base (like SkelAnime_DrawFlex).
@@ -229,6 +231,15 @@ static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, 
         Gfx* g = res ? (Gfx*)res->GetRawPointer() : nullptr;
         if (g) {
             m.limbRes.push_back(res);
+            if (getenv("CC_N64_DUMPDL")) {
+                fprintf(stderr, "[cc_n64] limb %d slot %d DL %s:\n", limbIndex, slot[limbIndex], p.c_str());
+                for (Gfx* c = g; c < g + 200; c++) {
+                    uintptr_t w0 = (uintptr_t)c->words.w0, w1 = (uintptr_t)c->words.w1;
+                    unsigned op = (unsigned)((w0 >> 24) & 0xFF);
+                    fprintf(stderr, "      op=%02X w0=%016zx w1=%016zx\n", op, w0, w1);
+                    if (op == (unsigned)(G_ENDDL & 0xFF) || op == 0xDF) break;
+                }
+            }
             uintptr_t segMtx = 0x0D000000u | ((uintptr_t)slot[limbIndex] * 0x40u) | 1u; // segmented
             { Gfx gm = gsSPMatrix((Mtx*)segMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl.push_back(gm); }
             if (!getenv("CC_N64_NODL")) { Gfx gd = gsSPDisplayList(g); dl.push_back(gd); }
@@ -258,6 +269,15 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     for (int k = 0; k < 3; k++) {
         ctr[k] = (lo[k] + hi[k]) * 0.5f;
         ext[k] = std::max((hi[k] - lo[k]) * 0.5f, 1.0f);
+    }
+    if (getenv("CC_N64_DBG")) {
+        fprintf(stderr, "[cc_n64] joint bbox x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f] ctr(%.0f,%.0f,%.0f) ext(%.0f,%.0f,%.0f)\n",
+                lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], ctr[0], ctr[1], ctr[2], ext[0], ext[1], ext[2]);
+        for (int i = 0; i < m.limbCount; i++) {
+            float o[3], zero[3] = { 0, 0, 0 };
+            matApply(worldId[i], zero, o);
+            fprintf(stderr, "   limb %2d origin (%.0f,%.0f,%.0f)\n", i, o[0], o[1], o[2]);
+        }
     }
 
     // Framing matrix F (column-major M*v), same NDC fit as cc_3ds: scale + R(rx,ry,rz), center.
@@ -295,14 +315,48 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // (their own + others', for multi-limb verts) from this segment, so ALL limbs must be filled.
     std::vector<MtxF> world(m.limbCount);
     computeWorld(m, 0, F, joints, world);
+    if (getenv("CC_N64_DBG")) {
+        for (int i = 0; i < m.limbCount; i++) {
+            float o[3], zero[3] = { 0, 0, 0 };
+            matApply(world[i], zero, o);
+            fprintf(stderr, "   limb %2d CLIP (%.3f,%.3f,%.3f)\n", i, o[0], o[1], o[2]);
+        }
+    }
     // Slot assignment (draw order) -> the segment-0x0D array is sized by dList-bearing limbs.
     std::vector<int> slot(m.limbCount, -1);
     int dlCount = 0;
     assignSlots(m, 0, dlCount, slot);
+    if (getenv("CC_N64_DBG")) {
+        fprintf(stderr, "[cc_n64] dlCount=%d  slot map:", dlCount);
+        for (int i = 0; i < m.limbCount; i++) if (slot[i] >= 0) fprintf(stderr, " limb%d->slot%d", i, slot[i]);
+        fprintf(stderr, "\n");
+    }
     keys.blobs.push_back(std::make_unique<std::vector<int32_t>>(std::max(dlCount, 1) * 16));
     int32_t* mtxArray = keys.blobs.back()->data();
     for (int i = 0; i < m.limbCount; i++)
         if (slot[i] >= 0) guMtxF2L(world[i], &mtxArray[slot[i] * 16]);
+    if (getenv("CC_N64_DBG")) {
+        // Round-trip: read back slot N exactly as the interpreter's fixed-point reader does.
+        auto readback = [&](int s, float out[4][4]) {
+            const int32_t* addr = &mtxArray[s * 16];
+            for (int i = 0; i < 4; i++)
+                for (int j = 0; j < 4; j += 2) {
+                    int32_t ip = addr[i * 2 + j / 2];
+                    uint32_t fp = (uint32_t)addr[8 + i * 2 + j / 2];
+                    out[i][j] = (int32_t)((ip & 0xffff0000) | (fp >> 16)) / 65536.0f;
+                    out[i][j + 1] = (int32_t)((ip << 16) | (fp & 0xffff)) / 65536.0f;
+                }
+        };
+        for (int li : { 1, 22 }) {
+            if (slot[li] < 0) continue;
+            float rb[4][4];
+            readback(slot[li], rb);
+            fprintf(stderr, "[cc_n64] limb%d slot%d  world.trans(%.4f,%.4f,%.4f) readback.trans(%.4f,%.4f,%.4f)\n",
+                    li, slot[li], world[li].mf[3][0], world[li].mf[3][1], world[li].mf[3][2], rb[3][0], rb[3][1], rb[3][2]);
+            fprintf(stderr, "        world.3x3row0(%.5f,%.5f,%.5f) readback.3x3row0(%.5f,%.5f,%.5f)\n",
+                    world[li].mf[0][0], world[li].mf[1][0], world[li].mf[2][0], rb[0][0], rb[1][0], rb[2][0]);
+        }
+    }
 
     // Viewport + scissor (full screen for now; the side-by-side split is set in main/Phase 4).
     keys.vpStore.push_back(std::make_unique<Vp>());
@@ -319,7 +373,35 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     MtxF& proj = mtx[projKey];
     matIdentity(proj);
     { Gfx g = gsSPMatrix(projKey, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION); dl.push_back(g); }
-    { Gfx g = gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB); dl.push_back(g); }
+
+    // Persistent RDP/RSP render state the limb DLs assume the game already set
+    // (Gfx_SetupDL_25Opa / SETUPDL_25 in z_rcp.c). The limb DLs set per-material combine/
+    // texture/geometry but rely on this for cycle type, render mode, z-buffer, lighting —
+    // without it the triangles don't rasterize (each limb drawn alone produced 0 pixels).
+    { Gfx g = gsDPPipeSync(); dl.push_back(g); }
+    { Gfx g = gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON); dl.push_back(g); }
+    { Gfx g = gsDPSetCombineMode(G_CC_MODULATEIDECALA, G_CC_MODULATEIA_PRIM2); dl.push_back(g); }
+    { Gfx g = gsDPSetOtherMode(G_AD_NOTPATTERN | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE |
+                                   G_TL_TILE | G_TD_CLAMP | G_TP_PERSP | G_CYC_2CYCLE | G_PM_NPRIMITIVE,
+                               G_AC_NONE | G_ZS_PIXEL | G_RM_FOG_SHADE_A | G_RM_AA_ZB_OPA_SURF2);
+      dl.push_back(g); }
+    { Gfx g = gsSPLoadGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH);
+      dl.push_back(g); }
+
+    // One directional + ambient light so the lit limbs shade correctly (without lights the
+    // G_LIGHTING geometry mode reads garbage shade). Light direction faces the camera.
+    keys.lightStore.push_back(std::make_unique<Lights1>());
+    Lights1* lights = keys.lightStore.back().get();
+    memset(lights, 0, sizeof(*lights));
+    lights->a.l.col[0] = lights->a.l.col[1] = lights->a.l.col[2] = 80;
+    lights->a.l.colc[0] = lights->a.l.colc[1] = lights->a.l.colc[2] = 80;
+    lights->l[0].l.col[0] = lights->l[0].l.col[1] = lights->l[0].l.col[2] = 220;
+    lights->l[0].l.colc[0] = lights->l[0].l.colc[1] = lights->l[0].l.colc[2] = 220;
+    lights->l[0].l.dir[0] = 0; lights->l[0].l.dir[1] = 40; lights->l[0].l.dir[2] = 120;
+    { Gfx g = gsSPNumLights(NUMLIGHTS_1); dl.push_back(g); }
+    { Gfx g = gsSPLight(&lights->l[0], 1); dl.push_back(g); }
+    { Gfx g = gsSPLight(&lights->a, 2); dl.push_back(g); }
+
     // Bind the per-limb matrix array to segment 0x0D (what the flex limb DLs reference).
     { Gfx g = gsSPSegment(0x0D, (uintptr_t)mtxArray); dl.push_back(g); }
 

@@ -1304,6 +1304,21 @@ static int gSoH3dItemsOn = -1; // sub-toggle (env SOH3D_ITEMS, default ON when S
 int gSoH3dSpawnGi = -2;         // debug get-item drawId to spawn (-2 = read env SOH3D_SPAWNGI; REPL `gi`)
 float gSoH3dGiDisp = 0.2f;      // debug-spawn display matrix scale (REPL `gidisp`); = real held-item 0.2
 
+// --- OoT3D Link (player) replacement — proof-of-hook stage (see SoH3D_TryDrawPlayer) ---
+static int gSoH3dLinkOn = -1;  // sub-toggle (env SOH3D_LINK, default OFF — WIP) / REPL `link`
+float gSoH3dLinkScale = 0.011f; // world scale OoT3D-link-local -> N64 player units (REPL `linkscale`, calibrate live)
+float gSoH3dLinkRotX = 0.0f;   // rest->upright orientation correction (deg) (REPL `linkrot`)
+float gSoH3dLinkRotY = 0.0f;
+float gSoH3dLinkRotZ = 0.0f;
+
+static int SoH3D_LinkEnabled(void) {
+    if (gSoH3dLinkOn < 0) {
+        const char* v = getenv("SOH3D_LINK");
+        gSoH3dLinkOn = (v != NULL && v[0] == '1') ? 1 : 0; // default OFF (WIP)
+    }
+    return gSoH3dLinkOn;
+}
+
 static int SoH3D_ItemsEnabled(void) {
     if (gSoH3dItemsOn < 0) {
         const char* v = getenv("SOH3D_ITEMS");
@@ -1412,6 +1427,57 @@ void SoH3D_DebugDrawGetItem(PlayState* play) {
     Matrix_RotateZYX(0, play->gameplayFrames * 1000, 0, MTXMODE_APPLY); // slow spin like the real item
     Matrix_Scale(gSoH3dGiDisp, gSoH3dGiDisp, gSoH3dGiDisp, MTXMODE_APPLY);
     GetItem_Draw(play, (s16)gid);
+}
+
+// ===========================================================================
+// OoT3D Link (player) replacement — PROOF-OF-HOOK STAGE.
+//
+// Link bypasses the generic SkelAnime_DrawFlex* chokes the SOH3D_AUTO path hooks: the
+// player draws through Player_DrawImpl with its own Override/PostLimbDraw callbacks (held
+// equipment, masks). So Link needs a DEDICATED hook, called from Player_Draw right before
+// the N64 body draw (Player_DrawGameplay). This stage proves the plumbing: it loads the
+// OoT3D *_new link body CMB and draws it at the player's world transform in BIND POSE
+// (no animation, no equipment) so we can verify the hook fires, the asset loads, and the
+// scale/orientation calibrate. The HARD remaining work (next stage, scratch/handoff_link.md):
+//   (1) N64 player jointTable -> 39-bone OoT3D link skeleton bonemap + retarget (animate);
+//   (2) per-state held equipment (sword/shield/bow/hookshot are separate l_*.cmb by limb).
+// Gated behind SOH3D_LINK (default OFF) so it can never disturb normal play until correct.
+// ===========================================================================
+int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
+    const char* zar;
+    int modelId;
+    u8 tint[3];
+    if (!SoH3D_Enabled() || !SoH3D_LinkEnabled()) {
+        return 0;
+    }
+    // Use the *_new (link_v2/childlink_v2) body: a single CMB with FULL embedded textures
+    // (the body skin atlas, 128x128 ETC1) and a 25-bone rig — renders correctly textured. The
+    // *_ultra rigs store the body skin in external CTXB files bound at runtime (the embedded
+    // CMB texture is just a 32x32 'cube_01' placeholder -> renders untextured/red), and carry
+    // the held-equipment CMBs; wiring up ultra's external textures + equipment is the next stage.
+    zar = (LINK_AGE_IN_YEARS == YEARS_CHILD) ? "/actor/zelda_link_child_new.zar"
+                                             : "/actor/zelda_link_boy_new.zar";
+    SoH3D_EnsureModelProvider();
+    modelId = SoH3D_AutoModelId(zar); // auto-picks the largest single CMB = the body (link.cmb)
+    if (modelId < 0) {
+        return 0; // model unavailable -> fall back to the N64 body
+    }
+    OPEN_DISPS(play->state.gfxCtx);
+    Gfx_SetupDL_25Opa(play->state.gfxCtx);
+    // Build our own world matrix (do NOT inherit the actor matrix — it carries the N64 0.01
+    // actor scale through which the OoT3D dlist renders nothing; same gotcha as the props).
+    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_Scale(gSoH3dLinkScale, gSoH3dLinkScale, gSoH3dLinkScale, MTXMODE_APPLY);
+    if (gSoH3dLinkRotX != 0.0f) Matrix_RotateX(gSoH3dLinkRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dLinkRotY != 0.0f) Matrix_RotateY(gSoH3dLinkRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    SoH3D_SceneTint(play, tint);
+    SoH3D_GL_EmitPose(modelId); // no UpdateAnim -> identity skin matrices = bind pose
+    gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
+    CLOSE_DISPS(play->state.gfxCtx);
+    return 1;
 }
 
 void SoH3D_DebugDrawPot(PlayState* play) {
@@ -1860,6 +1926,22 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dGiRotY = f2;
         gSoH3dGiRotZ = f3;
         SoH3D_ReplReply(outPath, "girot=(%.0f,%.0f,%.0f)", gSoH3dGiRotX, gSoH3dGiRotY, gSoH3dGiRotZ);
+    } else if (strcmp(cmd, "link") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        extern int gSoH3dLinkOn;
+        gSoH3dLinkOn = iv ? 1 : 0;
+        SoH3D_ReplReply(outPath, "link=%d (OoT3D player body replacement, proof-of-hook bind pose)",
+                        gSoH3dLinkOn);
+    } else if (strcmp(cmd, "linkscale") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        extern float gSoH3dLinkScale;
+        gSoH3dLinkScale = f1;
+        SoH3D_ReplReply(outPath, "linkscale=%.5f (OoT3D-link-local -> N64 player world units)",
+                        gSoH3dLinkScale);
+    } else if (strcmp(cmd, "linkrot") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
+        extern float gSoH3dLinkRotX, gSoH3dLinkRotY, gSoH3dLinkRotZ;
+        gSoH3dLinkRotX = f1;
+        gSoH3dLinkRotY = f2;
+        gSoH3dLinkRotZ = f3;
+        SoH3D_ReplReply(outPath, "linkrot=(%.0f,%.0f,%.0f)", gSoH3dLinkRotX, gSoH3dLinkRotY, gSoH3dLinkRotZ);
     } else if (strcmp(cmd, "light") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         extern int gSoH3dLightEnable; // libultraship soh3d_gl.cpp: character/prop form lighting
         gSoH3dLightEnable = (int)f1;

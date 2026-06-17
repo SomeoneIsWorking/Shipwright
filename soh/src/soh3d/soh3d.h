@@ -152,6 +152,14 @@ int SoH3D_TryDrawGetItem(PlayState* play, s16 drawId);
 // GetItem_Draw path so SOH3D=0 (N64) vs SOH3D=1 (OoT3D) can be A/B'd. No-op otherwise.
 void SoH3D_DebugDrawGetItem(PlayState* play);
 
+// OoT3D Link (player) replacement, called from Player_Draw just before the N64 body draw
+// (Player_DrawGameplay). PROOF-OF-HOOK STAGE: when SoH3D + the link sub-toggle (env
+// SOH3D_LINK, default OFF) are enabled, draws the OoT3D link_boy/child_new body CMB at the
+// player's world transform in BIND POSE and returns 1 so the caller skips the N64 body.
+// Returns 0 otherwise (N64 Link draws). Animation (N64-joint retarget) + held equipment are
+// the next stage — see scratch/handoff_link.md.
+int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor);
+
 // Verification helper, called each frame from Play_Draw. When env
 // SOH3D_SPAWNPOT=1, spawns one real Obj_Tsubo beside Link so the actual
 // ObjTsubo_Draw path can be A/B'd (SOH3D=0 N64 pot vs SOH3D=1 OoT3D pot) in the

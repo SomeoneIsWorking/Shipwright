@@ -20,6 +20,7 @@
 #include "overlays/misc/ovl_kaleido_scope/z_kaleido_scope.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
+#include "soh3d/soh3d.h" // SoH3D Link (player) body replacement (SoH3D_TryDrawPlayer)
 #include <soh/Enhancements/custom-message/CustomMessageTypes.h>
 #include "soh/Enhancements/item-tables/ItemTableTypes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -12566,7 +12567,10 @@ void Player_Draw(Actor* thisx, PlayState* play2) {
         gSPClearGeometryMode(POLY_OPA_DISP++, G_CULL_BOTH);
         gSPClearGeometryMode(POLY_XLU_DISP++, G_CULL_BOTH);
 
-        Player_DrawGameplay(play, this, lod, gCullBackDList, overrideLimbDraw);
+        // SoH3D: draw the OoT3D Link body instead of the N64 one (gated SOH3D_LINK, default off).
+        if (!SoH3D_TryDrawPlayer(play, &this->actor)) {
+            Player_DrawGameplay(play, this, lod, gCullBackDList, overrideLimbDraw);
+        }
 
         if (this->invincibilityTimer > 0) {
             POLY_OPA_DISP = Play_SetFog(play, POLY_OPA_DISP);

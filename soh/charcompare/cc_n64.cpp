@@ -288,6 +288,12 @@ static void sampleAnim(const ModelN64& m, float frame, std::vector<std::array<in
         out[i][1] = sample(ji[i].y);
         out[i][2] = sample(ji[i].z);
     }
+    if (getenv("CC_ANIMDBG")) {
+        fprintf(stderr, "[animdbg] frame=%d smax=%d nfd=%d njoints=%d\n", f, smax, nfd, njoints);
+        for (int i = 0; i < njoints; i++)
+            fprintf(stderr, "   joint %2d  idx(%5u,%5u,%5u) -> rot(%6d,%6d,%6d)\n", i, ji[i].x, ji[i].y, ji[i].z,
+                    out[i][0], out[i][1], out[i][2]);
+    }
     // Diagnostic: zero all limb rotations (keep root position) to render the rest skeleton —
     // isolates the matrix/jointPos composition from the animation sampling.
     if (getenv("CC_N64_NOANIM"))
@@ -480,7 +486,18 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
         }
         zScale = 0.45f / zhalf;
     }
-    const float S[3] = { fit * xComp, fit, zScale };
+    // X is NEGATED so F has a NEGATIVE determinant, matching a real N64 perspective projection.
+    // Root cause of the old mirror bug (proven via the SOH3D_GFXDUMP draw dump, charcompare vs the
+    // live game): the Fast3D path renders MP = FK·F and the OGL backend then applies its invertY.
+    // The real game's projection (guPerspective) carries a handedness flip so that, AFTER the
+    // backend invertY, on-screen winding is correct — its MP determinant is NEGATIVE (measured:
+    // 79/80 of child Zelda's limbs). This hand-built F was a pure rotation+scale (det>0), so every
+    // N64 model rendered MIRRORED vs the game (reversed rotation, "inverted faces", asymmetric parts
+    // — e.g. the torso — reading wrong). Negating one output axis restores the game's handedness;
+    // X is the screen-horizontal flip (matches the observed left/right mirror and is NOT Y, which
+    // would render upside-down). After this, charcompare's N64 MP det is negative like the game's,
+    // and the N64 half faces the same way as the (in-game-verified) soh3d 3DS half.
+    const float S[3] = { -fit * xComp, fit, zScale };
     // F maps point p: clip_j = S_j * sum_k R[j][k]*(p_k - ctr_k) + bias_j. In column-major MtxF
     // (mf[col][row], clip_row = sum_col mf[col][row]*p_col + mf[3][row]):
     MtxF F;

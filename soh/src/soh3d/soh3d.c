@@ -1661,6 +1661,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dLightEnable = (int)f1;
         SoH3D_ReplReply(outPath, "light=%d (1=half-Lambert form on characters/props, 0=flat tint)",
                         gSoH3dLightEnable);
+    } else if (strcmp(cmd, "statecheck") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // GL state-leak detector (libultraship soh3d_gl.cpp). Flip on the moment the skybox/HUD
+        // stripe corruption appears: every render pass then verifies it handed back all captured GL
+        // state, logging any leaked field to stderr/run.log. Has per-frame glGet overhead -> off normally.
+        extern int gSoH3dStateCheck;
+        gSoH3dStateCheck = (int)f1;
+        SoH3D_ReplReply(outPath, "statecheck=%d (1=log any GL state our render pass fails to restore)",
+                        gSoH3dStateCheck);
     } else if (strcmp(cmd, "lightdir") == 0) {
         // `lightdir x y z` overrides the world-space form-light dir (held until `lightdir auto`);
         // `lightdir auto` returns to the scene's live light1Dir; `lightdir` alone prints the dir.

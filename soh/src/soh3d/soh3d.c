@@ -1310,6 +1310,8 @@ float gSoH3dLinkScale = 0.011f; // world scale OoT3D-link-local -> N64 player un
 float gSoH3dLinkRotX = 0.0f;   // rest->upright orientation correction (deg) (REPL `linkrot`)
 float gSoH3dLinkRotY = 0.0f;
 float gSoH3dLinkRotZ = 0.0f;
+char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link (verify idle/walk/run
+                                   // deterministically without real movement input); empty = live-resolve
 
 static int SoH3D_LinkEnabled(void) {
     if (gSoH3dLinkOn < 0) {
@@ -1430,21 +1432,70 @@ void SoH3D_DebugDrawGetItem(PlayState* play) {
 }
 
 // ===========================================================================
-// OoT3D Link (player) replacement — PROOF-OF-HOOK STAGE.
+// OoT3D Link (player) replacement.
 //
 // Link bypasses the generic SkelAnime_DrawFlex* chokes the SOH3D_AUTO path hooks: the
 // player draws through Player_DrawImpl with its own Override/PostLimbDraw callbacks (held
 // equipment, masks). So Link needs a DEDICATED hook, called from Player_Draw right before
-// the N64 body draw (Player_DrawGameplay). This stage proves the plumbing: it loads the
-// OoT3D *_new link body CMB and draws it at the player's world transform in BIND POSE
-// (no animation, no equipment) so we can verify the hook fires, the asset loads, and the
-// scale/orientation calibrate. The HARD remaining work (next stage, scratch/handoff_link.md):
-//   (1) N64 player jointTable -> 39-bone OoT3D link skeleton bonemap + retarget (animate);
-//   (2) per-state held equipment (sword/shield/bow/hookshot are separate l_*.cmb by limb).
-// Gated behind SOH3D_LINK (default OFF) so it can never disturb normal play until correct.
+// the N64 body draw (Player_DrawGameplay). It loads the OoT3D *_new link body CMB (25-bone
+// rig, full embedded textures) and draws it at the player's world transform.
+//
+// ANIMATION = OWN-CSAB (NOT N64 joint retarget). The *_new zar carries 582 CSABs authored for
+// the exact 25-bone *_new rig (Link's full gameplay set: nml_walk/nml_run/waits/...). So we play
+// Link's OWN 3DS CSAB, selected to match the live player animation — the same own-CSAB design the
+// auto path uses for authored actors (joint retarget is only for procedural-motion actors with no
+// CSAB). Enabler: in SoH `Player.skelAnime.animation` is a const char* OTR string
+// (e.g. "__OTR__objects/gameplay_keep/gPlayerAnim_link_normal_walk"), and the N64 names map almost
+// 1:1 to the 3DS CSABs (link_normal_walk -> nml_walk). We phase-lock the CSAB to the player's
+// curFrame/animLength via SoH3D_UpdateAnimAuto (same as the auto path).
+//
+// REMAINING (scratch/handoff_link.md): expand kPlayerAnimMap to the full state set; per-state held
+// equipment (sword/shield are separate 1-bone CMBs attached at a bone). Gated behind SOH3D_LINK
+// (default OFF) so it can never disturb normal play until correct.
 // ===========================================================================
+
+// N64 player animation (gPlayerAnim_* resource basename) -> OoT3D link CSAB basename. Hand-
+// maintained, same philosophy as soh3d_animmap.inc; getCsab resolves the basename to the rig's
+// boy/anim or child/anim dir automatically (age-correct per loaded zar). An unmapped anim falls
+// back to SOH3D_LINK_IDLE_CSAB so Link reads as standing rather than freezing in bind pose.
+#define SOH3D_LINK_IDLE_CSAB "nml_wait_typeA_20f"
+typedef struct {
+    const char* n64base; // gPlayerAnim_* resource basename (after the last '/')
+    const char* csab;    // OoT3D link CSAB basename (boy/anim or child/anim resolved by getCsab)
+} SoH3dPlayerAnimMap;
+static const SoH3dPlayerAnimMap kPlayerAnimMap[] = {
+    { "gPlayerAnim_link_normal_wait",      "nml_wait_typeA_20f" },
+    { "gPlayerAnim_link_normal_wait_free", "nml_wait_typeA_20f" },
+    { "gPlayerAnim_link_normal_walk",      "nml_walk" },
+    { "gPlayerAnim_link_normal_walk_free", "nml_walk_free" },
+    { "gPlayerAnim_link_normal_run",       "nml_run" },
+    { "gPlayerAnim_link_normal_run_free",  "nml_run_free" },
+};
+
+// Resolve the live player animation OTR string to its OoT3D link CSAB basename, or NULL if unmapped.
+static const char* SoH3D_ResolvePlayerCsab(const char* otr) {
+    const char* base;
+    s32 i;
+    if (otr == NULL) {
+        return NULL;
+    }
+    if (strncmp(otr, "__OTR__", 7) == 0) {
+        otr += 7;
+    }
+    base = strrchr(otr, '/');
+    base = (base != NULL) ? base + 1 : otr;
+    for (i = 0; i < (s32)ARRAY_COUNT(kPlayerAnimMap); i++) {
+        if (strcmp(kPlayerAnimMap[i].n64base, base) == 0) {
+            return kPlayerAnimMap[i].csab;
+        }
+    }
+    return NULL;
+}
+
 int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     const char* zar;
+    const char* csab;
+    Player* player;
     int modelId;
     u8 tint[3];
     if (!SoH3D_Enabled() || !SoH3D_LinkEnabled()) {
@@ -1474,7 +1525,33 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
-    SoH3D_GL_EmitPose(modelId); // no UpdateAnim -> identity skin matrices = bind pose
+    // OWN-CSAB animation: pick the link CSAB matching Link's live N64 anim and pose the OoT3D rig
+    // to it, phase-locked to the player's anim progress (curFrame/animLength). Player is Actor-first
+    // so the cast is valid (see z64player.h). Unmapped -> idle so it never freezes in bind pose.
+    player = (Player*)actor;
+    csab = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
+    if (csab == NULL) {
+        csab = SOH3D_LINK_IDLE_CSAB;
+    }
+    if (gSoH3dLinkForceCsab[0] != '\0') {
+        csab = gSoH3dLinkForceCsab; // REPL `linkanim` override (verification)
+    }
+    if (gSoH3dAnimDebug) {
+        static int dbg = 0;
+        if ((dbg++ % 30) == 0) {
+            const char* otr = (const char*)player->skelAnime.animation;
+            printf("SOH3D LINK: n64=%s -> csab=%s frame=%.1f/%.1f\n", otr ? otr : "(none)", csab,
+                   player->skelAnime.curFrame, player->skelAnime.animLength);
+            fflush(stdout);
+        }
+    }
+    if (strcmp(csab, "rest") == 0) {
+        SoH3D_UpdateAnim(modelId, NULL, 0); // diagnostic: force bind pose (linkanim rest)
+    } else {
+        SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
+                             player->skelAnime.animLength);
+    }
+    SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);
     return 1;
@@ -1942,6 +2019,19 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dLinkRotY = f2;
         gSoH3dLinkRotZ = f3;
         SoH3D_ReplReply(outPath, "linkrot=(%.0f,%.0f,%.0f)", gSoH3dLinkRotX, gSoH3dLinkRotY, gSoH3dLinkRotZ);
+    } else if (strcmp(cmd, "linkanim") == 0) {
+        // `linkanim <csab-base>` pins that CSAB on Link (verify idle/walk/run without real input);
+        // `linkanim off` / no-arg returns to live anim resolution.
+        extern char gSoH3dLinkForceCsab[64];
+        char name[64] = "";
+        if (sscanf(line, "%*s %63s", name) == 1 && strcmp(name, "off") != 0) {
+            strncpy(gSoH3dLinkForceCsab, name, sizeof(gSoH3dLinkForceCsab) - 1);
+            gSoH3dLinkForceCsab[sizeof(gSoH3dLinkForceCsab) - 1] = '\0';
+            SoH3D_ReplReply(outPath, "linkanim='%s' (forced on Link; `linkanim off` to release)", gSoH3dLinkForceCsab);
+        } else {
+            gSoH3dLinkForceCsab[0] = '\0';
+            SoH3D_ReplReply(outPath, "linkanim OFF (live anim resolution restored)");
+        }
     } else if (strcmp(cmd, "light") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         extern int gSoH3dLightEnable; // libultraship soh3d_gl.cpp: character/prop form lighting
         gSoH3dLightEnable = (int)f1;

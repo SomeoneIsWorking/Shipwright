@@ -30,8 +30,14 @@ Csab::Track Csab::parseTrack(uint32_t o, bool isRotInt16) const {
         }
     } else if (t.type == HERMITE) {
         if (isRotInt16) {
+            // Quantized rotation keyframes (8 bytes): u16 time, then value/in-tangent/out-tangent as
+            // s16 fixed-point ANGLES — full circle = 0x10000, so radians = s16 * 2pi/0x10000 = s16 *
+            // pi/0x8000. Tangents are angle/frame, same scale. (ge1 uses float HERMITE so this path
+            // was previously untested; using the s16s raw as radians exploded the link mesh.)
+            const float kAngle = 3.14159265358979f / 32768.0f;
             for (uint32_t i = 0; i < nkf; i++) {
-                Keyframe k{ (float)u16(b, p), (float)s16(b, p + 2), (float)s16(b, p + 4), (float)s16(b, p + 6) };
+                Keyframe k{ (float)u16(b, p), s16(b, p + 2) * kAngle, s16(b, p + 4) * kAngle,
+                            s16(b, p + 6) * kAngle };
                 t.frames.push_back(k);
                 p += 8;
             }
@@ -55,7 +61,9 @@ Csab::AnimNode Csab::parseAnod(uint32_t o) const {
     n.isRotInt16 = u16(b, o + 6) != 0;
     for (int i = 0; i < 9; i++) {
         uint16_t off = u16(b, o + 8 + 2 * i);
-        if (off) n.tracks[i] = parseTrack(o + off, n.isRotInt16);
+        // isRotInt16 applies only to the rotation slots (3,4,5 = rX/rY/rZ); translation/scale tracks
+        // stay float even in an int16 anod. (Translation is usually LINEAR float anyway.)
+        if (off) n.tracks[i] = parseTrack(o + off, n.isRotInt16 && (i >= 3 && i <= 5));
     }
     return n;
 }

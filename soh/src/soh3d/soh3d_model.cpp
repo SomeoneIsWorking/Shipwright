@@ -884,11 +884,28 @@ int SoH3D_RoomGroundDeltaAt(int modelId, float x, float z, float* outD) {
 // the cached null entry). Shared by the frame- and phase-based update entry points.
 static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
     std::string nm(animName);
-    std::string full = (nm.rfind("Anim/", 0) == 0) ? nm : ("Anim/" + nm + ".csab");
+    // Accept three forms: a bare base ("ge1_s_wait" -> "Anim/ge1_s_wait.csab", the common case),
+    // an explicit "Anim/..." path, or any verbatim zar-relative .csab path. The link rig stores its
+    // CSABs under "boy/anim/" / "child/anim/" (not "Anim/") AND splits them across those two dirs by
+    // age, so for a bare base we also do a basename scan: match any file ending "/<base>.csab". Each
+    // zar holds exactly one file per basename, so this resolves the age dir automatically.
+    bool verbatim = nm.rfind("Anim/", 0) == 0 || (nm.size() > 5 && nm.compare(nm.size() - 5, 5, ".csab") == 0);
+    std::string full = verbatim ? nm : ("Anim/" + nm + ".csab");
     auto it = lm->anims.find(full);
     if (it == lm->anims.end()) {
         const SoH3D::ZarFile* af = nullptr;
         for (const auto& f : lm->zar->files()) if (f.name == full) { af = &f; break; }
+        if (!af && !verbatim) { // basename fallback: "<base>.csab" anywhere in the zar (link boy/child/anim)
+            std::string suffix = "/" + nm + ".csab";
+            for (const auto& f : lm->zar->files()) {
+                if (f.name.size() >= suffix.size() && f.name.compare(f.name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    af = &f; full = f.name; // cache under the real path so a re-resolve hits directly
+                    break;
+                }
+            }
+            auto it2 = lm->anims.find(full); // the resolved path may already be cached
+            if (it2 != lm->anims.end()) return it2->second.get();
+        }
         std::unique_ptr<SoH3D::Csab> csab;
         if (af) {
             csab = std::make_unique<SoH3D::Csab>(lm->zar->read(*af));

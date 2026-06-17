@@ -42,6 +42,12 @@ namespace fs = std::filesystem;
 // must resolve at link time — provide a no-op stub.
 extern "C" void SoH3D_MeasureResult(int /*key*/, float /*height*/) {}
 
+// Interpreter model-space bbox measure (libultraship): the N64 viewport frames its DEPTH axis by the
+// model's true geometry extent (not the joint bbox). We measure once per loaded N64 model — wrap the
+// first frame's interp->Run with these so the Fast3D vertex transform records the bbox.
+extern "C" void Cc_BboxMeasureBegin();
+extern "C" void Cc_BboxMeasureEnd(float* mn, float* mx);
+
 // Deterministic verification: dump the front buffer to a PPM (top-to-bottom). Used by
 // CC_SHOT=<path> CC_SHOT_FRAME=<n> to grab a frame headlessly (the WM may hide the SDL
 // window behind other windows, so an OS screenshot is unreliable).
@@ -324,7 +330,15 @@ int main(int argc, char** argv) {
 
         gui->StartDraw();
         window->StartFrame();
+        // One-time per-model measure: capture the N64 model-space mesh bbox so EmitDlistN64 can frame
+        // the depth axis by true geometry (fixes the head/face z-fighting from a joint-bbox z-scale).
+        bool measuring = st.n64.ok && !st.n64.meshMeasured;
+        if (measuring) Cc_BboxMeasureBegin();
         interp->Run(dl.data(), mtx);
+        if (measuring) {
+            Cc_BboxMeasureEnd(st.n64.meshMin, st.n64.meshMax);
+            if (st.n64.meshMax[0] >= st.n64.meshMin[0]) st.n64.meshMeasured = true; // valid bbox captured
+        }
 
         if (!noGui) {
             // Cascading selectors: TYPE -> character -> ANIMATION. A top strip keeps the two

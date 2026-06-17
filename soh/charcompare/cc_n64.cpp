@@ -434,14 +434,6 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // the mesh. (Proper fix: bbox the transformed geometry like cc_3ds; tunable via CC_FIT.)
     static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.32f; }();
     const float fit = fitTarget / std::max(ext[0], ext[1]);
-    // Z uses the SAME isotropic scale as X/Y — NOT a separate ext[2]-based scale. The JOINT bbox is
-    // near-flat in Z (joints sit close to the central sagittal plane) while the limb MESH protrudes
-    // far in Z (the face/hair/cape stick out hundreds of units past the joints). A z-scale derived
-    // from the tiny joint-z extent maps those protruding mesh verts to |clip z| > 1, so they get
-    // Z-CLIPPED — that is exactly why child Zelda's FACE (which sticks out in Z) rendered as a VOID
-    // while the near-planar hood/body rendered. Uniform scaling keeps the whole mesh in clip range,
-    // undistorted, and still preserves relative depth for the z-buffer (model spans ~±0.35 about 0.5).
-    const float S[3] = { fit * xComp, fit, fit };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));
@@ -455,6 +447,26 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     float Rzy[3][3], R[3][3];
     mul3(Rz, Ry, Rzy);
     mul3(Rzy, Rx, R);
+    // Depth (Z) scale: fill the z-buffer with the model's TRUE geometry depth. The JOINT bbox is
+    // near-flat in Z (joints sit on the central sagittal plane) so a joint-based Z scale either clips
+    // the protruding mesh (face/hair stick far out in Z) or, if shrunk to avoid that, crushes depth
+    // precision so the head's BACK wimple z-fights OVER the face. Instead frame Z by the measured
+    // MODEL-SPACE mesh bbox (m.meshMin/Max): rotate its 8 corners by R, take the Z half-extent about
+    // ctr, and scale so the model fills |clip z| ~0.45 about the 0.5 bias — full precision, no clip.
+    // X/Y still use the joint fit + margin (the mesh stays on-screen there). Falls back to the
+    // isotropic X/Y scale until the one-time interpreter measure (Cc_Bbox*) completes.
+    float zScale = fit;
+    if (m.meshMeasured) {
+        float zhalf = 1.0f;
+        for (int c = 0; c < 8; c++) {
+            float p[3] = { (c & 1) ? m.meshMax[0] : m.meshMin[0], (c & 2) ? m.meshMax[1] : m.meshMin[1],
+                           (c & 4) ? m.meshMax[2] : m.meshMin[2] };
+            float rzc = R[2][0] * (p[0] - ctr[0]) + R[2][1] * (p[1] - ctr[1]) + R[2][2] * (p[2] - ctr[2]);
+            zhalf = std::max(zhalf, fabsf(rzc));
+        }
+        zScale = 0.45f / zhalf;
+    }
+    const float S[3] = { fit * xComp, fit, zScale };
     // F maps point p: clip_j = S_j * sum_k R[j][k]*(p_k - ctr_k) + bias_j. In column-major MtxF
     // (mf[col][row], clip_row = sum_col mf[col][row]*p_col + mf[3][row]):
     MtxF F;
@@ -555,15 +567,33 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     { Gfx g = gsDPSetBlendColor(0, 0, 0, 8); dl.push_back(g); }
 
     // One directional + ambient light so the lit limbs shade correctly (without lights the
-    // G_LIGHTING geometry mode reads garbage shade). Light direction faces the camera.
+    // G_LIGHTING geometry mode reads garbage shade).
+    //
+    // HEADLIGHT: the light must follow the CAMERA, not the model. The interpreter lights a vertex as
+    // dot(normal_obj, modelview^T * lightDir) = dot(normal_model, lightDir) — i.e. lightDir is in
+    // MODEL space (the framing rotation R lives in the projection, not the modelview). A fixed
+    // model-space dir therefore lights a fixed side of the MODEL, which drifts off-camera as the view
+    // rotates (ry/rx/rz) — that is why Zelda's front read dark at ry=180 while her back was lit. Put
+    // the light where the camera is: lightModel = R^T * lightClip, with lightClip pointing toward the
+    // viewer (clip -z, slightly from above). Then surfaces facing the camera are lit at any view angle.
+    const float lightClip[3] = { 0.0f, 0.45f, 1.0f }; // toward viewer, a touch from above
+    float lightModel[3];
+    for (int i = 0; i < 3; i++)
+        lightModel[i] = R[0][i] * lightClip[0] + R[1][i] * lightClip[1] + R[2][i] * lightClip[2]; // R^T * lightClip
+    float ll = sqrtf(lightModel[0] * lightModel[0] + lightModel[1] * lightModel[1] + lightModel[2] * lightModel[2]);
+    if (ll < 1e-6f) ll = 1.0f;
     keys.lightStore.push_back(std::make_unique<Lights1>());
     Lights1* lights = keys.lightStore.back().get();
     memset(lights, 0, sizeof(*lights));
-    lights->a.l.col[0] = lights->a.l.col[1] = lights->a.l.col[2] = 80;
-    lights->a.l.colc[0] = lights->a.l.colc[1] = lights->a.l.colc[2] = 80;
-    lights->l[0].l.col[0] = lights->l[0].l.col[1] = lights->l[0].l.col[2] = 220;
-    lights->l[0].l.colc[0] = lights->l[0].l.colc[1] = lights->l[0].l.colc[2] = 220;
-    lights->l[0].l.dir[0] = 0; lights->l[0].l.dir[1] = 40; lights->l[0].l.dir[2] = 120;
+    static int kAmb = [] { const char* e = getenv("CC_AMB"); return e ? atoi(e) : 140; }();
+    static int kDir = [] { const char* e = getenv("CC_DIR"); return e ? atoi(e) : 150; }();
+    lights->a.l.col[0] = lights->a.l.col[1] = lights->a.l.col[2] = kAmb;
+    lights->a.l.colc[0] = lights->a.l.colc[1] = lights->a.l.colc[2] = kAmb;
+    lights->l[0].l.col[0] = lights->l[0].l.col[1] = lights->l[0].l.col[2] = kDir;
+    lights->l[0].l.colc[0] = lights->l[0].l.colc[1] = lights->l[0].l.colc[2] = kDir;
+    lights->l[0].l.dir[0] = (int8_t)(lightModel[0] / ll * 120.0f);
+    lights->l[0].l.dir[1] = (int8_t)(lightModel[1] / ll * 120.0f);
+    lights->l[0].l.dir[2] = (int8_t)(lightModel[2] / ll * 120.0f);
     { Gfx g = gsSPNumLights(NUMLIGHTS_1); dl.push_back(g); }
     { Gfx g = gsSPLight(&lights->l[0], 1); dl.push_back(g); }
     { Gfx g = gsSPLight(&lights->a, 2); dl.push_back(g); }

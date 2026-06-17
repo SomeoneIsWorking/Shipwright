@@ -48,6 +48,12 @@ struct ModelN64 {
     // DL's raw G_SETTIMG resolves the segment, sees the OTR signature, and loads the texture).
     // Without this the segment is unbound -> the face renders as a VOID.
     std::vector<std::pair<int, std::string>> faceSegs; // (segment number, "__OTR__<path>")
+    // Model-space (FK-transformed) geometry bbox, measured once via the interpreter (Cc_BboxMeasure*).
+    // Framing scales the DEPTH axis to this true mesh extent — the joint bbox is near-flat in Z and
+    // crushes depth precision, z-fighting the head/face. meshMeasured stays false until the first
+    // measured frame; framing falls back to the joint bbox until then.
+    bool meshMeasured = false;
+    float meshMin[3] = { 0, 0, 0 }, meshMax[3] = { 0, 0, 0 };
 };
 
 // Register the resource factories the N64 path needs (Fast DisplayList/Vertex/Texture/

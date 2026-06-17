@@ -416,10 +416,24 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     if (getenv("CC_N64_DBG")) {
         fprintf(stderr, "[cc_n64] joint bbox x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f] ctr(%.0f,%.0f,%.0f) ext(%.0f,%.0f,%.0f)\n",
                 lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], ctr[0], ctr[1], ctr[2], ext[0], ext[1], ext[2]);
+        fprintf(stderr, "[cc_n64] animJointCount=%d animFrameDataCount=%d limbCount=%d\n", m.animJointCount,
+                m.animFrameDataCount, m.limbCount);
+        for (int ji : { 0, 1, 2, 10, 17 })
+            if (ji < (int)joints.size())
+                fprintf(stderr, "   joints[%2d] = (%d, %d, %d)\n", ji, joints[ji][0], joints[ji][1], joints[ji][2]);
+        auto** seg = (SOH::StandardLimb**)((SOH::FlexSkeletonHeader*)m.skelHeader)->sh.segment;
         for (int i = 0; i < m.limbCount; i++) {
-            float o[3], zero[3] = { 0, 0, 0 };
+            float o[3], zero[3] = { 0, 0, 0 }, fz[3], uz[3] = { 0, 0, 100 }, fx[3], ux[3] = { 100, 0, 0 };
             matApply(worldId[i], zero, o);
-            fprintf(stderr, "   limb %2d origin (%.0f,%.0f,%.0f)\n", i, o[0], o[1], o[2]);
+            matApply(worldId[i], uz, fz);   // where local +Z points (facing)
+            matApply(worldId[i], ux, fx);   // where local +X points (left/right)
+            SOH::StandardLimb* lb = seg[i];
+            fprintf(stderr,
+                    "   limb %2d origin(%4.0f,%4.0f,%4.0f) +Zdir(%+.2f,%+.2f,%+.2f) +Xdir(%+.2f,%+.2f,%+.2f) "
+                    "child=%d sib=%d dList=%s\n",
+                    i, o[0], o[1], o[2], (fz[0] - o[0]) / 100, (fz[1] - o[1]) / 100, (fz[2] - o[2]) / 100,
+                    (fx[0] - o[0]) / 100, (fx[1] - o[1]) / 100, (fx[2] - o[2]) / 100, lb->child, lb->sibling,
+                    lb->dList ? "Y" : "-");
         }
     }
 

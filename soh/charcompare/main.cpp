@@ -142,6 +142,16 @@ struct AppState {
     std::string n64SkipMsg;    // shown in the GUI when the N64 side is skipped
 };
 
+// Self-documenting header re-emitted on every Save so the SHARED file (read by the Python
+// generators too) explains itself and round-trips losslessly. Keep in sync with the parsers:
+// blank lines and lines beginning with '#' are ignored everywhere.
+static const char* kOverridesHeader =
+    "# SHARED hand-verified N64-anim -> 3DS-CSAB corrections, read by the charcompare tool\n"
+    "# (which also WRITES this file via \"Save overrides\") AND the Python generators\n"
+    "# (tools/gen_animmap_inc.py for the game table, tools/gen_charcompare_index.py for the\n"
+    "# tool index). These OVERRIDE animmap.json's auto-picked best for a (zar, n64anim) pair.\n"
+    "# Columns are tab-separated: zar <TAB> n64anim <TAB> csab. '#' lines and blanks are ignored.\n";
+
 static std::string overrideKey(const char* zar, const char* n64) {
     return std::string(zar) + "|" + n64;
 }
@@ -166,6 +176,7 @@ static void loadOverrides(AppState& s) {
     if (!f) return;
     std::string line;
     while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue; // skip blanks + comments (shared format)
         size_t t1 = line.find('\t'), t2 = (t1 == std::string::npos) ? t1 : line.find('\t', t1 + 1);
         if (t1 == std::string::npos || t2 == std::string::npos) continue;
         s.overrides[line.substr(0, t1) + "|" + line.substr(t1 + 1, t2 - t1 - 1)] = line.substr(t2 + 1);
@@ -176,6 +187,7 @@ static void loadOverrides(AppState& s) {
 static void saveOverrides(AppState& s) {
     std::ofstream f(s.overridesPath);
     if (!f) { s.saveMsg = "SAVE FAILED: " + s.overridesPath; return; }
+    f << kOverridesHeader;
     for (const auto& [k, v] : s.overrides) {
         size_t bar = k.find('|');
         f << k.substr(0, bar) << '\t' << k.substr(bar + 1) << '\t' << v << '\n';

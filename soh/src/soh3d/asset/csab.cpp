@@ -136,6 +136,16 @@ float Csab::sampleTrack(const Track& t, float frame, bool rotation) {
     if (length == 0) return k0->value;
     float tt = (frame - k0->time) / length;
     float p0 = k0->value, p1 = k1->value;
+    if (rotation) {
+        // int16 rotation values are wrapped to [-pi,pi); the cubic must interpolate the
+        // CONTINUOUS curve, so unwrap p1 to the branch nearest p0 (take the short way).
+        // Without this, a keyframe pair straddling +-pi (e.g. +176deg -> -168deg, a +16deg
+        // move) sweeps the long way (~-344deg) and the bone spins all the way around — seen
+        // live as Link's head/back-shield/arms "spinning weird". Tangents are slopes
+        // (angle/frame), invariant under adding 2*pi, so they stay valid.
+        const float PI = 3.14159265358979f, TAU = 6.283185307179586f;
+        p1 = p0 + (fmodf(p1 - p0 + PI + TAU, TAU) - PI);
+    }
     float s0 = k0->tangentOut * length, s1 = k1->tangentIn * length;
     float cf[4] = { 2 * p0 - 2 * p1 + s0 + s1, -3 * p0 + 3 * p1 - 2 * s0 - s1, s0, p0 };
     return pointCubic(cf, tt);

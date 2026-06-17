@@ -1313,6 +1313,7 @@ void SoH3D_DebugDrawKibako(PlayState* play) {
 //   animlive <0|1>     1=drive CSAB from the actor's SkelAnime; 0=scrub w/ animframe
 //   animrate <f>       free-running frames/draw (scrub mode)  animframe <f>  set frame
 //   spawn <name>       spawn that actor in front of Link (front-right, clears Link)
+//   actorscan <id>     list world pos + dist of every live actor with id (dec or 0xHEX)
 //   dump <path.ppm>    capture the current frame to <path> (no exit)
 //   state              report all tunables + the current computed tint
 // ===========================================================================
@@ -1577,6 +1578,28 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                                 ge->skelAnime.limbCount, ge->skelAnime.curFrame, n64 ? n64 : "(null)");
             }
         }
+    } else if (strcmp(cmd, "actorscan") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // List world positions of every live actor with id `iv` (decimal or 0xHEX), plus
+        // distance from Link — for framing multi-instance actors (e.g. En_Hata flags, id
+        // 0x26) to verify per-item pose. Tooling-first: replaces blind scene-wandering.
+        Player* pl = GET_PLAYER(play);
+        s32 cat, n = 0;
+        SoH3D_ReplReply(outPath, "actorscan id=0x%X:", iv);
+        for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL; a = a->next) {
+                if (a->id == iv) {
+                    float dx = a->world.pos.x - pl->actor.world.pos.x;
+                    float dy = a->world.pos.y - pl->actor.world.pos.y;
+                    float dz = a->world.pos.z - pl->actor.world.pos.z;
+                    SoH3D_ReplReply(outPath, "  [%d] pos=(%.0f,%.0f,%.0f) dist=%.0f cat=%d", n,
+                                    a->world.pos.x, a->world.pos.y, a->world.pos.z,
+                                    sqrtf(dx * dx + dy * dy + dz * dz), cat);
+                    n++;
+                }
+            }
+        }
+        SoH3D_ReplReply(outPath, "actorscan: %d found", n);
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.

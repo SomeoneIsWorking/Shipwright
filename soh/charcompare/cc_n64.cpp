@@ -250,7 +250,7 @@ static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, 
 }
 
 void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx,
-                  DlistKeys& keys, float rx, float ry, float rz) {
+                  DlistKeys& keys, float rx, float ry, float rz, const Rect& vp) {
     if (!m.ok) return;
     std::vector<std::array<int16_t, 3>> joints;
     sampleAnim(m, frame, joints);
@@ -281,9 +281,11 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     }
 
     // Framing matrix F (column-major M*v), same NDC fit as cc_3ds: scale + R(rx,ry,rz), center.
+    // xComp widens clip-X for a narrow (split) viewport so the model isn't squashed (see cc_3ds).
+    const float xComp = (float)SCREEN_WIDTH / vp.w;
     const float fit = 0.8f / std::max(ext[0], ext[1]);
     const float fitZ = 0.4f / ext[2];
-    const float S[3] = { fit, fit, fitZ };
+    const float S[3] = { fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));
@@ -358,15 +360,15 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
         }
     }
 
-    // Viewport + scissor (full screen for now; the side-by-side split is set in main/Phase 4).
+    // Viewport + scissor (the side-by-side split passes a half-width rect; full = whole screen).
     keys.vpStore.push_back(std::make_unique<Vp>());
-    Vp* vp = keys.vpStore.back().get();
-    vp->vp.vscale[0] = (SCREEN_WIDTH / 2) * 4;  vp->vp.vscale[1] = (SCREEN_HEIGHT / 2) * 4;
-    vp->vp.vscale[2] = G_MAXZ;                  vp->vp.vscale[3] = 0;
-    vp->vp.vtrans[0] = (SCREEN_WIDTH / 2) * 4;  vp->vp.vtrans[1] = (SCREEN_HEIGHT / 2) * 4;
-    vp->vp.vtrans[2] = 0;                       vp->vp.vtrans[3] = 0;
-    { Gfx g = gsSPViewport(vp); dl.push_back(g); }
-    { Gfx g = gsDPSetScissor(G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT); dl.push_back(g); }
+    Vp* vpp = keys.vpStore.back().get();
+    vpp->vp.vscale[0] = (vp.w / 2) * 4;            vpp->vp.vscale[1] = (vp.h / 2) * 4;
+    vpp->vp.vscale[2] = G_MAXZ;                    vpp->vp.vscale[3] = 0;
+    vpp->vp.vtrans[0] = (vp.x0 + vp.w / 2) * 4;    vpp->vp.vtrans[1] = (vp.y0 + vp.h / 2) * 4;
+    vpp->vp.vtrans[2] = 0;                         vpp->vp.vtrans[3] = 0;
+    { Gfx g = gsSPViewport(vpp); dl.push_back(g); }
+    { Gfx g = gsDPSetScissor(G_SC_NON_INTERLACE, vp.x0, vp.y0, vp.x0 + vp.w, vp.y0 + vp.h); dl.push_back(g); }
     // Identity projection (the framing is baked into the per-limb modelview, like cc_3ds).
     keys.mtxStore.push_back(std::make_unique<Mtx>());
     Mtx* projKey = keys.mtxStore.back().get();

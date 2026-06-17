@@ -59,6 +59,6 @@ void SetAnimN64(ModelN64& m, const std::string& animName);
 // given viewport (rx/ry/rz degrees orient the model like cc_3ds). keys holds the per-limb
 // MtxF storage (must outlive interp->Run).
 void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx,
-                  DlistKeys& keys, float rx, float ry, float rz);
+                  DlistKeys& keys, float rx, float ry, float rz, const Rect& vp);
 
 } // namespace cc

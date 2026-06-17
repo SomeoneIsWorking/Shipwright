@@ -148,18 +148,26 @@ int main(int argc, char** argv) {
         if (playing && !animName.empty()) frame += playSpeed;
         cc::SetAnim(model, animName, frame);
 
-        // Build this frame's display list. Default: the working 3DS viewport (Phase 2).
-        // CC_N64=1 renders the WIP N64 viewport instead (Phase 3; limb-DL geometry still
-        // crashes in the flex-matrix path — see scratch/charcompare/PHASE3_PLAN.md).
-        static const bool useN64 = getenv("CC_N64") != nullptr;
+        // Build this frame's display list. Default: side-by-side — N64 (Fast3D) in the LEFT
+        // half, 3DS (SoH3D draw/renderpass) in the RIGHT half, composited in one interp->Run.
+        // CC_N64=1 / CC_3DS=1 render a single model full-screen (diagnostics).
+        static const bool n64Only = getenv("CC_N64") != nullptr;
+        static const bool ds3Only = getenv("CC_3DS") != nullptr;
+        const cc::Rect full{ 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+        const cc::Rect leftHalf{ 0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
+        const cc::Rect rightHalf{ SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT };
         std::vector<Gfx> dl;
         std::unordered_map<Mtx*, MtxF> mtx;
         cc::DlistKeys keys;
-        if (useN64 && n64.ok) {
-            if (playing) n64Frame += playSpeed;
-            cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz);
+        if (playing) n64Frame += playSpeed;
+        if (n64Only) {
+            cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz, full);
+        } else if (ds3Only) {
+            cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz, full);
         } else {
-            cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz);
+            // N64 limbs first (Fast3D), then the 3DS draw + renderpass last so it composites on top.
+            if (n64.ok) cc::EmitDlistN64(n64, n64Frame, dl, mtx, keys, rx, ry, rz, leftHalf);
+            if (model.ok) cc::EmitDlist(model, dl, mtx, keys, rx, ry, rz, rightHalf);
         }
         Gfx end = gsSPEndDisplayList();
         dl.push_back(end);

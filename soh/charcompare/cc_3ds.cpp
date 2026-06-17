@@ -98,7 +98,7 @@ void SetAnim(const Model3ds& m, const std::string& animName, float frame) {
 }
 
 void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx, DlistKeys& keys,
-               float rx, float ry, float rz) {
+               float rx, float ry, float rz, const Rect& vp) {
     if (!m.ok) return;
 
     float ctr[3], ext[3];
@@ -110,9 +110,12 @@ void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*,
     // Identity projection; modelview = Scale(fit) * R(rx,ry,rz) about the centre, into
     // ~80% NDC (mirrors dlist_harness BuildSoH3DDlist). Convention (GfxSpVertex):
     // clip_j = sum_k pos_k * MV[k][j] + MV[3][j], so MV[k][j] = S_j * R_{jk}.
+    // xComp widens clip-X by (full width / viewport width) so a narrow (split) viewport
+    // doesn't squash the model horizontally (the viewport maps clip[-1,1] to vp.w px).
+    const float xComp = (float)SCREEN_WIDTH / vp.w;
     const float fit = 0.8f / std::max(ext[0], ext[1]);
     const float fitZ = 0.4f / ext[2];
-    const float S[3] = { fit, fit, fitZ };
+    const float S[3] = { fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));
@@ -151,18 +154,18 @@ void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*,
     mv.mf[3][3] = 1.0f;
 
     keys.vpStore.push_back(std::make_unique<Vp>());
-    Vp* vp = keys.vpStore.back().get();
-    vp->vp.vscale[0] = (SCREEN_WIDTH / 2) * 4;
-    vp->vp.vscale[1] = (SCREEN_HEIGHT / 2) * 4;
-    vp->vp.vscale[2] = G_MAXZ;
-    vp->vp.vscale[3] = 0;
-    vp->vp.vtrans[0] = (SCREEN_WIDTH / 2) * 4;
-    vp->vp.vtrans[1] = (SCREEN_HEIGHT / 2) * 4;
-    vp->vp.vtrans[2] = 0;
-    vp->vp.vtrans[3] = 0;
+    Vp* vpp = keys.vpStore.back().get();
+    vpp->vp.vscale[0] = (vp.w / 2) * 4;
+    vpp->vp.vscale[1] = (vp.h / 2) * 4;
+    vpp->vp.vscale[2] = G_MAXZ;
+    vpp->vp.vscale[3] = 0;
+    vpp->vp.vtrans[0] = (vp.x0 + vp.w / 2) * 4;
+    vpp->vp.vtrans[1] = (vp.y0 + vp.h / 2) * 4;
+    vpp->vp.vtrans[2] = 0;
+    vpp->vp.vtrans[3] = 0;
 
-    { Gfx g = gsSPViewport(vp); dl.push_back(g); }
-    { Gfx g = gsDPSetScissor(G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT); dl.push_back(g); }
+    { Gfx g = gsSPViewport(vpp); dl.push_back(g); }
+    { Gfx g = gsDPSetScissor(G_SC_NON_INTERLACE, vp.x0, vp.y0, vp.x0 + vp.w, vp.y0 + vp.h); dl.push_back(g); }
     { Gfx g = gsSPMatrix(projKey, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION); dl.push_back(g); }
     { Gfx g = gsSPMatrix(mvKey, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW); dl.push_back(g); }
     // High bit of the handle = "lit" (character half-Lambert form term).

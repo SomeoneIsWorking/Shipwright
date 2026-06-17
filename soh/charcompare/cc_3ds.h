@@ -57,7 +57,14 @@ struct DlistKeys {
     // Stable light blocks (N64 F3D lighting: gSPLight points at these by address).
     std::vector<std::unique_ptr<Lights1>> lightStore;
 };
+// Target sub-rectangle of the screen (native N64 px, 0..SCREEN_WIDTH/HEIGHT) a model is
+// drawn into, for the side-by-side split. Full screen = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT }.
+// The framing compensates X for the rect's aspect so a half-width rect isn't squashed.
+struct Rect {
+    int x0, y0, w, h;
+};
+
 void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*, MtxF>& mtx, DlistKeys& keys,
-               float rx, float ry, float rz);
+               float rx, float ry, float rz, const Rect& vp);
 
 } // namespace cc

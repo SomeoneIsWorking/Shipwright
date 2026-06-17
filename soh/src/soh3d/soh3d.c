@@ -728,14 +728,12 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
     if (zar == NULL) {
         return 0; // no OoT3D model for this object -> N64
     }
-    // Multi-part assemblies the "largest single CMB" auto-picker can't handle: it grabs one
-    // sub-piece that renders detached/floating. Skip -> N64 fallback until hand-assembled.
-    // OBJECT_KANBAN (breakable signpost): the intact sign is bo_bottom(post,Y0-3200) +
-    // bo_center(Y3200-4364) + bo_top(board,Y4364-6014); the picker took only bo_center, a
-    // mid-board chunk floating ~165u up. Grounding it alone would still show a broken sign.
-    if (objId == OBJECT_KANBAN) {
-        return 0;
-    }
+    // Multi-part assemblies the "largest single CMB" auto-picker can't handle (it grabs one
+    // detached sub-piece) are now HAND-ASSEMBLED in the model bridge's kAssemblies table:
+    // those ZARs merge their listed CMBs into one model. OBJECT_KANBAN (signpost: bo_bottom
+    // + bo_center + bo_top) is the first such entry, so it no longer needs a skip here.
+    // Any new multi-part object that the single-pick floats: add it to kAssemblies (do NOT
+    // re-add a skip) — see scratch/evidence/multicmb_finding.md for why generic merge is unsound.
     e = &sAuto[objId];
     if (e->state == 3) {
         return 0; // known-unreplaceable -> N64

@@ -66,6 +66,31 @@ const int kSceneModelBase = 1000;
 // "largest non-debris" heuristic. See SoH3D_AutoModelId / loadAutoModel.
 const int kAutoModelBase = 2000;
 
+// Hand-curated multi-part assemblies: ZARs that hold ONE object split across several CMBs
+// authored in a shared local space (so they assemble at the actor's single transform). The
+// auto path merges exactly the listed CMBs (in order) into one model instead of the
+// single-CMB "largest" pick, which would grab one floating sub-piece.
+//   A GENERIC "merge all CMBs" is unsound: a survey of all 289 mapped object ZARs found 112
+//   with >=2 "real" CMBs, but they are overwhelmingly COLLECTIONS (one ZAR shared by many
+//   actor types, e.g. zelda_ec = 23 NPCs), ALTERNATE VARIANTS (cow/cow2, koume/kotake), or
+//   BREAK-STATE/EFFECT pieces (kanban's L_*/R_* shattered halves). Genuine single-objects-
+//   split-into-parts are rare, so each entry here is hand-verified. See
+//   scratch/evidence/multicmb_finding.md.
+struct AssemblySpec {
+    const char* zarSuffix;             // matched against the ZAR path tail
+    std::vector<std::string> cmbNames; // CMB name substrings to merge, in draw order
+};
+const AssemblySpec kAssemblies[] = {
+    // OBJECT_KANBAN (signpost): the bo_* CMBs are the vertical POST segments (each ~411 wide
+    // x N tall x 411 deep, stacked Y0-6014 at the XZ origin). The wide flat BOARD (ext
+    // 2000x1155x213) is the L_*/R_* pieces — the board is authored pre-divided into 8 cuttable
+    // segments whose BAKED positions (x=-1000 / +1000, width 2000 each) tile a contiguous
+    // board at x=-2000..+2000; the slash animation moves them at runtime but at rest they are
+    // the assembled board (NOT shattered debris). So the intact sign = post + all board
+    // segments. eff_modelT is a flat slash-effect sprite -> excluded.
+    { "zelda_kanban.zar", { "kanban_bo_", "kanban_L_", "kanban_R_" } },
+};
+
 // Loaded CPU data for a model, kept alive so the renderer can upload from it and
 // so the provider can hand back stable pointers. The Zar + Cmb stay resident so the
 // animation layer can load CSABs and recompute skin matrices per frame on demand.
@@ -130,6 +155,48 @@ SoH3D::CtrRom* rom() {
 // SCENE ROOMS use it; characters/props are lit dynamically (scene ambient tint), and their
 // CMB color attribute is unused/garbage (e.g. geldwoman reads ~0 -> would render black),
 // so for those we force white (the verified-correct behavior).
+// Build one C-API group view from a CMB draw group. texBase is added to the material's
+// texture index so several CMBs' textures can share one concatenated array (multi-CMB
+// merge). verts is pointed at `srcVerts` (which must outlive the view — for merged models
+// that is a slot in out->groups, so cGroups is built only after out->groups is final).
+static SoH3DGlGroup makeCgroup(const SoH3D::Cmb& cmb, const SoH3D::CmbDrawGroup& g,
+                               const SoH3D::CmbVertex* srcVerts, int texBase) {
+    const SoH3D::CmbMaterial* mat =
+        (g.material_index >= 0 && g.material_index < (int)cmb.materials().size()) ? &cmb.materials()[g.material_index]
+                                                                                  : nullptr;
+    SoH3DGlGroup cg{};
+    cg.verts = reinterpret_cast<const SoH3DGlVtx*>(srcVerts);
+    cg.vertCount = (int)g.verts.size();
+    cg.texIndex = cmb.materialTexture(g.material_index) + texBase;
+    cg.alphaTest = mat && mat->alpha_test ? 1 : 0;
+    cg.alphaRef = mat ? mat->alpha_ref : 0.0f;
+    cg.wrapS = mat ? mat->wrap_s : 0x2901;
+    cg.wrapT = mat ? mat->wrap_t : 0x2901;
+    cg.blendEnable = mat && mat->blend_enable ? 1 : 0;
+    cg.blendSrcRGB = mat ? mat->blend_src_rgb : 0x0302;
+    cg.blendDstRGB = mat ? mat->blend_dst_rgb : 0x0303;
+    cg.blendEqRGB = mat ? mat->blend_eq_rgb : 0x8006;
+    cg.blendSrcA = mat ? mat->blend_src_a : 0x0001;
+    cg.blendDstA = mat ? mat->blend_dst_a : 0x0000;
+    cg.blendEqA = mat ? mat->blend_eq_a : 0x8006;
+    cg.depthWrite = mat ? (mat->depth_write ? 1 : 0) : 1;
+    cg.polygonOffset = mat ? mat->polygon_offset : 0.0f;
+    for (int k = 0; k < 4; k++) cg.blendColor[k] = mat ? mat->blend_color[k] : (k == 3 ? 1.0f : 0.0f);
+    return cg;
+}
+
+// Decode a CMB's textures and append them to the model's texture arrays, returning the
+// base index they were appended at (so a group's material texture index can be rebased).
+static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb) {
+    int base = (int)out->texRgba.size();
+    const auto& texs = cmb.textures();
+    for (const auto& t : texs) {
+        auto raw = cmb.textureRaw(t);
+        out->texRgba.push_back(SoH3D::PicaDecode(t.glFormat(), t.width, t.height, raw));
+    }
+    return base;
+}
+
 static void buildFromCmb(LoadedModel* out, bool bakedVertexColor) {
     SoH3D::Cmb& cmb = *out->cmb;
     out->groups = cmb.buildDrawGroups();
@@ -138,40 +205,53 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor) {
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
     }
 
-    const auto& texs = cmb.textures();
-    out->texRgba.resize(texs.size());
-    out->cTexs.resize(texs.size());
-    for (size_t i = 0; i < texs.size(); i++) {
-        auto raw = cmb.textureRaw(texs[i]);
-        out->texRgba[i] = SoH3D::PicaDecode(texs[i].glFormat(), texs[i].width, texs[i].height, raw);
-        out->cTexs[i] = { out->texRgba[i].data(), texs[i].width, texs[i].height };
-    }
+    appendTextures(out, cmb);
+    out->cTexs.resize(out->texRgba.size());
+    for (size_t i = 0; i < out->texRgba.size(); i++)
+        out->cTexs[i] = { out->texRgba[i].data(), cmb.textures()[i].width, cmb.textures()[i].height };
 
     out->cGroups.reserve(out->groups.size());
-    for (const auto& g : out->groups) {
-        const SoH3D::CmbMaterial* mat =
-            (g.material_index >= 0 && g.material_index < (int)cmb.materials().size()) ? &cmb.materials()[g.material_index]
-                                                                                      : nullptr;
-        SoH3DGlGroup cg{};
-        cg.verts = reinterpret_cast<const SoH3DGlVtx*>(g.verts.data());
-        cg.vertCount = (int)g.verts.size();
-        cg.texIndex = cmb.materialTexture(g.material_index);
-        cg.alphaTest = mat && mat->alpha_test ? 1 : 0;
-        cg.alphaRef = mat ? mat->alpha_ref : 0.0f;
-        cg.wrapS = mat ? mat->wrap_s : 0x2901;
-        cg.wrapT = mat ? mat->wrap_t : 0x2901;
-        cg.blendEnable = mat && mat->blend_enable ? 1 : 0;
-        cg.blendSrcRGB = mat ? mat->blend_src_rgb : 0x0302;
-        cg.blendDstRGB = mat ? mat->blend_dst_rgb : 0x0303;
-        cg.blendEqRGB = mat ? mat->blend_eq_rgb : 0x8006;
-        cg.blendSrcA = mat ? mat->blend_src_a : 0x0001;
-        cg.blendDstA = mat ? mat->blend_dst_a : 0x0000;
-        cg.blendEqA = mat ? mat->blend_eq_a : 0x8006;
-        cg.depthWrite = mat ? (mat->depth_write ? 1 : 0) : 1;
-        cg.polygonOffset = mat ? mat->polygon_offset : 0.0f;
-        for (int k = 0; k < 4; k++) cg.blendColor[k] = mat ? mat->blend_color[k] : (k == 3 ? 1.0f : 0.0f);
-        out->cGroups.push_back(cg);
+    for (const auto& g : out->groups) out->cGroups.push_back(makeCgroup(cmb, g, g.verts.data(), 0));
+    out->ok = true;
+}
+
+// Build a model by MERGING several CMBs (a hand-curated multi-part assembly) into one set
+// of draw groups + a concatenated texture array. Each CMB's verts are authored in the same
+// ZAR-local space (verified for the assemblies in kAssemblies), so the parts assemble at the
+// actor's single transform with no per-part offset. Characters/props are dynamically lit, so
+// vertex color is forced white (like buildFromCmb). out->cmb holds the first (main) CMB so
+// the resident-archive invariants hold; merged assemblies are static (no skinning).
+//   NOTE: a GENERIC "merge every CMB" is unsound — most multi-CMB ZARs are collections /
+//   variants / break-states, not assemblies (see scratch/evidence/multicmb_finding.md). Only
+//   the explicit, verified kAssemblies entries use this path.
+static void buildFromCmbs(LoadedModel* out, std::vector<std::unique_ptr<SoH3D::Cmb>>& cmbs) {
+    struct Src { const SoH3D::Cmb* cmb; size_t gi; int texBase; };
+    std::vector<Src> srcs;
+    for (auto& up : cmbs) {
+        SoH3D::Cmb& cmb = *up;
+        int texBase = appendTextures(out, cmb);
+        auto groups = cmb.buildDrawGroups();
+        for (auto& g : groups) {
+            for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
+            srcs.push_back({ &cmb, out->groups.size(), texBase });
+            out->groups.push_back(std::move(g));
+        }
     }
+    // out->groups is now final (no further reallocation) -> safe to point cGroups into it.
+    out->cTexs.reserve(out->texRgba.size());
+    {
+        // texture dims must be read from the owning CMB; recover them in append order.
+        size_t ti = 0;
+        for (auto& up : cmbs) {
+            for (const auto& t : up->textures()) {
+                out->cTexs.push_back({ out->texRgba[ti].data(), t.width, t.height });
+                ti++;
+            }
+        }
+    }
+    out->cGroups.reserve(out->groups.size());
+    for (const auto& s : srcs)
+        out->cGroups.push_back(makeCgroup(*s.cmb, out->groups[s.gi], out->groups[s.gi].verts.data(), s.texBase));
     out->ok = true;
 }
 
@@ -312,6 +392,41 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] auto: zar not found: %s\n", zarPath.c_str()); return; }
     out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
     if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] auto Zar %s: %s\n", zarPath.c_str(), out->zar->error().c_str()); return; }
+
+    // Hand-curated multi-part assembly? Merge exactly the named CMBs (in order) instead of
+    // single-picking one (which would render one detached sub-piece). See kAssemblies.
+    const AssemblySpec* asmSpec = nullptr;
+    for (const auto& a : kAssemblies) {
+        size_t n = std::strlen(a.zarSuffix);
+        if (zarPath.size() >= n && zarPath.compare(zarPath.size() - n, n, a.zarSuffix) == 0) { asmSpec = &a; break; }
+    }
+    if (asmSpec) {
+        std::vector<std::unique_ptr<SoH3D::Cmb>> cmbs;
+        for (const auto& want : asmSpec->cmbNames) {
+            // Each substring merges EVERY matching .cmb (in archive order), so one prefix can
+            // pull a whole subassembly (e.g. "kanban_L_" = all 4 left board segments).
+            int matched = 0;
+            for (const auto& zf : out->zar->files()) {
+                if (zf.name.size() < 4 || zf.name.compare(zf.name.size() - 4, 4, ".cmb") != 0) continue;
+                if (zf.name.find(want) == std::string::npos) continue;
+                auto c = std::make_unique<SoH3D::Cmb>(out->zar->read(zf));
+                if (!c->ok()) { fprintf(stderr, "[SoH3D] assembly %s: '%s': %s\n", zarPath.c_str(), zf.name.c_str(), c->error().c_str()); continue; }
+                cmbs.push_back(std::move(c));
+                matched++;
+            }
+            if (!matched) fprintf(stderr, "[SoH3D] assembly %s: no cmb matches '%s'\n", zarPath.c_str(), want.c_str());
+        }
+        if (!cmbs.empty()) {
+            size_t nMerged = cmbs.size();
+            out->skinned = false; // hand-listed assemblies are static props (no skinning)
+            buildFromCmbs(out, cmbs);
+            out->cmb = std::move(cmbs[0]); // keep a resident CMB (the main part)
+            printf("[SoH3D] auto-loaded ASSEMBLY model %d (%s): %zu cmbs merged, height=%.1f, %zu groups, %zu textures\n",
+                   modelId, zarPath.c_str(), nMerged, bboxHeight(out->groups), out->cGroups.size(), out->cTexs.size());
+            return;
+        }
+        fprintf(stderr, "[SoH3D] assembly %s: no cmbs merged -> single-pick fallback\n", zarPath.c_str());
+    }
 
     // Pick the MAIN model CMB. Parse each candidate once (one-time per object). Prefer the
     // most-detailed real mesh: skip debris (by name) and flat billboard/sprite quads (e.g.

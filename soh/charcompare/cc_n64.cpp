@@ -491,6 +491,12 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     uint32_t geoMode = G_ZBUFFER | G_SHADE | G_CULL_BACK | G_FOG | G_LIGHTING | G_SHADING_SMOOTH;
     if (getenv("CC_N64_NOCULL")) geoMode &= ~(uint32_t)G_CULL_BACK;
     { Gfx g = gsSPLoadGeometryMode(geoMode); dl.push_back(g); }
+    // Blend colour = the ALPHA-COMPARE THRESHOLD (.a=8) for limbs using G_AC_THRESHOLD / CVG_X_ALPHA
+    // (the interpreter alpha-tests against blend_color.a). The game sets this in its setup
+    // (z_rcp.c gsDPSetBlendColor(0,0,0,8)); we'd omitted it, so the threshold was a stale value that
+    // discarded opaque face/eye limbs (alpha 255) -> faces rendered as a VOID. With .a=8 only truly
+    // transparent texels (alpha < 8) drop, so faces render. Combine alpha here = TEXEL0 alpha.
+    { Gfx g = gsDPSetBlendColor(0, 0, 0, 8); dl.push_back(g); }
 
     // One directional + ambient light so the lit limbs shade correctly (without lights the
     // G_LIGHTING geometry mode reads garbage shade). Light direction faces the camera.

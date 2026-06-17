@@ -434,8 +434,14 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // the mesh. (Proper fix: bbox the transformed geometry like cc_3ds; tunable via CC_FIT.)
     static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.32f; }();
     const float fit = fitTarget / std::max(ext[0], ext[1]);
-    const float fitZ = (fitTarget * 0.65f) / ext[2];
-    const float S[3] = { fit * xComp, fit, fitZ };
+    // Z uses the SAME isotropic scale as X/Y — NOT a separate ext[2]-based scale. The JOINT bbox is
+    // near-flat in Z (joints sit close to the central sagittal plane) while the limb MESH protrudes
+    // far in Z (the face/hair/cape stick out hundreds of units past the joints). A z-scale derived
+    // from the tiny joint-z extent maps those protruding mesh verts to |clip z| > 1, so they get
+    // Z-CLIPPED — that is exactly why child Zelda's FACE (which sticks out in Z) rendered as a VOID
+    // while the near-planar hood/body rendered. Uniform scaling keeps the whole mesh in clip range,
+    // undistorted, and still preserves relative depth for the z-buffer (model spans ~±0.35 about 0.5).
+    const float S[3] = { fit * xComp, fit, fit };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));

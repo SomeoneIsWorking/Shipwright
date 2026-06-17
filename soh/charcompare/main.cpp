@@ -20,6 +20,7 @@
 #include <SDL2/SDL_opengl.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -172,7 +173,17 @@ static void loadSelection(AppState& s) {
     for (const auto& cs : s.model.anims) fprintf(stderr, " %s", cs.c_str());
     fprintf(stderr, "\n");
 
+    // Default to an IDLE anim, not anims[0] — the first anim is often a dramatic cutscene/attack
+    // (e.g. Saria's first = the arms-raised Seal-Ganon; a gerudo's = a combat crouch), which makes
+    // the character pose look broken by default. Prefer a name that reads as idle/wait/stand.
     s.animSel = 0;
+    static const char* idleKeys[] = { "neutral", "wait", "idle", "stand", "wai", "matsu", "w4" };
+    for (int a = 0; a < e.animCount && s.animSel == 0; a++) {
+        std::string n = e.anims[a].n64;
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return std::tolower(c); });
+        for (const char* k : idleKeys)
+            if (n.find(k) != std::string::npos) { s.animSel = a; break; }
+    }
     s.frame = 0.0f;
 }
 

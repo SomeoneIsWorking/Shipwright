@@ -113,8 +113,11 @@ void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*,
     // xComp widens clip-X by (full width / viewport width) so a narrow (split) viewport
     // doesn't squash the model horizontally (the viewport maps clip[-1,1] to vp.w px).
     const float xComp = (float)SCREEN_WIDTH / vp.w;
-    const float fit = 0.8f / std::max(ext[0], ext[1]);
-    const float fitZ = 0.4f / ext[2];
+    // 0.55 (was 0.8) leaves margin so the model isn't jammed against the viewport edges; CC_FIT3DS
+    // overrides. (This is the GEOMETRY bbox, so it's a true fit unlike the N64 joint-bbox side.)
+    static float fitTarget = [] { const char* e = getenv("CC_FIT3DS"); return e ? (float)atof(e) : 0.55f; }();
+    const float fit = fitTarget / std::max(ext[0], ext[1]);
+    const float fitZ = (fitTarget * 0.5f) / ext[2];
     const float S[3] = { fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),

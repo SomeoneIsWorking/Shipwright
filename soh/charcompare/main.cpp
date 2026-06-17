@@ -23,6 +23,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -91,7 +93,54 @@ struct AppState {
     bool playing = true;
     float playSpeed = 0.5f;        // frames per render-frame
     float rx = 0, ry = 180, rz = 0; // face the camera (characters author facing +Z away)
+    // Hand-curated N64-anim -> 3DS-CSAB corrections. Key = "<zar>|<n64anim>", value = chosen CSAB.
+    // Overrides the generated best-match; persisted to overridesPath so the next run + the index
+    // generator (gen_charcompare_index.py reads it) pick up the corrections.
+    std::map<std::string, std::string> overrides;
+    std::string overridesPath;
+    std::string saveMsg;
 };
+
+static std::string overrideKey(const char* zar, const char* n64) {
+    return std::string(zar) + "|" + n64;
+}
+
+// Curation file lives at <repo>/tools/skeldata/charcompare_overrides.tsv so it travels with the
+// data and the index generator can read it. Derive the repo from the executable path
+// (<repo>/Shipwright/build-cmake/soh/charcompare/charcompare); fall back to the cwd.
+static std::string locateOverridesPath(const char* argv0) {
+    if (const char* e = getenv("CC_OVERRIDES")) return e;
+    std::error_code ec;
+    fs::path exe = fs::weakly_canonical(fs::path(argv0 ? argv0 : ""), ec);
+    if (!ec) {
+        fs::path repo = exe.parent_path().parent_path().parent_path().parent_path().parent_path();
+        fs::path p = repo / "tools" / "skeldata";
+        if (fs::exists(p)) return (p / "charcompare_overrides.tsv").string();
+    }
+    return "charcompare_overrides.tsv";
+}
+
+static void loadOverrides(AppState& s) {
+    std::ifstream f(s.overridesPath);
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t t1 = line.find('\t'), t2 = (t1 == std::string::npos) ? t1 : line.find('\t', t1 + 1);
+        if (t1 == std::string::npos || t2 == std::string::npos) continue;
+        s.overrides[line.substr(0, t1) + "|" + line.substr(t1 + 1, t2 - t1 - 1)] = line.substr(t2 + 1);
+    }
+    fprintf(stderr, "[charcompare] loaded %zu anim overrides from %s\n", s.overrides.size(), s.overridesPath.c_str());
+}
+
+static void saveOverrides(AppState& s) {
+    std::ofstream f(s.overridesPath);
+    if (!f) { s.saveMsg = "SAVE FAILED: " + s.overridesPath; return; }
+    for (const auto& [k, v] : s.overrides) {
+        size_t bar = k.find('|');
+        f << k.substr(0, bar) << '\t' << k.substr(bar + 1) << '\t' << v << '\n';
+    }
+    s.saveMsg = "saved " + std::to_string(s.overrides.size()) + " -> " + s.overridesPath;
+}
 
 static std::vector<int> entriesInCategory(const std::string& cat) {
     std::vector<int> v;
@@ -116,8 +165,24 @@ static void loadSelection(AppState& s) {
     s.n64 = cc::LoadN64Auto(std::string("objects/") + e.object, animSyms);
     if (!s.n64.ok) fprintf(stderr, "[charcompare] N64 load failed (%s): %s\n", e.object, s.n64.error.c_str());
 
+    // Print the available 3DS CSABs (the override candidates) so the CLI/curation loop can see them.
+    fprintf(stderr, "[charcompare] %s 3DS CSABs (%zu):", e.zar, s.model.anims.size());
+    for (const auto& cs : s.model.anims) fprintf(stderr, " %s", cs.c_str());
+    fprintf(stderr, "\n");
+
     s.animSel = 0;
     s.frame = 0.0f;
+}
+
+// The 3DS CSAB currently used for an N64 anim: CC_CSAB (transient render override, for the
+// AI-driven "render this pairing and screenshot it" loop) wins; then a saved hand override; then
+// the generated best-match from the index.
+static std::string effectiveCsab(const AppState& s, const cc::IndexEntry& e, const cc::IndexAnim& a) {
+    static const char* forceCsab = getenv("CC_CSAB");
+    if (forceCsab && forceCsab[0]) return forceCsab;
+    auto it = s.overrides.find(overrideKey(e.zar, a.n64));
+    if (it != s.overrides.end()) return it->second;
+    return a.csab ? a.csab : "";
 }
 
 // Apply the selected animation to both models for the current frame.
@@ -128,8 +193,9 @@ static void applyAnim(AppState& s) {
     if (e.animCount == 0) return;
     s.animSel = std::clamp(s.animSel, 0, e.animCount - 1);
     const cc::IndexAnim& a = e.anims[s.animSel];
+    std::string csab = effectiveCsab(s, e, a);
     cc::SetAnimN64(s.n64, a.n64);
-    cc::SetAnim(s.model, a.csab && a.csab[0] ? a.csab : "", s.frame);
+    cc::SetAnim(s.model, csab.empty() ? "" : csab.c_str(), s.frame);
 }
 
 int main(int argc, char** argv) {
@@ -183,7 +249,21 @@ int main(int argc, char** argv) {
             break;
         }
     }
+    st.overridesPath = locateOverridesPath(argv[0]);
+    loadOverrides(st);
     loadSelection(st);
+
+    // CLI/env driving for the AI-curation loop: CC_N64ANIM selects a specific N64 anim by symbol
+    // (substring match); CC_CSAB (handled in effectiveCsab) forces the 3DS CSAB. Combined with
+    // CC_NOGUI + CC_SHOT this renders one (character, N64 anim, 3DS CSAB) pairing headlessly.
+    if (const char* wantAnim = getenv("CC_N64ANIM")) {
+        auto es = entriesInCategory(st.categories[st.catSel]);
+        if (!es.empty()) {
+            const cc::IndexEntry& e = cc::CcIndex()[es[st.entrySel]];
+            for (int i = 0; i < e.animCount; i++)
+                if (std::string(e.anims[i].n64).find(wantAnim) != std::string::npos) { st.animSel = i; break; }
+        }
+    }
 
     // Headless verification hooks.
     std::string shotPath = getenv("CC_SHOT") ? getenv("CC_SHOT") : "";
@@ -266,15 +346,17 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndCombo();
             }
-            // ANIMATION (label shows N64 anim -> mapped 3DS CSAB)
+            // N64 ANIMATION (a "*" marks anims with a hand override)
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(260);
-            const char* curAnim = (e.animCount > 0) ? e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].n64 : "(none)";
-            if (ImGui::BeginCombo("anim", curAnim)) {
+            ImGui::SetNextItemWidth(240);
+            int ai = (e.animCount > 0) ? std::clamp(st.animSel, 0, e.animCount - 1) : 0;
+            const char* curAnim = (e.animCount > 0) ? e.anims[ai].n64 : "(none)";
+            if (ImGui::BeginCombo("N64 anim", curAnim)) {
                 for (int i = 0; i < e.animCount; i++) {
                     bool sel = (i == st.animSel);
+                    bool ov = st.overrides.count(overrideKey(e.zar, e.anims[i].n64)) > 0;
                     char lbl[256];
-                    snprintf(lbl, sizeof(lbl), "%s  ->  %s", e.anims[i].n64,
+                    snprintf(lbl, sizeof(lbl), "%s%s  ->  %s", ov ? "* " : "", e.anims[i].n64,
                              e.anims[i].csab[0] ? e.anims[i].csab : "(no csab)");
                     if (ImGui::Selectable(lbl, sel)) {
                         st.animSel = i;
@@ -285,10 +367,41 @@ int main(int argc, char** argv) {
                 ImGui::EndCombo();
             }
 
-            ImGui::Text("%s  N64:%s  3DS-csab:%s", e.zar, st.n64.ok ? st.n64.skelName.c_str() : "FAIL",
-                        (e.animCount > 0 && e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].csab[0])
-                            ? e.anims[std::clamp(st.animSel, 0, e.animCount - 1)].csab
-                            : "-");
+            // 3DS CSAB override: pick ANY of this model's CSABs (or reset to the auto best-match).
+            // Selecting one records an override for (this character, this N64 anim).
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220);
+            std::string key = (e.animCount > 0) ? overrideKey(e.zar, e.anims[ai].n64) : "";
+            std::string eff = (e.animCount > 0) ? effectiveCsab(st, e, e.anims[ai]) : "";
+            bool overridden = st.overrides.count(key) > 0;
+            std::string preview = (overridden ? "* " : "") + (eff.empty() ? std::string("(none)") : eff);
+            if (ImGui::BeginCombo("3DS csab", preview.c_str())) {
+                const char* best = (e.animCount > 0 && e.anims[ai].csab[0]) ? e.anims[ai].csab : "(none)";
+                char autoLbl[256];
+                snprintf(autoLbl, sizeof(autoLbl), "<auto: %s>", best);
+                if (ImGui::Selectable(autoLbl, !overridden)) {
+                    st.overrides.erase(key);
+                    st.frame = 0.0f;
+                }
+                for (const auto& cs : st.model.anims) {
+                    bool sel = overridden && eff == cs;
+                    if (ImGui::Selectable(cs.c_str(), sel)) {
+                        st.overrides[key] = cs;
+                        st.frame = 0.0f;
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Save overrides")) saveOverrides(st);
+
+            ImGui::Text("%s  N64:%s  3DS-csab:%s%s", e.zar, st.n64.ok ? st.n64.skelName.c_str() : "FAIL",
+                        eff.empty() ? "-" : eff.c_str(), overridden ? "  (override)" : "");
+            if (!st.saveMsg.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.5f, 1, 0.5f, 1), "[%s]", st.saveMsg.c_str());
+            }
             if (!st.n64.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "N64: %s", st.n64.error.c_str());
             if (!st.model.ok) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "3DS: %s", st.model.error.c_str());
 

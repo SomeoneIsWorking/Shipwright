@@ -125,7 +125,11 @@ void EmitDlist(const Model3ds& m, std::vector<Gfx>& dl, std::unordered_map<Mtx*,
     // 0.55 (was 0.8) leaves margin so the model isn't jammed against the viewport edges; CC_FIT3DS
     // overrides. (This is the GEOMETRY bbox, so it's a true fit unlike the N64 joint-bbox side.)
     static float fitTarget = [] { const char* e = getenv("CC_FIT3DS"); return e ? (float)atof(e) : 0.55f; }();
-    const float fit = fitTarget / std::max(ext[0], ext[1]);
+    // Frame by HEIGHT (Y), not max(width,height): a wide rest pose (e.g. Darunia's arms-out T-pose
+    // bind) would otherwise shrink the model to fit its width. Height is pose-stable and is the
+    // natural sizing dimension for a standing character, and matches the N64 side (also height-fit),
+    // so the two halves are the same size. ext clamped so a flat model doesn't divide by ~0.
+    const float fit = fitTarget / std::max(ext[1], 1.0f);
     const float fitZ = (fitTarget * 0.5f) / ext[2];
     // X is NEGATED so this modelview has a NEGATIVE determinant, matching the GAME's handedness.
     // Root cause (same as the N64 cc_n64.cpp X-flip): in the live game the SoH3D draw is submitted

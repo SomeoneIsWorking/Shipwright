@@ -505,7 +505,10 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // (Before the mesh measure completes, ext is the joint bbox for one transient frame.) CC_FIT
     // overrides.
     static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.55f; }();
-    const float fit = fitTarget / std::max(ext[0], ext[1]);
+    // Frame by HEIGHT (Y) — pose-stable and matches the 3DS side, so the halves size-match. Framing
+    // by max(width,height) shrank wide rest poses (arms-out) vs the other side. ext is the cached
+    // geometry half-extent (joint bbox for the one frame before the mesh measure completes).
+    const float fit = fitTarget / std::max(ext[1], 1.0f);
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
           sz = sinf(rad(rz));

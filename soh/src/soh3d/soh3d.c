@@ -59,6 +59,7 @@ static struct {
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_GL_FrameBegin(void); // drop any SoH3D draws left unrendered from a prior frame
 void SoH3D_GL_SetLightDir(const float dirWorld[3]); // scene sun dir (world space) for the form term
+void SoH3D_GL_EmitPose(int modelId); // snapshot this actor's pose at emit time (per-item skinning)
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 // Retarget a live N64 SkelAnime pose onto the OoT3D skeleton (GPU skinning). jointRots =
 // &jointTable[1] (per-limb binang Vec3s; root translation jointTable[0] is skipped),
@@ -511,6 +512,10 @@ static void SoH3D_EmitModelDraw(PlayState* play, int modelId, Actor* actor, floa
     if (groundOffset != 0.0f) Matrix_Translate(0.0f, groundOffset, 0.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
+    // Snapshot this actor's pose NOW (its SkelAnime/CSAB pose was just set via SoH3D_UpdateAnim*),
+    // before a later same-model actor overwrites the per-model bone store; the deferred draw is
+    // interpreted long after build, so per-item pose must be captured here. See SoH3D_GL_EmitPose.
+    SoH3D_GL_EmitPose(modelId);
     // High bit of the handle = "lit": apply the half-Lambert FORM term. Characters/props carry no
     // baked vertex lighting, so without this they render flat; scene rooms (other emit site) keep
     // their bit clear so their baked vColor AO isn't double-shaded.

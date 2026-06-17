@@ -41,6 +41,13 @@ struct ModelN64 {
     // keep the resource shared_ptrs alive
     std::shared_ptr<void> skelRes, animRes;
     std::vector<std::shared_ptr<void>> limbRes;
+    // Actor-provided face textures: the eye/mouth limb DLs reference raw N64 segments (0x08 eyes,
+    // 0x0A mouth) that the actor normally binds each frame (En_Zl4 etc.). We're not the actor, so
+    // we bind a neutral default per segment to a persistent "__OTR__<path>" string — exactly how the
+    // game's gSPSegment(seg, SEGMENTED_TO_VIRTUAL(eyeTex)) works (eyeTex IS that string; the limb
+    // DL's raw G_SETTIMG resolves the segment, sees the OTR signature, and loads the texture).
+    // Without this the segment is unbound -> the face renders as a VOID.
+    std::vector<std::pair<int, std::string>> faceSegs; // (segment number, "__OTR__<path>")
 };
 
 // Register the resource factories the N64 path needs (Fast DisplayList/Vertex/Texture/

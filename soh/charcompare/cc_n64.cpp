@@ -133,6 +133,54 @@ std::vector<std::string> FindN64Skeletons(const std::string& objectPath) {
     return out;
 }
 
+// Scan an object's textures for the actor-animated EYE/MOUTH textures and bind a neutral default
+// per face segment. OoT actors that animate a face (En_Zl4, En_Md, Malon, ...) draw eye/mouth via
+// raw N64 segments the ACTOR sets each frame: by overwhelming convention segment 0x08 = right eye,
+// 0x09 = left eye, 0x0A = mouth (see z_en_zl4.c:1305 — eyeTex on 0x08/0x09, mouthTex on 0x0A). The
+// limb DLs G_SETTIMG those segments; unbound, the face is a VOID (the eye/mouth textures live in the
+// object but are never reached). We pick a neutral expression (open eyes, neutral mouth) and bind it.
+// NOTE: this assumes the canonical two-eyes+mouth layout. Outlier actors using a different segment
+// for the mouth would mis-map, but those slots were void before, so this never regresses a face.
+static void scanFaceTextures(ModelN64& m) {
+    auto am = Ship::Context::GetRawInstance()->GetResourceManager()->GetArchiveManager();
+    auto list = am->ListFiles(m.objectPath + "/*");
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        return s;
+    };
+    // Collect candidate eye / mouth texture basenames (skip the palette/TLUT companions "TLUT"/"Pal").
+    std::vector<std::string> eyes, mouths;
+    for (const auto& p : *list) {
+        size_t slash = p.find_last_of('/');
+        std::string name = (slash == std::string::npos) ? p : p.substr(slash + 1);
+        std::string ln = lower(name);
+        if (ln.find("tex") == std::string::npos) continue; // textures only
+        if (ln.find("tlut") != std::string::npos || ln.find("pal") != std::string::npos) continue;
+        if (ln.find("eye") != std::string::npos) eyes.push_back(name);
+        else if (ln.find("mouth") != std::string::npos) mouths.push_back(name);
+    }
+    // Pick the most "neutral" candidate by name preference, else the first.
+    auto pick = [&](const std::vector<std::string>& v, std::initializer_list<const char*> prefer) -> std::string {
+        for (const char* key : prefer)
+            for (const auto& s : v)
+                if (lower(s).find(key) != std::string::npos) return s;
+        return v.empty() ? std::string() : v.front();
+    };
+    std::string eye = pick(eyes, { "open", "normal", "default" });
+    std::string mouth = pick(mouths, { "neutral", "normal", "close", "default" });
+
+    m.faceSegs.clear();
+    if (!eye.empty()) {
+        std::string otr = "__OTR__" + m.objectPath + "/" + eye;
+        m.faceSegs.emplace_back(0x08, otr); // right eye
+        m.faceSegs.emplace_back(0x09, otr); // left eye
+    }
+    if (!mouth.empty())
+        m.faceSegs.emplace_back(0x0A, "__OTR__" + m.objectPath + "/" + mouth);
+    if (!m.faceSegs.empty())
+        fprintf(stderr, "[cc_n64] face textures: eye='%s' mouth='%s'\n", eye.c_str(), mouth.c_str());
+}
+
 void SetAnimN64(ModelN64& m, const std::string& animName) {
     if (animName.empty()) return;
     std::string path = m.objectPath + "/" + animName;
@@ -185,6 +233,8 @@ ModelN64 LoadN64(const std::string& objectPath, const std::string& skelName,
             return m;
         }
     }
+
+    scanFaceTextures(m); // bind neutral eye/mouth textures to the actor face segments (0x08-0x0A)
 
     if (!animNames.empty()) SetAnimN64(m, animNames[0]);
 
@@ -326,7 +376,7 @@ static void emitLimbs(ModelN64& m, int limbIndex, const std::vector<int>& slot, 
             m.limbRes.push_back(res);
             if (getenv("CC_N64_DUMPDL")) {
                 fprintf(stderr, "[cc_n64] limb %d slot %d DL %s:\n", limbIndex, slot[limbIndex], p.c_str());
-                for (Gfx* c = g; c < g + 200; c++) {
+                for (Gfx* c = g; c < g + 2000; c++) {
                     uintptr_t w0 = (uintptr_t)c->words.w0, w1 = (uintptr_t)c->words.w1;
                     unsigned op = (unsigned)((w0 >> 24) & 0xFF);
                     fprintf(stderr, "      op=%02X w0=%016zx w1=%016zx\n", op, w0, w1);
@@ -533,6 +583,17 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // Segment 0x0D is OURS (the per-limb matrix array) and must not be overwritten.
     for (int seg = 0x01; seg <= 0x0C; seg++) {
         Gfx g = gsSPSegment(seg, (uintptr_t)kScratchSeg.data());
+        dl.push_back(g);
+    }
+    // Override the actor face segments (0x08 eyes, 0x0A mouth) with the neutral default textures
+    // scanned from the object. The path strings live in m.faceSegs (stable for this model's life);
+    // gSPSegment binds the segment to the "__OTR__<path>" pointer, and the limb DL's raw G_SETTIMG
+    // resolves it -> OTR signature -> texture loads. This is exactly what the actor does each frame.
+    // (Must come AFTER the scratch-segment loop so it wins for 0x08/0x09/0x0A.)
+    for (const auto& [seg, path] : m.faceSegs) {
+        if (getenv("CC_N64_DBG"))
+            fprintf(stderr, "[cc_n64] bind seg 0x%02X -> %p '%s'\n", seg, (void*)path.c_str(), path.c_str());
+        Gfx g = gsSPSegment(seg, (uintptr_t)path.c_str());
         dl.push_back(g);
     }
 

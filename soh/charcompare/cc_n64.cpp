@@ -379,8 +379,12 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     // past the joints (head/hands), so a tighter joint-fit would clip the mesh. (A proper fix would
     // bbox the transformed geometry like cc_3ds; the margin keeps the whole model on screen for now.)
     const float xComp = (float)SCREEN_WIDTH / vp.w;
-    const float fit = 0.62f / std::max(ext[0], ext[1]);
-    const float fitZ = 0.4f / ext[2];
+    // The bbox is over JOINTS; the limb MESH extends well past them (wings, hair, held weapons),
+    // so a joint-fit of ~0.6 NDC badly over-zooms (mesh overflows the frame). 0.32 leaves room for
+    // the mesh. (Proper fix: bbox the transformed geometry like cc_3ds; tunable via CC_FIT.)
+    static float fitTarget = [] { const char* e = getenv("CC_FIT"); return e ? (float)atof(e) : 0.32f; }();
+    const float fit = fitTarget / std::max(ext[0], ext[1]);
+    const float fitZ = (fitTarget * 0.65f) / ext[2];
     const float S[3] = { fit * xComp, fit, fitZ };
     auto rad = [](float d) { return d * 3.14159265358979f / 180.0f; };
     float cx = cosf(rad(rx)), sx = sinf(rad(rx)), cyr = cosf(rad(ry)), syr = sinf(rad(ry)), cz = cosf(rad(rz)),
@@ -408,18 +412,13 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     }
     F.mf[3][3] = 1.0f;
 
-    // Pass 1b (with framing F): the posed world matrix of every limb, packed into the N64
-    // fixed-point Mtx array that segment 0x0D is bound to. Flex limb DLs load their matrices
-    // (their own + others', for multi-limb verts) from this segment, so ALL limbs must be filled.
-    std::vector<MtxF> world(m.limbCount);
-    computeWorld(m, 0, F, joints, world);
-    if (getenv("CC_N64_DBG")) {
-        for (int i = 0; i < m.limbCount; i++) {
-            float o[3], zero[3] = { 0, 0, 0 };
-            matApply(world[i], zero, o);
-            fprintf(stderr, "   limb %2d CLIP (%.3f,%.3f,%.3f)\n", i, o[0], o[1], o[2]);
-        }
-    }
+    // The per-limb matrices packed into segment 0x0D are the MODEL-SPACE FK (worldId, computed from
+    // identity) — NOT the framed F*FK. The flex limb DLs read these as N64 16.16 FIXED-POINT, which
+    // has ~4 fractional digits: fine for model-space matrices (3x3 ~1, translations in the hundreds,
+    // exactly like the real game) but catastrophic if the tiny framing scale (~7e-4) is baked in
+    // (entries quantize to a few ulps -> flex cross-referenced meshes tear). The framing F instead
+    // goes in the PROJECTION matrix below (float replacement map, exact), so MP = FK * F frames the
+    // model with full precision — mirroring how the game uses modelview(model) * projection.
     // Slot assignment (draw order) -> the segment-0x0D array is sized by dList-bearing limbs.
     std::vector<int> slot(m.limbCount, -1);
     int dlCount = 0;
@@ -432,7 +431,7 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     keys.blobs.push_back(std::make_unique<std::vector<int32_t>>(std::max(dlCount, 1) * 16));
     int32_t* mtxArray = keys.blobs.back()->data();
     for (int i = 0; i < m.limbCount; i++)
-        if (slot[i] >= 0) guMtxF2L(world[i], &mtxArray[slot[i] * 16]);
+        if (slot[i] >= 0) guMtxF2L(worldId[i], &mtxArray[slot[i] * 16]);
     if (getenv("CC_N64_DBG")) {
         // Round-trip: read back slot N exactly as the interpreter's fixed-point reader does.
         auto readback = [&](int s, float out[4][4]) {
@@ -449,10 +448,9 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
             if (slot[li] < 0) continue;
             float rb[4][4];
             readback(slot[li], rb);
-            fprintf(stderr, "[cc_n64] limb%d slot%d  world.trans(%.4f,%.4f,%.4f) readback.trans(%.4f,%.4f,%.4f)\n",
-                    li, slot[li], world[li].mf[3][0], world[li].mf[3][1], world[li].mf[3][2], rb[3][0], rb[3][1], rb[3][2]);
-            fprintf(stderr, "        world.3x3row0(%.5f,%.5f,%.5f) readback.3x3row0(%.5f,%.5f,%.5f)\n",
-                    world[li].mf[0][0], world[li].mf[1][0], world[li].mf[2][0], rb[0][0], rb[1][0], rb[2][0]);
+            fprintf(stderr, "[cc_n64] limb%d slot%d  FK.trans(%.1f,%.1f,%.1f) readback.trans(%.1f,%.1f,%.1f)\n",
+                    li, slot[li], worldId[li].mf[3][0], worldId[li].mf[3][1], worldId[li].mf[3][2], rb[3][0], rb[3][1],
+                    rb[3][2]);
         }
     }
 
@@ -465,11 +463,12 @@ void EmitDlistN64(ModelN64& m, float frame, std::vector<Gfx>& dl, std::unordered
     vpp->vp.vtrans[2] = 0;                         vpp->vp.vtrans[3] = 0;
     { Gfx g = gsSPViewport(vpp); dl.push_back(g); }
     { Gfx g = gsDPSetScissor(G_SC_NON_INTERLACE, vp.x0, vp.y0, vp.x0 + vp.w, vp.y0 + vp.h); dl.push_back(g); }
-    // Identity projection (the framing is baked into the per-limb modelview, like cc_3ds).
+    // Projection = the framing F (via the float replacement map, so it's exact). MP = MatrixMul(
+    // modelview=FK, P=F) frames the model-space FK with full precision (the segment-0x0D FK stays
+    // model-scale for good fixed-point precision). Mirrors the game's modelview(model)*projection.
     keys.mtxStore.push_back(std::make_unique<Mtx>());
     Mtx* projKey = keys.mtxStore.back().get();
-    MtxF& proj = mtx[projKey];
-    matIdentity(proj);
+    mtx[projKey] = F;
     { Gfx g = gsSPMatrix(projKey, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION); dl.push_back(g); }
 
     // Persistent RDP/RSP render state the limb DLs assume the game already set

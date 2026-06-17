@@ -92,7 +92,9 @@ struct AppState {
     float frame = 0.0f;
     bool playing = true;
     float playSpeed = 0.5f;        // frames per render-frame
-    float rx = 0, ry = 180, rz = 0; // face the camera (characters author facing +Z away)
+    // 3/4 view (slightly turned from dead-front): a far better default than ry=180 — front-on hides
+    // depth and makes wing/cape/weapon spread look like a flat "kite". CC_ROTX/Y/Z override.
+    float rx = 0, ry = 150, rz = 0;
     // Hand-curated N64-anim -> 3DS-CSAB corrections. Key = "<zar>|<n64anim>", value = chosen CSAB.
     // Overrides the generated best-match; persisted to overridesPath so the next run + the index
     // generator (gen_charcompare_index.py reads it) pick up the corrections.
@@ -252,6 +254,11 @@ int main(int argc, char** argv) {
     st.overridesPath = locateOverridesPath(argv[0]);
     loadOverrides(st);
     loadSelection(st);
+
+    // Inspection rotation overrides (degrees) — view the models from any angle for diagnosis.
+    if (const char* e = getenv("CC_ROTX")) st.rx = (float)atof(e);
+    if (const char* e = getenv("CC_ROTY")) st.ry = (float)atof(e);
+    if (const char* e = getenv("CC_ROTZ")) st.rz = (float)atof(e);
 
     // CLI/env driving for the AI-curation loop: CC_N64ANIM selects a specific N64 anim by symbol
     // (substring match); CC_CSAB (handled in effectiveCsab) forces the 3DS CSAB. Combined with

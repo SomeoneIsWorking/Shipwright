@@ -1312,6 +1312,14 @@ float gSoH3dLinkRotY = 0.0f;
 float gSoH3dLinkRotZ = 0.0f;
 char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link (verify idle/walk/run
                                    // deterministically without real movement input); empty = live-resolve
+// Player animation SOURCE (REPL `linksrc`, env SOH3D_LINK_SRC). Two independent, both-working modes:
+//   0 = 3DS own-CSAB: play the OoT3D link rig's own CSAB matching the named player anim (kPlayerAnimMap).
+//       Faithful for discrete states (idle fidgets, jumps, item use) but BLIND to walk/run — OoT blends
+//       locomotion into jointTable without naming an anim, so Link slides without a walk cycle.
+//   1 = N64 retarget: drive the OoT3D rig from Link's LIVE skelAnime.jointTable every frame (the final
+//       blended pose). Captures walk/run/everything exactly, in lockstep with the N64 body.
+// User-selectable per [[soh3d-link-player-path]]; default N64 so locomotion works out of the box.
+int gSoH3dLinkAnimSrc = -1;
 
 static int SoH3D_LinkEnabled(void) {
     if (gSoH3dLinkOn < 0) {
@@ -1319,6 +1327,18 @@ static int SoH3D_LinkEnabled(void) {
         gSoH3dLinkOn = (v != NULL && v[0] == '1') ? 1 : 0; // default OFF (WIP)
     }
     return gSoH3dLinkOn;
+}
+
+// Player animation source: 1 = N64 jointTable retarget (default), 0 = 3DS own-CSAB. env SOH3D_LINK_SRC
+// ("n64"/"3ds" or 1/0); REPL `linksrc`.
+static int SoH3D_LinkAnimSrc(void) {
+    if (gSoH3dLinkAnimSrc < 0) {
+        const char* v = getenv("SOH3D_LINK_SRC");
+        // default 3DS own-CSAB (renders a correct standing Link); N64 retarget is opt-in WIP until
+        // the player bonemap + divergent-rest-pose retarget land (identity map scrambles the rig).
+        gSoH3dLinkAnimSrc = (v != NULL && v[0] == '1') ? 1 : 0;
+    }
+    return gSoH3dLinkAnimSrc;
 }
 
 static int SoH3D_ItemsEnabled(void) {
@@ -1519,31 +1539,50 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
-    // OWN-CSAB animation: pick the link CSAB matching Link's live N64 anim and pose the OoT3D rig
-    // to it, phase-locked to the player's anim progress (curFrame/animLength). Player is Actor-first
-    // so the cast is valid (see z64player.h). Unmapped -> idle so it never freezes in bind pose.
+    // Player is Actor-first so the cast is valid (see z64player.h).
     player = (Player*)actor;
-    csab = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
-    if (csab == NULL) {
-        csab = SOH3D_LINK_IDLE_CSAB;
-    }
-    if (gSoH3dLinkForceCsab[0] != '\0') {
-        csab = gSoH3dLinkForceCsab; // REPL `linkanim` override (verification)
-    }
-    if (gSoH3dAnimDebug) {
-        static int dbg = 0;
-        if ((dbg++ % 30) == 0) {
-            const char* otr = (const char*)player->skelAnime.animation;
-            printf("SOH3D LINK: n64=%s -> csab=%s frame=%.1f/%.1f\n", otr ? otr : "(none)", csab,
-                   player->skelAnime.curFrame, player->skelAnime.animLength);
-            fflush(stdout);
+    // Two user-selectable animation sources (REPL `linksrc`), both kept working:
+    if (SoH3D_LinkAnimSrc() == 1 && gSoH3dLinkForceCsab[0] == '\0' &&
+        player->skelAnime.jointTable != NULL && player->skelAnime.limbCount > 0) {
+        // N64 RETARGET: drive the OoT3D rig from Link's LIVE blended jointTable (captures walk/run and
+        // every blended state, which the named-CSAB path is blind to). jointTable[0] = root translation,
+        // skip it; bone i <- limb (i+1), identity map (NULL) — childlink_v2's first limbs mirror the N64
+        // rig, the extra trailing OoT3D bones get no live joint and keep their rest pose.
+        if (gSoH3dAnimDebug) {
+            static int dbg = 0;
+            if ((dbg++ % 30) == 0) {
+                printf("SOH3D LINK: src=N64 jointTable limbCount=%d (live blended pose)\n",
+                       player->skelAnime.limbCount);
+                fflush(stdout);
+            }
         }
-    }
-    if (strcmp(csab, "rest") == 0) {
-        SoH3D_UpdateAnim(modelId, NULL, 0); // diagnostic: force bind pose (linkanim rest)
+        SoH3D_UpdateAnimN64Mapped(modelId, (const s16*)&player->skelAnime.jointTable[1],
+                                  player->skelAnime.limbCount, NULL, 0);
     } else {
-        SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
-                             player->skelAnime.animLength);
+        // 3DS OWN-CSAB: pick the link CSAB matching Link's named anim, phase-locked to curFrame/animLength.
+        // Unmapped -> idle so it never freezes in bind pose.
+        csab = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
+        if (csab == NULL) {
+            csab = SOH3D_LINK_IDLE_CSAB;
+        }
+        if (gSoH3dLinkForceCsab[0] != '\0') {
+            csab = gSoH3dLinkForceCsab; // REPL `linkanim` override (verification)
+        }
+        if (gSoH3dAnimDebug) {
+            static int dbg = 0;
+            if ((dbg++ % 30) == 0) {
+                const char* otr = (const char*)player->skelAnime.animation;
+                printf("SOH3D LINK: src=3DS n64=%s -> csab=%s frame=%.1f/%.1f\n", otr ? otr : "(none)", csab,
+                       player->skelAnime.curFrame, player->skelAnime.animLength);
+                fflush(stdout);
+            }
+        }
+        if (strcmp(csab, "rest") == 0) {
+            SoH3D_UpdateAnim(modelId, NULL, 0); // diagnostic: force bind pose (linkanim rest)
+        } else {
+            SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
+                                 player->skelAnime.animLength);
+        }
     }
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
@@ -2026,6 +2065,16 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dLinkForceCsab[0] = '\0';
             SoH3D_ReplReply(outPath, "linkanim OFF (live anim resolution restored)");
         }
+    } else if (strcmp(cmd, "linksrc") == 0) {
+        // `linksrc n64|3ds` — choose Link's animation source. n64 = retarget the live blended jointTable
+        // (walk/run + everything), 3ds = the OoT3D rig's own named CSABs.
+        extern int gSoH3dLinkAnimSrc;
+        char name[16] = "";
+        if (sscanf(line, "%*s %15s", name) == 1) {
+            gSoH3dLinkAnimSrc = (name[0] == '0' || name[0] == '3') ? 0 : 1;
+        }
+        SoH3D_ReplReply(outPath, "linksrc=%s", gSoH3dLinkAnimSrc == 1 ? "n64 (live jointTable retarget)"
+                                                                      : "3ds (own CSAB)");
     } else if (strcmp(cmd, "light") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         extern int gSoH3dLightEnable; // libultraship soh3d_gl.cpp: character/prop form lighting
         gSoH3dLightEnable = (int)f1;

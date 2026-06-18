@@ -507,15 +507,11 @@ void Cutscene_Command_Terminator(PlayState* play, CutsceneContext* csCtx, CsCmdB
         shouldSkipCommand = true;
     }
 
-    // Player-initiated skip: press START to skip a skippable in-game cutscene. This is the same
-    // jump-to-terminator path the developer skip has always used (so it lands in the proper
-    // post-cutscene state), now available to players by default instead of being an all-or-nothing
-    // auto-skip. Gated by an enhancement CVar (default ON) so it can be disabled (e.g. for runs);
-    // DebugEnabled still forces it on. fileNum 0xFEDC = the title-screen demo (left to its own skip).
+    // Player-initiated skip: press START to skip a skippable in-game cutscene. Always on (the same
+    // jump-to-terminator path the developer skip has always used, so it lands in the proper
+    // post-cutscene state). fileNum 0xFEDC = the title-screen demo, left to its own skip.
     bool csSkipButton = (CHECK_BTN_ALL(play->state.input[0].press.button, BTN_START) &&
-                         (gSaveContext.fileNum != 0xFEDC) &&
-                         (CVarGetInteger(CVAR_ENHANCEMENT("CutsceneSkipButton"), 1) ||
-                          CVarGetInteger(CVAR_DEVELOPER_TOOLS("DebugEnabled"), 0)));
+                         (gSaveContext.fileNum != 0xFEDC));
 
     if ((gSaveContext.gameMode != GAMEMODE_NORMAL) && (gSaveContext.gameMode != GAMEMODE_END_CREDITS) &&
         (play->sceneNum != SCENE_HYRULE_FIELD) && (csCtx->frames > 20) &&

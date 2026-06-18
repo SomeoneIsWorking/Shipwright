@@ -104,6 +104,9 @@ void SetupMenu() {
     auto gui = Ship::Context::GetRawInstance()->GetWindow()->GetGui();
     mSohMenu = std::make_shared<SohMenu>(CVAR_WINDOW("Menu"), "Port Menu");
     gui->SetMenu(mSohMenu);
+    // soh3d: the RmlUi menu replaces SoH's ImGui menu. Keep mSohMenu registered (theme/getters
+    // still reference it) but force it hidden at boot so the ImGui menu never appears.
+    mSohMenu->Hide();
 
     mModalWindow = std::make_shared<SohModalWindow>(CVAR_WINDOW("ModalWindow"), "Modal Window");
     gui->AddGuiWindow(mModalWindow);
@@ -257,6 +260,6 @@ void ShowRandomizerSettingsMenu() {
 }
 
 void ShowEscMenu() {
-    mSohMenu->Show();
+    // soh3d: the RmlUi menu is the in-game menu now; don't open SoH's ImGui menu.
 }
 } // namespace SohGui

@@ -31,6 +31,17 @@
 // floor-height callback used by the terrain warp; soh3d.c supplies the implementation.
 typedef float (*SoH3D_FloorFn)(float x, float z);
 
+// Matches the struct in soh3d.h (C ABI). Per OoT3D bone: which N64 jointRots index drives it
+// and HOW. mode 0=rest (keep CMB rest rot), 1=replace (local rot := N64 rot), 2=left (C·R_n64),
+// 3=right (R_n64·C). C is a row-major 3x3 constant rest-frame correction for bones whose OoT3D
+// rest frame diverges from the N64 limb's (Grezzo re-rigged Link's spine/arms). See
+// tools/soh3d_link_retarget_derive.py and [[soh3d-n64anim-retarget]].
+typedef struct {
+    signed char limb;
+    unsigned char mode;
+    float C[9];
+} SoH3dBoneCorr;
+
 namespace {
 
 struct ModelSpec {
@@ -1002,6 +1013,68 @@ extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots,
             L = matMul(L, matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)));
         } else {
             // No live joint for this bone: keep its CMB rest orientation (bind pose).
+            L = matMul(L, matMul(matMul(matRz(bn->rot[2]), matRy(bn->rot[1])), matRx(bn->rot[0])));
+        }
+        L = matMul(L, matS(bn->scale[0], bn->scale[1], bn->scale[2]));
+        Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
+        aw[id] = W;
+        done[id] = 1;
+        return W;
+    };
+    for (const auto& bn : bones) world(bn.id);
+
+    std::vector<std::array<float, 16>> sm(bind.size());
+    for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
+}
+
+// As SoH3D_UpdateAnimN64Mapped, but each OoT3D bone carries a per-bone CORRECTION (SoH3dBoneCorr,
+// indexed by bone id): mode 1 = pure "replace" (local rot := N64 rot, the same-rest case that works
+// for Link's legs/head); mode 2/3 = apply a constant rest-frame correction C on the left (C·R_n64)
+// or right (R_n64·C) for bones whose OoT3D rest diverges from the N64 limb's (Grezzo re-rigged
+// Link's spine/upper arms — see tools/soh3d_link_retarget_derive.py). mode 0 / limb<0 = keep the
+// CMB rest pose. Same FK + skin-matrix tail as the Mapped variant.
+extern "C" void SoH3D_UpdateAnimN64Corr(int modelId, const int16_t* jointRots, int rotCount,
+                                        const SoH3dBoneCorr* corr, int corrCount) {
+    using namespace SoH3D;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    const auto& bones = lm->cmb->bones();
+    const auto& bind = lm->cmb->boneMatrices();
+    const float kBinangToRad = 3.14159265358979f / 32768.0f;
+
+    auto corrMat = [](const float* c) -> Mat4 {
+        Mat4 m = matId();
+        m[0] = c[0]; m[1] = c[1]; m[2] = c[2];
+        m[4] = c[3]; m[5] = c[4]; m[6] = c[5];
+        m[8] = c[6]; m[9] = c[7]; m[10] = c[8];
+        return m;
+    };
+
+    std::vector<Mat4> aw(bind.size(), matId());
+    std::vector<char> done(bind.size(), 0);
+    std::vector<const CmbBone*> byId(bind.size(), nullptr);
+    for (const auto& bn : bones)
+        if (bn.id >= 0 && (size_t)bn.id < byId.size()) byId[bn.id] = &bn;
+
+    std::function<Mat4(int)> world = [&](int id) -> Mat4 {
+        if (id < 0 || (size_t)id >= aw.size() || !byId[id]) return matId();
+        if (done[id]) return aw[id];
+        const CmbBone* bn = byId[id];
+        Mat4 L = matT(bn->trans[0], bn->trans[1], bn->trans[2]);
+        const SoH3dBoneCorr* c = (corr && id < corrCount) ? &corr[id] : nullptr;
+        int limb = c ? c->limb : -1;
+        int mode = c ? c->mode : 0;
+        if (mode >= 1 && limb >= 0 && limb < rotCount) {
+            float rx = jointRots[limb * 3 + 0] * kBinangToRad;
+            float ry = jointRots[limb * 3 + 1] * kBinangToRad;
+            float rz = jointRots[limb * 3 + 2] * kBinangToRad;
+            Mat4 R = matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)); // N64 local rotation (Rz·Ry·Rx)
+            if (mode == 2) R = matMul(corrMat(c->C), R);              // left:  C·R_n64
+            else if (mode == 3) R = matMul(R, corrMat(c->C));         // right: R_n64·C
+            L = matMul(L, R);
+        } else {
+            // No live joint / rest mode: keep the CMB rest orientation (bind pose).
             L = matMul(L, matMul(matMul(matRz(bn->rot[2]), matRy(bn->rot[1])), matRx(bn->rot[0])));
         }
         L = matMul(L, matS(bn->scale[0], bn->scale[1], bn->scale[2]));

@@ -2010,12 +2010,16 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             action = 2;
         } else if (strcmp(arg, "close") == 0 || strcmp(arg, "esc") == 0 || strcmp(arg, "toggle") == 0) {
             action = 3;
+        } else if (strcmp(arg, "right") == 0 || strcmp(arg, "nexttab") == 0) {
+            action = 4;
+        } else if (strcmp(arg, "left") == 0 || strcmp(arg, "prevtab") == 0) {
+            action = 5;
         }
         if (action >= 0) {
             SoH3D_RmlMenuKey(action);
             SoH3D_ReplReply(outPath, "menu %s", arg);
         } else {
-            SoH3D_ReplReply(outPath, "menu: unknown action '%s' (next|prev|activate|close)", arg);
+            SoH3D_ReplReply(outPath, "menu: unknown action '%s' (next|prev|activate|close|left|right)", arg);
         }
     } else if (strcmp(cmd, "tp") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         Player* p = GET_PLAYER(play);

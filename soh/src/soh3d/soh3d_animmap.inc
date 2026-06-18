@@ -513,6 +513,72 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_01CAE0", "kd_walk"),
     SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_01D218", "kd_walk_end"),
     SOH3D_ANIMMAP("objects/object_kingdodongo/object_kingdodongo_Anim_01D934", "kd_walk_start"),
+    // ---- /actor/zelda_km1.zar (object_os_anime) ----
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_00B4", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0170", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0228", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0718", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_07D0", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0894", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_092C", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0BFC", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0FE4", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_12E8", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_14A0", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_1650", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_16EC", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_18A0", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_1E7C", "fad_kusukusu"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_1F18", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_2160", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_25D0", "fad_kusukusu"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_265C", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_2850", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_28DC", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_2D0C", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_2DC0", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_300C", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_31B0", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_33B4", "km1_out_in_pose4"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_3D84", "km1_agura_pose"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_41F8", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_42AC", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4408", "km1_out_in_pose4"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4788", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4C4C", "km1_agura_pose"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4CF4", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4E90", "km1_asekaki_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_4F28", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLaughingAnim", "km1_kususu_pose"),  // OVERRIDE (was fad_kusukusu)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriIdleAnim", "km1_ukiuki_wait"),  // OVERRIDE (was fad_n_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_6458", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_6518", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriRecliningSittingUpAnim", "km1_hiji_suwari_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriWipingForeheadAnim", "km1_asekaki_wait"),  // OVERRIDE (was km1_asekaki_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriBackflipAnim", "km1_ukiuki_wait"),  // OVERRIDE (was km1_ishi_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingCrossedArmsLegsAnim", "km1_agura_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingApprehensiveAnim", "km1_shinpai_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLeaningOnArmsAnim", "km1_hiji_suwari_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingDiggingAnim", "km1_suwari_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLiftingRockAnim", "km1_ishi_wait"),  // OVERRIDE (was km1_ishi_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriCuttingGrassAnim", "km1_kusakari"),  // OVERRIDE (was km1_ishi_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingHeadOnHandAnim", "km1_hiji_suwari_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriRecliningLeaningBackAnim", "km1_nokezori_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingHandOnChestAnim", "km1_udekumi_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingHandsOnHipsAnim", "km1_doushite_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriRecliningStandingAnim", "km1_nokezori_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriPunchingAnim", "km1_ukiuki_wait"),  // OVERRIDE (was km1_asekaki_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriBlockingAnim", "km1_udekumi_pose"),  // OVERRIDE (was km1_udekumi_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingArmsUpAnim", "km1_suwari_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingRightArmUpAnim", "km1_setsumei_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingAnim", "km1_suwari_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingAnim", "km1_ukiuki_wait"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingArmsBehindBackAnim", "km1_usirote_pose"),  // OVERRIDE (was km1_ukiuki_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLeaningForwardAnim", "km1_utsumuki_pose"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingCrossedLegsAnim", "km1_agura_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandUpAnim", "km1_ukiuki_wait"),  // OVERRIDE (was fad_kusu_to_wait)
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_9F94", "km1_out_in_pose3"),
+    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_A630", "kw1_out_in_pose2"),
     // ---- /actor/zelda_kz.zar (object_kz) ----
     SOH3D_ANIMMAP("objects/object_kz/gKzMweepAnim", "kz_kani"),
     SOH3D_ANIMMAP("objects/object_kz/gKzIdleAnim", "kz_matsu"),

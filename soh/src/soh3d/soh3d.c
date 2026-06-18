@@ -963,6 +963,13 @@ static void SoH3D_DumpLimbCb(int limbIndex, StandardLimb* lb, void* ud) {
             lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling, rot.x, rot.y, rot.z);
 }
 
+// Write one N64 limb to a file in tools/soh3d_skel_match.py's load_n64() format (REPL linkskeldump).
+static void SoH3D_DumpLimbFileCb(int limbIndex, StandardLimb* lb, void* ud) {
+    FILE* f = (FILE*)ud;
+    fprintf(f, "N64 limb=%d jointPos=(%d,%d,%d) child=%d sibling=%d\n", limbIndex,
+            lb->jointPos.x, lb->jointPos.y, lb->jointPos.z, lb->child, lb->sibling);
+}
+
 // Core N64-anim retarget: given the live N64 skeleton + jointTable + limbCount for the actor
 // deferred for replacement (gSoH3dPending*), retarget its OoT3D model and draw it; return 1 so
 // the N64 limbs are skipped. Shared by the SkelAnime* wrapper and the raw (skeleton,jointTable)
@@ -1506,6 +1513,20 @@ static const char* SoH3D_ResolvePlayerCsab(const char* otr) {
     return NULL;
 }
 
+// OoT3D childlink_v2 bone -> N64 gLinkChildSkel limb, for the n64-retarget Link mode. Hand-derived
+// anatomically (both are the same Grezzo-ported Link rig): waist/pelvis/legs/spine/chest/head/arms.
+// -1 = keep the CMB rest pose (root, the neck/head sub-bone, the extra shoulder clavicle, the shield
+// mount b21, and the b22/23/24 helper sub-tree, none of which the N64 rig drives independently).
+// L/R legs swap (OoT3D b3-5 = +z = N64 limb6-8). See [[soh3d-link-player-path]].
+static const signed char kLinkChildBoneMap[25] = {
+    /*b0 */ -1, /*b1 waist*/ -1, /*b2 pelvis*/ -1,
+    /*b3-5 L leg*/ 6, 7, 8, /*b6-8 R leg*/ 3, 4, 5,
+    /*b9 spine*/ -1, /*b10 chest*/ -1, /*b11 neck*/ 11, /*b12 head-sub*/ -1,
+    /*b13 L clav*/ -1, /*b14 L upper*/ -1, /*b15 L fore*/ -1, /*b16 L hand*/ -1,
+    /*b17 R clav*/ -1, /*b18 R upper*/ -1, /*b19 R fore*/ -1, /*b20 R hand*/ -1,
+    /*b21 shield mount*/ -1, /*b22-24 helpers*/ -1, -1, -1,
+};
+
 int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     const char* zar;
     const char* csab;
@@ -1557,7 +1578,8 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             }
         }
         SoH3D_UpdateAnimN64Mapped(modelId, (const s16*)&player->skelAnime.jointTable[1],
-                                  player->skelAnime.limbCount, NULL, 0);
+                                  player->skelAnime.limbCount, kLinkChildBoneMap,
+                                  (int)ARRAY_COUNT(kLinkChildBoneMap));
     } else {
         // 3DS OWN-CSAB: pick the link CSAB matching Link's named anim, phase-locked to curFrame/animLength.
         // Unmapped -> idle so it never freezes in bind pose.
@@ -1950,6 +1972,27 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                 fclose(jf);
                 SoH3D_ReplReply(outPath, "jointdump -> %s (limbCount=%d curFrame=%.2f anim=%s)", path,
                                 ge->skelAnime.limbCount, ge->skelAnime.curFrame, n64 ? n64 : "(null)");
+            }
+        }
+    } else if (strcmp(cmd, "linkskeldump") == 0 && sscanf(line, "%*s %1023s", path) == 1) {
+        // Dump the live PLAYER N64 skeleton (limb tree + jointPos) to a file in the
+        // soh3d_skel_match.py load_n64() format, to DERIVE the OoT3D-bone -> N64-limb bonemap for
+        // the N64-retarget Link mode (linksrc n64). One-shot, on demand.
+        Player* pl = GET_PLAYER(play);
+        if (pl == NULL || pl->skelAnime.skeleton == NULL || pl->skelAnime.limbCount <= 0) {
+            SoH3D_ReplReply(outPath, "linkskeldump: no player skeleton");
+        } else {
+            FILE* sf = fopen(path, "w");
+            if (sf == NULL) {
+                SoH3D_ReplReply(outPath, "linkskeldump: cannot open %s", path);
+            } else {
+                fprintf(sf, "# player N64 skeleton; limbCount=%d age=%d\n", pl->skelAnime.limbCount,
+                        LINK_AGE_IN_YEARS);
+                SoH3D_WalkN64Skeleton((void**)pl->skelAnime.skeleton, pl->skelAnime.limbCount,
+                                      SoH3D_DumpLimbFileCb, sf);
+                fclose(sf);
+                SoH3D_ReplReply(outPath, "linkskeldump -> %s (limbCount=%d age=%d)", path,
+                                pl->skelAnime.limbCount, LINK_AGE_IN_YEARS);
             }
         }
     } else if (strcmp(cmd, "actorscan") == 0 && sscanf(line, "%*s %i", &iv) == 1) {

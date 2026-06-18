@@ -18,6 +18,7 @@
 
 void Select_SwitchBetterWarpMode(SelectContext* this, u8 isBetterWarpMode);
 void Sram_InitDebugSave(void);
+void Sram_InitNewSave(void); // SoH3D cold boot: clean new game instead of the debug save
 
 void Select_LoadTitle(SelectContext* this) {
     this->state.running = false;
@@ -29,7 +30,14 @@ void Select_LoadGame(SelectContext* this, s32 entranceIndex) {
     osSyncPrintf("\n\n\nＦＩＬＥ＿ＮＯ＝%x\n\n\n", gSaveContext.fileNum);
     osSyncPrintf(VT_RST);
     if (gSaveContext.fileNum == 0xFF) {
-        Sram_InitDebugSave();
+        // SoH3D cold boot: a clean NEW game rather than the vanilla debug save (which spawns Link
+        // in Kakariko with a debug inventory + flags). fileNum 0xFF normally always forces the debug
+        // save here, bypassing the DebugSaveFileMode CVar — this is the dev "start fresh" path.
+        if (SoH3D_ColdBoot()) {
+            Sram_InitNewSave();
+        } else {
+            Sram_InitDebugSave();
+        }
         gSaveContext.magicFillTarget = gSaveContext.magic;
         gSaveContext.magic = 0;
         gSaveContext.magicCapacity = 0;

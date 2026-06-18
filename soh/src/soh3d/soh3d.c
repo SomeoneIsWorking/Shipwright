@@ -1347,6 +1347,19 @@ int SoH3D_AutoWarpEntrance(void) {
     return ENTR_KAKARIKO_VILLAGE_FRONT_GATE;
 }
 
+// Cold boot: when the auto-warp Select path creates its save, start from a clean NEW game
+// (Sram_InitNewSave) instead of the vanilla DEBUG save (Sram_InitDebugSave, which spawns Link in
+// Kakariko with a debug inventory + flags). Off by default (keeps the debug save for tooling that
+// expects items); run.sh sets SOH3D_COLDBOOT=1 so `./run.sh` always boots a fresh state.
+int SoH3D_ColdBoot(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("SOH3D_COLDBOOT");
+        cached = (v != NULL && v[0] == '1') ? 1 : 0;
+    }
+    return cached;
+}
+
 // ===========================================================================
 // OoT3D get-item ("gi") models — replace the N64 get-item draw.
 //
@@ -2799,6 +2812,19 @@ void SoH3D_ReplPoll(PlayState* play) {
     if (gSoH3dForceTime >= 0) {
         gSaveContext.dayTime = (u16)gSoH3dForceTime;
         gSaveContext.skyboxTime = (u16)gSoH3dForceTime;
+    }
+
+    // RmlUi Debug-menu warp request (level select / boss fight). The menu lives in libultraship and
+    // has no PlayState, so it just records the target entrance in this global; we trigger the actual
+    // scene transition here, where the PlayState is in hand (same mechanism as the `warp` REPL cmd).
+    {
+        extern int gSoH3dMenuWarp; // SohRmlUi.cpp; -1 = none pending
+        if (gSoH3dMenuWarp >= 0 && play != NULL) {
+            play->nextEntranceIndex = gSoH3dMenuWarp;
+            play->transitionTrigger = TRANS_TRIGGER_START;
+            play->transitionType = TRANS_TYPE_FADE_BLACK;
+            gSoH3dMenuWarp = -1;
+        }
     }
 
     if (fd == -2) {

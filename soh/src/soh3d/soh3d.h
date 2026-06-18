@@ -134,6 +134,8 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 // (lots of pots); override with env SOH3D_ENTRANCE (decimal entrance index).
 int SoH3D_AutoWarpEnabled(void);
 int SoH3D_AutoWarpEntrance(void);
+// 1 = cold boot the auto-warp save as a clean NEW game (not the vanilla debug save). env SOH3D_COLDBOOT.
+int SoH3D_ColdBoot(void);
 
 // OoT3D get-item replacement, called from GetItem_Draw (the single get-item draw choke).
 // When SoH3D + items are enabled and the drawId has an OoT3D /actor/zelda_gi_*.zar model,

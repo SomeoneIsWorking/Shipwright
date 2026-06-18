@@ -63,6 +63,7 @@ static struct {
 void SoH3D_EnsureModelProvider(void);
 void SoH3D_GL_FrameBegin(void); // drop any SoH3D draws left unrendered from a prior frame
 void SoH3D_GL_SetLightDir(const float dirWorld[3]); // scene sun dir (world space) for the form term
+void SoH3D_GL_SetShadowFocus(float x, float y, float z); // per-frame world focus for the sun-shadow box
 void SoH3D_GL_EmitPose(int modelId); // snapshot this actor's pose at emit time (per-item skinning)
 void SoH3D_GL_SetMidMask(int modelId, unsigned long long mask); // per-frame mesh_id visibility (Link equipment)
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
@@ -1184,6 +1185,9 @@ static void SoH3D_UpdateLight(PlayState* play) {
     EnvLightSettings* ls = &play->envCtx.lightSettings;
     float d[3];
     float len;
+    // Center the sun-shadow frustum on the camera's look-at point (covers whatever the player is
+    // looking at, even when Link is off to the side). Set every frame so the shadow box follows.
+    SoH3D_GL_SetShadowFocus(play->view.lookAt.x, play->view.lookAt.y, play->view.lookAt.z);
     if (gSoH3dLightDirOverride) {
         return; // held by REPL `lightdir x y z`
     }
@@ -2465,6 +2469,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             SoH3D_ReplReply(outPath, "lightdir=(%.3f,%.3f,%.3f) %s", gSoH3dLightDirLast[0], gSoH3dLightDirLast[1],
                             gSoH3dLightDirLast[2], gSoH3dLightDirOverride ? "(override)" : "(auto/live light1Dir)");
         }
+    } else if (strcmp(cmd, "shadow") == 0) {
+        // Dynamic sun-shadow controls (libultraship soh3d_gl.cpp). `shadow <0|1>` toggles; the
+        // tunables let me fit the light frustum / cure acne live without a rebuild. `shadow` alone prints.
+        extern int gSoH3dShadowEnable, gSoH3dShadowCastAll;
+        extern float gSoH3dShadowRadius, gSoH3dShadowDist, gSoH3dShadowBias, gSoH3dShadowStrength;
+        char sub[32];
+        if (sscanf(line, "%*s %f", &f1) == 1 && sscanf(line, "%*s %31s", sub) == 1 &&
+            (strcmp(sub, "0") == 0 || strcmp(sub, "1") == 0)) {
+            gSoH3dShadowEnable = (int)f1;
+        } else if (sscanf(line, "%*s %31s %f", sub, &f1) == 2) {
+            if (strcmp(sub, "bias") == 0) gSoH3dShadowBias = f1;
+            else if (strcmp(sub, "str") == 0) gSoH3dShadowStrength = f1;
+            else if (strcmp(sub, "rad") == 0) gSoH3dShadowRadius = f1;
+            else if (strcmp(sub, "dist") == 0) gSoH3dShadowDist = f1;
+            else if (strcmp(sub, "all") == 0) gSoH3dShadowCastAll = (int)f1;
+        }
+        SoH3D_ReplReply(outPath, "shadow=%d castAll=%d rad=%.0f dist=%.0f bias=%.4f str=%.2f",
+                        gSoH3dShadowEnable, gSoH3dShadowCastAll, gSoH3dShadowRadius, gSoH3dShadowDist,
+                        gSoH3dShadowBias, gSoH3dShadowStrength);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

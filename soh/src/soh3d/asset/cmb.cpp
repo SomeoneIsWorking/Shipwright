@@ -355,11 +355,14 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
         return matId();
     };
 
-    // accumulate per material index
+    // accumulate per (material index, mesh_id). Splitting by mesh_id (not just material) keeps
+    // variant meshes that share a material in distinct groups so the renderer can toggle them
+    // by mesh_id per frame (see CmbDrawGroup). Meshes with the same material AND mesh_id still
+    // merge (the common case: one mid == one material).
     std::vector<CmbDrawGroup> groups;
-    auto groupFor = [&](int mat) -> CmbDrawGroup& {
-        for (auto& g : groups) if (g.material_index == mat) return g;
-        groups.push_back({ mat, {} });
+    auto groupFor = [&](int mat, int mid) -> CmbDrawGroup& {
+        for (auto& g : groups) if (g.material_index == mat && g.mesh_id == mid) return g;
+        groups.push_back({ mat, mid, {} });
         return groups.back();
     };
 
@@ -370,7 +373,7 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
         const Sepd& sepd = mSepds[mesh.sepd_index];
         int bd = sepd.bone_dimension;
         bool hasNormal = slotNrm >= 0 && sepd.attrs[slotNrm].present;
-        CmbDrawGroup& g = groupFor(mesh.material_index);
+        CmbDrawGroup& g = groupFor(mesh.material_index, mesh.mesh_id);
         for (const auto& prms : sepd.prms) {
             const Prm& prm = prms.prm;
             int boneId = prms.bone_table.empty() ? 0 : prms.bone_table[0];

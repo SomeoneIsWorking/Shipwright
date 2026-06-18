@@ -67,9 +67,14 @@ struct CmbVertex {
     float color[4] = { 1, 1, 1, 1 }; // per-vertex RGBA (OoT3D baked lighting / falloff)
 };
 
-// One draw batch: all triangles that use a given material, as a triangle list.
+// One draw batch: all triangles that use a given (material, mesh_id), as a triangle list.
+// Batches are split by mesh_id (not just material) so the renderer can toggle per-mesh_id
+// visibility at draw time — e.g. Link's childlink_v2 bakes several hand-pose / equipment
+// variants onto ONE skin material, distinguished only by mesh_id; the game shows a subset
+// per frame. Keeping them in separate groups lets us cull the hidden ones without rebuilding.
 struct CmbDrawGroup {
     int material_index = 0;
+    int mesh_id = -1; // CMB mesh_id of the contributing meshes (the visibility-switch key)
     std::vector<CmbVertex> verts; // multiple of 3
 };
 

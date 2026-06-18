@@ -64,6 +64,7 @@ void SoH3D_EnsureModelProvider(void);
 void SoH3D_GL_FrameBegin(void); // drop any SoH3D draws left unrendered from a prior frame
 void SoH3D_GL_SetLightDir(const float dirWorld[3]); // scene sun dir (world space) for the form term
 void SoH3D_GL_EmitPose(int modelId); // snapshot this actor's pose at emit time (per-item skinning)
+void SoH3D_GL_SetMidMask(int modelId, unsigned long long mask); // per-frame mesh_id visibility (Link equipment)
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 // Retarget a live N64 SkelAnime pose onto the OoT3D skeleton (GPU skinning). jointRots =
 // &jointTable[1] (per-limb binang Vec3s; root translation jointTable[0] is skipped),
@@ -1346,6 +1347,14 @@ char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link
 // User-selectable per [[soh3d-link-player-path]]; default N64 so locomotion works out of the box.
 int gSoH3dLinkAnimSrc = -1;
 
+// Per-frame mesh_id visibility mask for Link's body CMB. childlink_v2 bakes every hand-pose and
+// held-equipment variant onto distinct mesh_ids; the game shows a state-dependent subset. We pick
+// the visible set each frame (SoH3D_LinkComputeMidMask) and push it via SoH3D_GL_SetMidMask.
+// gSoH3dLinkMidOverride: REPL `linkmid` debug override (identification sweep). ~0 sentinel = no
+// override (use the computed policy); any other value forces that exact mask.
+static unsigned long long gSoH3dLinkMidOverride = ~0ull; // ~0 = "no override" sentinel
+static int gSoH3dLinkMidOverrideSet = 0;
+
 // `linkjointdump` capture state: dump the live player jointTable over N consecutive frames to a CSV,
 // for the QUANTITATIVE per-bone retarget-correction derivation (tools/soh3d_link_retarget_derive.py).
 // Each row: cap,curFrame,animLength,anim,limb,x,y,z — cap=frame index, curFrame/animLength=skelAnime
@@ -1362,6 +1371,14 @@ static int gLinkJointDumpCap = 0;
 static int gSoH3dWalkHoldFrames = 0;
 static s8 gSoH3dWalkStickX = 0;
 static s8 gSoH3dWalkStickY = 0;
+
+// `btnhold` REPL: inject a held button mask for N frames (verify equipment-state transitions, e.g.
+// press B to draw the sword and confirm Link's mesh_id selection switches to sword-in-hand + shield
+// -on-arm). Applied in SoH3D_WalkInject alongside the stick injection. Edge bits are set on the
+// first injected frame so a tap (e.g. B to draw/sheathe) registers, then held.
+static int gSoH3dBtnHoldFrames = 0;
+static unsigned gSoH3dBtnHoldMask = 0;
+static int gSoH3dBtnHoldFirst = 0;
 
 static int SoH3D_LinkEnabled(void) {
     if (gSoH3dLinkOn < 0) {
@@ -1549,6 +1566,72 @@ static const char* SoH3D_ResolvePlayerCsab(const char* otr) {
     return NULL;
 }
 
+// Compute which childlink_v2 mesh_ids are visible this frame from Link's live state. The CMB bakes
+// EVERY hand-pose + held-equipment variant on its own mesh_id; the game (N64 and OoT3D) shows a
+// state-dependent subset. N64 already resolves the selection per limb each frame into
+// player->leftHandType / rightHandType / sheathType (PlayerModelType) + currentShield; we translate
+// those to the matching childlink_v2 mesh_ids. The N64 state is self-consistent (sword drawn =>
+// empty sheath on back + sword in left hand + shield on right arm; stowed => open hands + shield +
+// sword on back), so just composing per-limb avoids double shields/swords. mesh_id map: see
+// scratch/link/mid_map.md (texture + posed-geometry + render-sweep identification).
+#define LINK_MID(n) (1ull << (n))
+static unsigned long long SoH3D_LinkComputeMidMask(Player* player) {
+    unsigned long long m;
+    int deku, hylian;
+    if (gSoH3dLinkMidOverrideSet) {
+        return gSoH3dLinkMidOverride; // REPL `linkmid` debug override (identification sweep)
+    }
+    m = LINK_MID(24) | LINK_MID(26); // body + head/face always (25 = far-LOD, never)
+    deku = (player->currentShield == PLAYER_SHIELD_DEKU);
+    hylian = (player->currentShield == PLAYER_SHIELD_HYLIAN || player->currentShield == PLAYER_SHIELD_MIRROR);
+
+    // LEFT hand (the sword hand). childlink left-hand variants on bones 15/16.
+    switch (player->leftHandType) {
+        case PLAYER_MODELTYPE_LH_SWORD:
+        case PLAYER_MODELTYPE_LH_SWORD_2:
+        case PLAYER_MODELTYPE_LH_BGS:      m |= LINK_MID(16); break; // sword in hand
+        case PLAYER_MODELTYPE_LH_BOOMERANG: m |= LINK_MID(8); break; // boomerang
+        case PLAYER_MODELTYPE_LH_CLOSED:
+        case PLAYER_MODELTYPE_LH_BOTTLE:   m |= LINK_MID(1); break;  // closed (bottle drawn separately)
+        case PLAYER_MODELTYPE_LH_OPEN:
+        case PLAYER_MODELTYPE_LH_HAMMER:   /* child hammer = empty */
+        default:                           m |= LINK_MID(0); break;  // open empty hand
+    }
+
+    // RIGHT hand (the shield hand). childlink right-hand variants on bones 19/20.
+    switch (player->rightHandType) {
+        case PLAYER_MODELTYPE_RH_SHIELD:
+            m |= (deku || hylian) ? LINK_MID(5) : LINK_MID(3); // shield on arm only if one is equipped
+            break;
+        case PLAYER_MODELTYPE_RH_BOW_SLINGSHOT:
+        case PLAYER_MODELTYPE_RH_BOW_SLINGSHOT_2: m |= LINK_MID(18); break; // slingshot
+        case PLAYER_MODELTYPE_RH_CLOSED:   m |= LINK_MID(4); break;  // closed
+        case PLAYER_MODELTYPE_RH_OPEN:
+        case PLAYER_MODELTYPE_RH_HOOKSHOT: /* child hookshot = empty */
+        case PLAYER_MODELTYPE_RH_OCARINA:
+        default:                           m |= LINK_MID(3); break;  // open empty hand
+    }
+
+    // BACK (sheath + back shield), bone 21. Combine sheathType with currentShield. The sword-on-back
+    // hilt (mid 11/14) and shield panel are baked together per combination, so this is one choice.
+    switch (player->sheathType) {
+        case PLAYER_MODELTYPE_SHEATH_18: // sword sheathed AND shield on back
+            m |= deku ? LINK_MID(11) : (hylian ? LINK_MID(9) : LINK_MID(14));
+            break;
+        case PLAYER_MODELTYPE_SHEATH_19: // shield on back, empty sheath (sword drawn)
+            m |= deku ? LINK_MID(13) : (hylian ? LINK_MID(10) : 0ull);
+            break;
+        case PLAYER_MODELTYPE_SHEATH_16: // sword on back, no shield
+            m |= LINK_MID(14);
+            break;
+        case PLAYER_MODELTYPE_SHEATH_17: // empty sheath, no shield (sword drawn, no shield)
+        default:
+            break; // nothing on the back
+    }
+    return m;
+}
+#undef LINK_MID
+
 int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     const char* zar;
     const char* csab;
@@ -1646,6 +1729,21 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
                                  player->skelAnime.animLength);
         }
+    }
+    // Select Link's live equipment / hand-pose variant subset (the childlink_v2 mesh bakes them
+    // all on distinct mesh_ids). Must be set BEFORE EmitPose so it pairs with this draw item.
+    {
+        unsigned long long midMask = SoH3D_LinkComputeMidMask(player);
+        if (gSoH3dAnimDebug) {
+            static int dbg = 0;
+            if ((dbg++ % 30) == 0) {
+                printf("SOH3D LINK mids: LH=%d RH=%d sheath=%d shield=%d -> mask=0x%llx\n",
+                       player->leftHandType, player->rightHandType, player->sheathType,
+                       player->currentShield, midMask);
+                fflush(stdout);
+            }
+        }
+        SoH3D_GL_SetMidMask(modelId, midMask);
     }
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
@@ -1834,6 +1932,21 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             gSoH3dWalkStickX, gSoH3dWalkStickY);
         } else {
             SoH3D_ReplReply(outPath, "usage: walkhold <frames> [stickX] [stickY]");
+        }
+    } else if (strcmp(cmd, "btnhold") == 0) {
+        // `btnhold <hexmask> <frames>` — inject a held button for N frames (rising edge on frame 1).
+        // Verify equipment-state transitions: e.g. `btnhold 0x4000 4` taps B to draw/sheathe the
+        // sword and confirm Link's mesh_id selection switches (sword-in-hand + shield-on-arm).
+        // Button bits: B=0x4000 A=0x8000 (see libultra controller.h). `btnhold 0 0` cancels.
+        unsigned mask = 0;
+        int frames = 0;
+        if (sscanf(line, "%*s %x %d", &mask, &frames) == 2) {
+            gSoH3dBtnHoldMask = mask;
+            gSoH3dBtnHoldFrames = frames;
+            gSoH3dBtnHoldFirst = 1;
+            SoH3D_ReplReply(outPath, "btnhold mask=0x%x frames=%d", mask, frames);
+        } else {
+            SoH3D_ReplReply(outPath, "usage: btnhold <hexmask> <frames>  (B=0x4000 A=0x8000)");
         }
     } else if (strcmp(cmd, "turn") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         Player* p = GET_PLAYER(play);
@@ -2187,6 +2300,30 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "usage: linkjointdump <path> [nframes]");
         }
+    } else if (strcmp(cmd, "linkmid") == 0) {
+        // `linkmid <arg>` — debug override of Link's mesh_id visibility mask (childlink_v2 bakes all
+        // hand/equipment variants on distinct mesh_ids). Used to identify each mesh_id by rendering it
+        // alone. `only <n>` shows just mesh_id n; `add <n>`/`del <n>` toggle one; `0xHEX` sets the raw
+        // mask; `all` shows everything; `auto` releases the override (back to the computed policy).
+        char arg[32] = "";
+        int n = 0;
+        if (sscanf(line, "%*s %31s", arg) == 1) {
+            if (strcmp(arg, "auto") == 0) {
+                gSoH3dLinkMidOverrideSet = 0;
+            } else if (strcmp(arg, "all") == 0) {
+                gSoH3dLinkMidOverride = ~0ull; gSoH3dLinkMidOverrideSet = 1;
+            } else if (strcmp(arg, "only") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                gSoH3dLinkMidOverride = (n >= 0 && n < 64) ? (1ull << n) : 0ull; gSoH3dLinkMidOverrideSet = 1;
+            } else if (strcmp(arg, "add") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                if (n >= 0 && n < 64) gSoH3dLinkMidOverride |= (1ull << n); gSoH3dLinkMidOverrideSet = 1;
+            } else if (strcmp(arg, "del") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                if (n >= 0 && n < 64) gSoH3dLinkMidOverride &= ~(1ull << n); gSoH3dLinkMidOverrideSet = 1;
+            } else {
+                gSoH3dLinkMidOverride = strtoull(arg, NULL, 0); gSoH3dLinkMidOverrideSet = 1;
+            }
+        }
+        SoH3D_ReplReply(outPath, "linkmid override=%s mask=0x%llx",
+                        gSoH3dLinkMidOverrideSet ? "ON" : "OFF(auto)", gSoH3dLinkMidOverride);
     } else if (strcmp(cmd, "linksrc") == 0) {
         // `linksrc n64|3ds` — choose Link's animation source. n64 = retarget the live blended jointTable
         // (walk/run + everything), 3ds = the OoT3D rig's own named CSABs.
@@ -2337,14 +2474,24 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
 // unless a walkhold is active. Drives the real locomotion so Link genuinely walks/runs (vs `move`'s
 // teleport) — for verifying the live N64-retarget walk cycle and capturing big-motion jointTables.
 void SoH3D_WalkInject(PlayState* play) {
-    if (gSoH3dWalkHoldFrames <= 0 || play == NULL) {
+    if (play == NULL) {
         return;
     }
-    play->state.input[0].cur.stick_x = gSoH3dWalkStickX;
-    play->state.input[0].cur.stick_y = gSoH3dWalkStickY;
-    play->state.input[0].rel.stick_x = gSoH3dWalkStickX;
-    play->state.input[0].rel.stick_y = gSoH3dWalkStickY;
-    gSoH3dWalkHoldFrames--;
+    if (gSoH3dWalkHoldFrames > 0) {
+        play->state.input[0].cur.stick_x = gSoH3dWalkStickX;
+        play->state.input[0].cur.stick_y = gSoH3dWalkStickY;
+        play->state.input[0].rel.stick_x = gSoH3dWalkStickX;
+        play->state.input[0].rel.stick_y = gSoH3dWalkStickY;
+        gSoH3dWalkHoldFrames--;
+    }
+    if (gSoH3dBtnHoldFrames > 0) {
+        play->state.input[0].cur.button |= (u16)gSoH3dBtnHoldMask;
+        if (gSoH3dBtnHoldFirst) {
+            play->state.input[0].press.button |= (u16)gSoH3dBtnHoldMask; // rising edge on frame 1
+            gSoH3dBtnHoldFirst = 0;
+        }
+        gSoH3dBtnHoldFrames--;
+    }
 }
 
 void SoH3D_ReplPoll(PlayState* play) {

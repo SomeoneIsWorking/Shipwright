@@ -104,6 +104,19 @@ class Cmb {
     // buildDrawGroups() (the bind pose). Mirrors tools/csab.py skinned_triangles.
     std::vector<CmbDrawGroup> buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t n) const;
 
+    // Per-mesh introspection, for selectively culling duplicate VARIANT meshes that share a
+    // material and so collapse into one draw group (can't be culled per group). e.g. Link's
+    // childlink_v2.cmb bakes several hand-pose variants per hand, all on one skin material.
+    size_t meshCount() const { return mMeshes.size(); }
+    int meshMaterial(size_t i) const { return i < mMeshes.size() ? mMeshes[i].material_index : -1; }
+    int meshId(size_t i) const { return i < mMeshes.size() ? mMeshes[i].mesh_id : -1; }
+    std::vector<int> meshBones(size_t i) const; // sorted union of bone ids the mesh references
+    // As buildDrawGroups[Skinned] but skip every mesh whose index has skipMesh[idx] != 0
+    // (skipMesh may be shorter than meshCount(); missing entries = keep).
+    std::vector<CmbDrawGroup> buildDrawGroups(const std::vector<uint8_t>& skipMesh) const;
+    std::vector<CmbDrawGroup> buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t n,
+                                                     const std::vector<uint8_t>& skipMesh) const;
+
   private:
     bool mOk = false;
     std::string mErr;

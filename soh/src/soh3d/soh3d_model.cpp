@@ -209,9 +209,10 @@ static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb) {
     return base;
 }
 
-static void buildFromCmb(LoadedModel* out, bool bakedVertexColor) {
+static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
+                         const std::vector<uint8_t>& skipMesh = {}) {
     SoH3D::Cmb& cmb = *out->cmb;
-    out->groups = cmb.buildDrawGroups();
+    out->groups = cmb.buildDrawGroups(skipMesh);
     if (!bakedVertexColor) {
         for (auto& g : out->groups)
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
@@ -413,6 +414,35 @@ static void cullLinkEquipment(LoadedModel* out) {
     }
 }
 
+// childlink_v2.cmb bakes several hand-pose variants per hand (open/fist/point/grip), ALL on the
+// one childlink_02 skin material — so they collapse into a single draw group and overlay into a
+// mangled "many hands" blob (the body skin ends at the wrist; each variant is a full hand). The
+// game shows ONE, toggled by held-item/hand state via mesh visibility (stage B). For now keep a
+// single default variant per hand and cull the rest. L-hand variants = skin meshes bound exactly
+// to bones {15,16}, R-hand to {19,20}; keep the keepIdx-th (env SOH3D_LINK_HANDVAR, default 0).
+// Returns a per-mesh skip mask for buildFromCmb (must run BEFORE the build — variants share a
+// material, so they can't be culled at draw-group level like the held equipment).
+static std::vector<uint8_t> linkHandSkipMask(const SoH3D::Cmb& cmb) {
+    std::vector<uint8_t> skip(cmb.meshCount(), 0);
+    int keep = 0;
+    if (const char* e = getenv("SOH3D_LINK_HANDVAR")) keep = atoi(e);
+    const auto& texs = cmb.textures();
+    auto isSkin = [&](size_t mi) {
+        int ti = cmb.materialTexture(cmb.meshMaterial(mi));
+        return ti >= 0 && ti < (int)texs.size() && texs[ti].name.rfind("childlink", 0) == 0;
+    };
+    const std::vector<int> sides[2] = { { 15, 16 }, { 19, 20 } };
+    for (const auto& want : sides) {
+        std::vector<size_t> variants;
+        for (size_t mi = 0; mi < cmb.meshCount(); mi++)
+            if (isSkin(mi) && cmb.meshBones(mi) == want) variants.push_back(mi);
+        int k = (keep >= 0 && keep < (int)variants.size()) ? keep : 0;
+        for (size_t i = 0; i < variants.size(); i++)
+            if ((int)i != k) skip[variants[i]] = 1;
+    }
+    return skip;
+}
+
 static void loadAutoModel(int modelId, LoadedModel* out) {
     int idx = modelId - kAutoModelBase;
     if (idx < 0 || idx >= (int)g_autoModelPaths.size()) return;
@@ -498,11 +528,16 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     // frozen bind/T-pose, so the auto path skips it and leaves the N64 model. Calibrated,
     // animated characters go through the explicit sModelTable (with an anim resolver).
     out->skinned = out->cmb->bones().size() > 1;
-    buildFromCmb(out, /*bakedVertexColor=*/false);
+    // The *_new Link body bakes multiple hand-pose variants per hand on one skin material; cull
+    // all but one BEFORE the build (they share a material -> can't be culled per draw group).
+    bool linkNewBody = zarPath.find("zelda_link_") != std::string::npos &&
+                       zarPath.find("_new") != std::string::npos;
+    std::vector<uint8_t> skipMesh;
+    if (linkNewBody) skipMesh = linkHandSkipMask(*out->cmb);
+    buildFromCmb(out, /*bakedVertexColor=*/false, skipMesh);
     // DEBUG/stage-B: hide the Link *_new body's baked held equipment (shield + sheathed sword,
     // all on the back/shield-mount bones) so the body is visible during retarget tuning.
-    if (getenv("SOH3D_LINK_HIDEITEMS") && zarPath.find("zelda_link_") != std::string::npos &&
-        zarPath.find("_new") != std::string::npos) {
+    if (getenv("SOH3D_LINK_HIDEITEMS") && linkNewBody) {
         cullLinkEquipment(out);
     }
     printf("[SoH3D] auto-loaded model %d (%s): cmb '%s' of %d, height=%.1f, bones=%zu%s, %zu groups, %zu textures\n",

@@ -314,11 +314,28 @@ void Cmb::readAttr(const SepdAttr& attr, int attrSlot, uint32_t idx, int comps, 
     for (int i = 0; i < comps; i++) out[i] = dtRead(b, off + i * sz, attr.data_type) * attr.scale;
 }
 
-std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
-    return buildDrawGroupsSkinned(nullptr, 0);
+std::vector<int> Cmb::meshBones(size_t i) const {
+    std::vector<int> out;
+    if (i >= mMeshes.size() || mMeshes[i].sepd_index >= mSepds.size()) return out;
+    for (const auto& prms : mSepds[mMeshes[i].sepd_index].prms)
+        for (uint16_t bid : prms.bone_table)
+            if (std::find(out.begin(), out.end(), (int)bid) == out.end()) out.push_back((int)bid);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
+std::vector<CmbDrawGroup> Cmb::buildDrawGroups() const {
+    return buildDrawGroupsSkinned(nullptr, 0, {});
+}
+std::vector<CmbDrawGroup> Cmb::buildDrawGroups(const std::vector<uint8_t>& skipMesh) const {
+    return buildDrawGroupsSkinned(nullptr, 0, skipMesh);
+}
 std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t nMats) const {
+    return buildDrawGroupsSkinned(skinMats, nMats, {});
+}
+
+std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16>* skinMats, size_t nMats,
+                                                      const std::vector<uint8_t>& skipMesh) const {
     const uint8_t* b = mData.data();
     int count = 0;
     const AttrDef* defs = Cmb_attrsDef(mVersion, &count);
@@ -346,7 +363,9 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
         return groups.back();
     };
 
-    for (const auto& mesh : mMeshes) {
+    for (size_t mi = 0; mi < mMeshes.size(); mi++) {
+        if (mi < skipMesh.size() && skipMesh[mi]) continue; // drop culled variant meshes
+        const Mesh& mesh = mMeshes[mi];
         if (mesh.sepd_index >= mSepds.size()) continue;
         const Sepd& sepd = mSepds[mesh.sepd_index];
         int bd = sepd.bone_dimension;

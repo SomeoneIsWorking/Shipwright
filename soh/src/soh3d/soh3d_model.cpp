@@ -1067,6 +1067,8 @@ extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots,
 
     std::vector<std::array<float, 16>> sm(bind.size());
     for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    // Upload bind for correct rigid pose interpolation (see SoH3D_UpdateAnim / interpSkinPose).
+    SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }
 
@@ -1130,6 +1132,8 @@ extern "C" void SoH3D_UpdateAnimN64Corr(int modelId, const int16_t* jointRots, i
 
     std::vector<std::array<float, 16>> sm(bind.size());
     for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    // Upload bind for correct rigid pose interpolation (see SoH3D_UpdateAnim / interpSkinPose).
+    SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }
 
@@ -1149,6 +1153,11 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 
     std::vector<std::array<float, 16>> sm;
     anim->skinMatrices(*lm->cmb, frame, sm);
+    // Upload the constant bind matrices (cached, no-op after the first call) so the GL layer can
+    // recover the animated bone-world transform (skin*bind) and interpolate the pose RIGIDLY between
+    // logic frames — interpolating the skin matrices directly shatters large per-frame rotations.
+    const auto& bind = lm->cmb->boneMatrices();
+    SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
     // vector<array<float,16>> is contiguous -> hand the renderer a flat float buffer.
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
 }

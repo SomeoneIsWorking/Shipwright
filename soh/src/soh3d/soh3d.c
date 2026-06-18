@@ -1575,11 +1575,69 @@ static const char* SoH3D_ResolvePlayerCsab(const char* otr) {
 // sword on back), so just composing per-limb avoids double shields/swords. mesh_id map: see
 // link_mesh_id_map.md (next to this file) (texture + posed-geometry + render-sweep identification).
 #define LINK_MID(n) (1ull << (n))
+
+// ADULT/boy link_v2.cmb mesh_id map. Same 25-bone rig as child (LH=bones15/16, RH=19/20,
+// back/sheath=21, waist=23/24) but a DIFFERENT mesh_id layout — identified the same way as child
+// (texture dump + posed-geometry + in-game `linkmid only <n>` render sweep, see link_mesh_id_map.md
+// "## ADULT"). Boy's shield set is Hylian (default) / Mirror, vs child's Deku / Hylian.
+static unsigned long long SoH3D_LinkBoyMidMask(Player* player) {
+    unsigned long long m = LINK_MID(45) | LINK_MID(46); // full body + head/face always
+    int hylian = (player->currentShield == PLAYER_SHIELD_HYLIAN);
+    int mirror = (player->currentShield == PLAYER_SHIELD_MIRROR);
+    int haveShield = (hylian || mirror);
+
+    // LEFT hand (sword hand), bones 15/16.
+    switch (player->leftHandType) {
+        case PLAYER_MODELTYPE_LH_SWORD:
+        case PLAYER_MODELTYPE_LH_SWORD_2: m |= LINK_MID(16); break; // Master sword in hand
+        case PLAYER_MODELTYPE_LH_BGS:     m |= LINK_MID(37); break; // Biggoron/giant knife (long blade)
+        case PLAYER_MODELTYPE_LH_CLOSED:
+        case PLAYER_MODELTYPE_LH_BOTTLE:
+        case PLAYER_MODELTYPE_LH_HAMMER:  m |= LINK_MID(14); break; // closed fist (hammer drawn elsewhere)
+        case PLAYER_MODELTYPE_LH_OPEN:
+        default:                          m |= LINK_MID(13); break; // open empty hand (idle)
+    }
+
+    // RIGHT hand (shield/bow hand), bones 19/20.
+    switch (player->rightHandType) {
+        case PLAYER_MODELTYPE_RH_SHIELD:
+            m |= haveShield ? LINK_MID(23) : LINK_MID(20); // Hylian/Mirror shield on the forearm
+            break;
+        case PLAYER_MODELTYPE_RH_BOW_SLINGSHOT:
+        case PLAYER_MODELTYPE_RH_BOW_SLINGSHOT_2: m |= LINK_MID(30); break; // bow drawn
+        case PLAYER_MODELTYPE_RH_CLOSED:   m |= LINK_MID(21); break; // closed fist
+        case PLAYER_MODELTYPE_RH_OPEN:
+        case PLAYER_MODELTYPE_RH_HOOKSHOT: // adult hookshot model drawn separately -> empty hand
+        case PLAYER_MODELTYPE_RH_OCARINA:
+        default:                           m |= LINK_MID(20); break; // open empty hand
+    }
+
+    // BACK (shield panel + sheath), bone 21. Combine sheathType with currentShield.
+    switch (player->sheathType) {
+        case PLAYER_MODELTYPE_SHEATH_18: // shield on back AND sword sheathed
+            m |= hylian ? LINK_MID(0) : (mirror ? LINK_MID(2) : LINK_MID(31));
+            break;
+        case PLAYER_MODELTYPE_SHEATH_19: // shield on back, empty sheath (sword drawn)
+            m |= hylian ? LINK_MID(1) : (mirror ? LINK_MID(3) : 0ull);
+            break;
+        case PLAYER_MODELTYPE_SHEATH_16: // sword on back, no shield
+            m |= LINK_MID(31);
+            break;
+        case PLAYER_MODELTYPE_SHEATH_17: // empty sheath, no shield (sword drawn, no shield)
+        default:
+            break;
+    }
+    return m;
+}
+
 static unsigned long long SoH3D_LinkComputeMidMask(Player* player) {
     unsigned long long m;
     int deku, hylian;
     if (gSoH3dLinkMidOverrideSet) {
         return gSoH3dLinkMidOverride; // REPL `linkmid` debug override (identification sweep)
+    }
+    if (LINK_AGE_IN_YEARS != YEARS_CHILD) {
+        return SoH3D_LinkBoyMidMask(player); // adult uses link_v2.cmb's own mesh_id layout
     }
     m = LINK_MID(24) | LINK_MID(26); // body + head/face always (25 = far-LOD, never)
     deku = (player->currentShield == PLAYER_SHIELD_DEKU);
@@ -1909,6 +1967,22 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         play->transitionTrigger = TRANS_TRIGGER_START;
         play->transitionType = TRANS_TYPE_FADE_BLACK;
         SoH3D_ReplReply(outPath, "warp -> entrance 0x%x (%d)", iv, iv);
+    } else if (strcmp(cmd, "age") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // Toggle Link's age (0=adult, 1=child) so we can test the boy/adult equipment path.
+        // Player_InitImpl copies play->linkAgeOnLoad -> gSaveContext.linkAge on (re)load
+        // (z_player.c ~12612), so set BOTH then reload the scene via a warp to a second-arg
+        // entrance (re-inits Player with the chosen-age skeleton). Without the warp the live
+        // Player keeps its current rig until the next transition.
+        int ent = -1;
+        gSaveContext.linkAge = iv;
+        play->linkAgeOnLoad = iv;
+        if (sscanf(line, "%*s %*i %i", &ent) == 1) {
+            play->nextEntranceIndex = ent;
+            play->transitionTrigger = TRANS_TRIGGER_START;
+            play->transitionType = TRANS_TYPE_FADE_BLACK;
+        }
+        SoH3D_ReplReply(outPath, "age=%d (%s)%s", iv, iv == LINK_AGE_CHILD ? "child" : "adult",
+                        ent >= 0 ? " + reload" : " (warp to apply)");
     } else if (strcmp(cmd, "move") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         Player* p = GET_PLAYER(play);
         s16 yaw = p->actor.shape.rot.y;
@@ -2324,6 +2398,30 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "linkmid override=%s mask=0x%llx",
                         gSoH3dLinkMidOverrideSet ? "ON" : "OFF(auto)", gSoH3dLinkMidOverride);
+    } else if (strcmp(cmd, "linkgear") == 0) {
+        // `linkgear <sword 0-3> <shield 0-3>` — equip a sword (0=none,1=kokiri,2=master,3=biggoron)
+        // + shield (0=none,1=deku,2=hylian,3=mirror) on Link so the boy/adult equipment mids can be
+        // verified (the debug save spawns child with deku+kokiri; adult has no Hylian shield/master
+        // sword by default). Marks them owned, equips them, sets B to the sword; the player recomputes
+        // currentShield from CUR_EQUIP_VALUE next frame (z_player_lib.c ~679).
+        int sw = 2, sh = 2;
+        sscanf(line, "%*s %i %i", &sw, &sh);
+        gSaveContext.inventory.equipment |= OWNED_EQUIP_FLAG(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_KOKIRI) |
+                                            OWNED_EQUIP_FLAG(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER) |
+                                            OWNED_EQUIP_FLAG(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_BIGGORON) |
+                                            OWNED_EQUIP_FLAG(EQUIP_TYPE_SHIELD, EQUIP_INV_SHIELD_DEKU) |
+                                            OWNED_EQUIP_FLAG(EQUIP_TYPE_SHIELD, EQUIP_INV_SHIELD_HYLIAN) |
+                                            OWNED_EQUIP_FLAG(EQUIP_TYPE_SHIELD, EQUIP_INV_SHIELD_MIRROR);
+        Inventory_ChangeEquipment(EQUIP_TYPE_SWORD, sw);
+        Inventory_ChangeEquipment(EQUIP_TYPE_SHIELD, sh);
+        {
+            static const s16 swItem[] = { ITEM_NONE, ITEM_SWORD_KOKIRI, ITEM_SWORD_MASTER, ITEM_SWORD_BGS };
+            if (sw >= 0 && sw < 4) gSaveContext.equips.buttonItems[0] = swItem[sw];
+        }
+        // currentShield/currentSword are cached on the Player and only refreshed on equip events;
+        // force the refresh now so the change takes effect this frame.
+        Player_SetEquipmentData(play, GET_PLAYER(play));
+        SoH3D_ReplReply(outPath, "linkgear sword=%d shield=%d (equipped)", sw, sh);
     } else if (strcmp(cmd, "linksrc") == 0) {
         // `linksrc n64|3ds` — choose Link's animation source. n64 = retarget the live blended jointTable
         // (walk/run + everything), 3ds = the OoT3D rig's own named CSABs.

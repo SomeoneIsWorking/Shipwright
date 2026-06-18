@@ -162,4 +162,57 @@ std::vector<uint8_t> PicaDecode(uint32_t glFormat, int width, int height, const 
     }
 }
 
+// Native bytes-per-pixel for the formats Citra copies verbatim (converted=false). Returns 0
+// for formats Citra always decodes to RGBA8.
+static int legacyNativeBpp(uint32_t glFormat) {
+    switch (glFormat) {
+        case GF_RGBA8: return 4;
+        case GF_RGB8: return 3;
+        case GF_RGB565:
+        case GF_RGBA5551:
+        case GF_RGBA4444: return 2;
+        default: return 0; // ETC1/ETC1A4/IA8/I8/A8/IA4/I4/A4/... -> RGBA8
+    }
+}
+
+std::vector<uint8_t> PicaLegacyHashBytes(uint32_t glFormat, int width, int height,
+                                         const std::vector<uint8_t>& data) {
+    int nbpp = legacyNativeBpp(glFormat);
+    if (nbpp == 0) {
+        // RGBA8-output formats: Citra's decoded == our RGBA8 decode, but stored bottom-up.
+        auto rgba = PicaDecode(glFormat, width, height, data);
+        if (rgba.empty()) return {};
+        // A few single-channel formats differ from our renderer's decode in the unused
+        // channels; match Citra's exact convention so the hash lines up (Common::Color):
+        //   I8 -> {L,L,L,255}, I4 -> {L,L,L,255}, A8 -> {0,0,0,A}, A4 -> {0,0,0,A}.
+        if (glFormat == GF_L8 || glFormat == GF_L4) {
+            for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 0xFF;
+        } else if (glFormat == GF_A8 || glFormat == GF_A4) {
+            for (size_t i = 0; i + 3 < rgba.size(); i += 4) rgba[i] = rgba[i + 1] = rgba[i + 2] = 0;
+        }
+        std::vector<uint8_t> out(rgba.size());
+        size_t row = (size_t)width * 4;
+        for (int y = 0; y < height; y++)
+            memcpy(out.data() + (size_t)y * row, rgba.data() + (size_t)(height - 1 - y) * row, row);
+        return out;
+    }
+    // Native-copy color formats: morton-detile + vertical flip, keeping native bytes. The
+    // raw stream is laid out in morton-traversal order within each 8x8 tile (same order our
+    // tiled() sampler reads), so copy nbpp bytes per texel into the flipped linear position.
+    if (data.size() < (size_t)width * height * nbpp) return {};
+    std::vector<uint8_t> out((size_t)width * height * nbpp);
+    const uint8_t* d = data.data();
+    int si = 0;
+    for (int yy = 0; yy < height; yy += 8)
+        for (int xx = 0; xx < width; xx += 8)
+            for (int i = 0; i < 0x40; i++) {
+                int x = morton7(i), y = morton7(i >> 1);
+                int ly = height - 1 - (yy + y);
+                size_t dst = ((size_t)ly * width + (xx + x)) * nbpp;
+                memcpy(out.data() + dst, d + (size_t)si * nbpp, nbpp);
+                si++;
+            }
+    return out;
+}
+
 } // namespace SoH3D

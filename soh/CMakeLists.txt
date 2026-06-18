@@ -705,6 +705,7 @@ else()
      set(ADDITIONAL_LIBRARY_DEPENDENCIES
     "libultraship;"
         "ZAPDLib;"
+        "stb;"
         SDL2::SDL2
         "Ogg::ogg"
         "Vorbis::vorbis"

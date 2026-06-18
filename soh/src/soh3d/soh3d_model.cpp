@@ -12,6 +12,8 @@
 #include "asset/csab.h"
 #include "asset/mat4.h"
 #include "asset/pica_texture.h"
+#include "asset/cityhash.h"
+#include "asset/texpack.h"
 #include "fast/soh3d_gl.h"
 
 #include <algorithm>
@@ -207,12 +209,25 @@ static SoH3DGlGroup makeCgroup(const SoH3D::Cmb& cmb, const SoH3D::CmbDrawGroup&
 
 // Decode a CMB's textures and append them to the model's texture arrays, returning the
 // base index they were appended at (so a group's material texture index can be rebased).
-static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb) {
+// Per-CMB-texture dimensions as uploaded, after any hi-res pack substitution. Parallel to
+// out->texRgba; the caller uses these (not the CMB's) so cTexs gets the replacement's size.
+// Texture UVs are normalized, so a larger pack texture is a drop-in for the original.
+static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb, std::vector<std::pair<int,int>>* dims = nullptr) {
     int base = (int)out->texRgba.size();
     const auto& texs = cmb.textures();
     for (const auto& t : texs) {
         auto raw = cmb.textureRaw(t);
-        out->texRgba.push_back(SoH3D::PicaDecode(t.glFormat(), t.width, t.height, raw));
+        int w = t.width, h = t.height;
+        std::vector<uint8_t> rgba;
+        // Look up a hi-res replacement by the texture's Citra legacy hash.
+        auto lb = SoH3D::PicaLegacyHashBytes(t.glFormat(), t.width, t.height, raw);
+        uint64_t hash = lb.empty() ? 0 : SoH3D::CityHash64(reinterpret_cast<const char*>(lb.data()), lb.size());
+        if (hash == 0 || !SoH3D::TexPackLookup(hash, w, h, rgba)) {
+            w = t.width; h = t.height;
+            rgba = SoH3D::PicaDecode(t.glFormat(), t.width, t.height, raw);
+        }
+        out->texRgba.push_back(std::move(rgba));
+        if (dims) dims->push_back({ w, h });
     }
     return base;
 }
@@ -226,10 +241,11 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
     }
 
-    appendTextures(out, cmb);
+    std::vector<std::pair<int,int>> dims;
+    appendTextures(out, cmb, &dims);
     out->cTexs.resize(out->texRgba.size());
     for (size_t i = 0; i < out->texRgba.size(); i++)
-        out->cTexs[i] = { out->texRgba[i].data(), cmb.textures()[i].width, cmb.textures()[i].height };
+        out->cTexs[i] = { out->texRgba[i].data(), dims[i].first, dims[i].second };
 
     out->cGroups.reserve(out->groups.size());
     for (const auto& g : out->groups) out->cGroups.push_back(makeCgroup(cmb, g, g.verts.data(), 0));
@@ -248,9 +264,10 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
 static void buildFromCmbs(LoadedModel* out, std::vector<std::unique_ptr<SoH3D::Cmb>>& cmbs) {
     struct Src { const SoH3D::Cmb* cmb; size_t gi; int texBase; };
     std::vector<Src> srcs;
+    std::vector<std::pair<int,int>> dims;
     for (auto& up : cmbs) {
         SoH3D::Cmb& cmb = *up;
-        int texBase = appendTextures(out, cmb);
+        int texBase = appendTextures(out, cmb, &dims);
         auto groups = cmb.buildDrawGroups();
         for (auto& g : groups) {
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
@@ -260,16 +277,9 @@ static void buildFromCmbs(LoadedModel* out, std::vector<std::unique_ptr<SoH3D::C
     }
     // out->groups is now final (no further reallocation) -> safe to point cGroups into it.
     out->cTexs.reserve(out->texRgba.size());
-    {
-        // texture dims must be read from the owning CMB; recover them in append order.
-        size_t ti = 0;
-        for (auto& up : cmbs) {
-            for (const auto& t : up->textures()) {
-                out->cTexs.push_back({ out->texRgba[ti].data(), t.width, t.height });
-                ti++;
-            }
-        }
-    }
+    // dims were captured per-append (post hi-res substitution), parallel to texRgba.
+    for (size_t ti = 0; ti < out->texRgba.size(); ti++)
+        out->cTexs.push_back({ out->texRgba[ti].data(), dims[ti].first, dims[ti].second });
     out->cGroups.reserve(out->groups.size());
     for (const auto& s : srcs)
         out->cGroups.push_back(makeCgroup(*s.cmb, out->groups[s.gi], out->groups[s.gi].verts.data(), s.texBase));

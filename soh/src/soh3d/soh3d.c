@@ -2488,6 +2488,23 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         SoH3D_ReplReply(outPath, "shadow=%d castAll=%d rad=%.0f dist=%.0f bias=%.4f str=%.2f",
                         gSoH3dShadowEnable, gSoH3dShadowCastAll, gSoH3dShadowRadius, gSoH3dShadowDist,
                         gSoH3dShadowBias, gSoH3dShadowStrength);
+    } else if (strcmp(cmd, "ao") == 0) {
+        // Ambient occlusion (libultraship soh3d_gl.cpp). `ao <0|1>` toggles; `ao rad|str|bias|maxdiff <f>`
+        // tunes live. `ao` alone prints. rad is in screen pixels; bias/maxdiff are window-depth units.
+        extern int gSoH3dAoEnable;
+        extern float gSoH3dAoRadius, gSoH3dAoStrength, gSoH3dAoBias, gSoH3dAoMaxDiff;
+        char sub[32];
+        if (sscanf(line, "%*s %f", &f1) == 1 && sscanf(line, "%*s %31s", sub) == 1 &&
+            (strcmp(sub, "0") == 0 || strcmp(sub, "1") == 0)) {
+            gSoH3dAoEnable = (int)f1;
+        } else if (sscanf(line, "%*s %31s %f", sub, &f1) == 2) {
+            if (strcmp(sub, "rad") == 0) gSoH3dAoRadius = f1;
+            else if (strcmp(sub, "str") == 0) gSoH3dAoStrength = f1;
+            else if (strcmp(sub, "bias") == 0) gSoH3dAoBias = f1;
+            else if (strcmp(sub, "maxdiff") == 0) gSoH3dAoMaxDiff = f1;
+        }
+        SoH3D_ReplReply(outPath, "ao=%d rad=%.1f str=%.2f bias=%.5f maxdiff=%.5f", gSoH3dAoEnable,
+                        gSoH3dAoRadius, gSoH3dAoStrength, gSoH3dAoBias, gSoH3dAoMaxDiff);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

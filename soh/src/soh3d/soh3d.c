@@ -847,6 +847,15 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     // animLength stays 0 -> the auto branch free-runs (no stale phase-lock from a prior actor).
     gSoH3dPendingN64CurFrame = 0.0f;
     gSoH3dPendingN64AnimLength = 0.0f;
+    // Obj_Hana shares gameplay_field_keep across three param variants (params & 3): 0 = gHanaDL
+    // (flower), 1 = gFieldKakeraDL (debris), 2 = gFieldBushDL (the cuttable field BUSH — what the
+    // grass-cutting Kokiri picks). Only the bush has an OoT3D equivalent so far: it's the same
+    // cuttable bush as En_Kusa, so draw the kusa model (glModelId 2). Flower/debris have no model
+    // yet -> leave them N64. Param-keyed, so it can't live in sModelTable (actorId-only).
+    if (actor->id == ACTOR_OBJ_HANA && (actor->params & 3) == 2 && SoH3D_AutoMode() != 2) {
+        SoH3D_DrawModelGL(play, /*kusa bush*/ 2, actor, SOH3D_HANABUSH_WORLD_SCALE, NULL, 0.0f, NULL, NULL);
+        return 1;
+    }
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.
     if (SoH3D_AutoMode() != 2) {
@@ -2278,6 +2287,53 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             }
         }
         SoH3D_ReplReply(outPath, "actorscan: %d found", n);
+    } else if (strcmp(cmd, "actorsnear") == 0) {
+        // Coverage AUDIT: list every live actor within <radius> (default 700) of Link with its
+        // OoT3D-replacement status, so "what still renders as N64" is visible at a glance. Per
+        // actor: id, category, distance, and coverage = TABLE (hand sModelTable entry) / AUTO:<zar>
+        // (object has an OoT3D /actor model; (skin) = skinned, only drawn with SOH3D_N64ANIM) /
+        // --N64-- (no object->ZAR mapping -> always N64). Tooling-first for the 100%-3DS pass.
+        float radius = 700.0f;
+        (void)sscanf(line, "%*s %f", &radius);
+        Player* pl = GET_PLAYER(play);
+        s32 cat, n = 0, nN64 = 0;
+        SoH3D_ReplReply(outPath, "actorsnear r=%.0f:", radius);
+        for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL && n < 60; a = a->next) {
+                float dx = a->world.pos.x - pl->actor.world.pos.x;
+                float dy = a->world.pos.y - pl->actor.world.pos.y;
+                float dz = a->world.pos.z - pl->actor.world.pos.z;
+                float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (d > radius) continue;
+                const char* cov = "--N64--";
+                char buf[96];
+                s32 ti;
+                int inTable = 0;
+                for (ti = 0; ti < (int)ARRAY_COUNT(sModelTable); ti++)
+                    if (sModelTable[ti].actorId == a->id) { inTable = 1; break; }
+                if (a->id == ACTOR_OBJ_HANA) {
+                    cov = ((a->params & 3) == 2) ? "HANA-bush(3DS)" : "HANA-other(N64)";
+                } else if (inTable) {
+                    cov = "TABLE";
+                } else {
+                    int objId = SoH3D_ActorObjectId(play, a);
+                    const char* zar = (objId >= 0 && objId < (int)ARRAY_COUNT(kSoH3dObjectZars))
+                                          ? kSoH3dObjectZars[objId] : NULL;
+                    if (zar != NULL) {
+                        int skin = SoH3D_AutoModelSkinned(SoH3D_AutoModelId(zar));
+                        snprintf(buf, sizeof(buf), "AUTO:%s%s", zar, skin ? " (skin)" : "");
+                        cov = buf;
+                    } else {
+                        nN64++;
+                    }
+                }
+                SoH3D_ReplReply(outPath, "  id=0x%-4X p=0x%04X cat=%d d=%4.0f %s", a->id,
+                                (u16)a->params, cat, d, cov);
+                n++;
+            }
+        }
+        SoH3D_ReplReply(outPath, "actorsnear: %d listed, %d with no object->ZAR (always N64)", n, nN64);
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.

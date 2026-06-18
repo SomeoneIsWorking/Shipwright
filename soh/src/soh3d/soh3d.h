@@ -97,6 +97,11 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 // adding it was one sModelTable[] row + this macro + the generated include.
 #define SOH3D_KIBAKO_WORLD_SCALE 0.10f
 
+// World scale for the OoT3D field bush reused for Obj_Hana's bush variant (params&3==2),
+// the cuttable shrub the grass-cutting Kokiri picks. Same kusa model as En_Kusa (glModelId 2);
+// starts at the kusa scale and is fine-tuned against the N64 Obj_Hana bush. REPL `scale kusa`.
+#define SOH3D_HANABUSH_WORLD_SCALE 0.5f
+
 // World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
 // model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
 // --ground), so it drops into the same Translate*RotateY*Scale path as the props

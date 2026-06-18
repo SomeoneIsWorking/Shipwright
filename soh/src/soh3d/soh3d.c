@@ -1409,7 +1409,10 @@ int SoH3D_AutoWarpEnabled(void) {
 int SoH3D_AutoWarpEntrance(void) {
     const char* v = getenv("SOH3D_ENTRANCE");
     if (v != NULL && v[0] != '\0') {
-        return atoi(v);
+        // base 0: accept hex (0xEE) AND decimal (238). entrance_table.h indices and the
+        // BACKLOG/memory notes are quoted in hex as often as decimal; atoi() silently parsed
+        // "0xDB" as 0 (-> Deku Tree), a footgun that matches SOH3D_TIME's strtol(base 0).
+        return (int)strtol(v, NULL, 0);
     }
     return ENTR_KAKARIKO_VILLAGE_FRONT_GATE;
 }

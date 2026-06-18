@@ -4,17 +4,13 @@
 #define SOH3D_H
 
 #include "global.h"
-#include "soh3d_pot_model.h"
-#include "soh3d_gs_model.h"
-#include "soh3d_kibako_model.h"
-#include "soh3d_geldwoman_model.h"
 
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
 
 // Generalised per-actor divert, called from Actor_Draw for every actor. If SoH3D
 // is enabled and the actor's id has an OoT3D model registered in the table, draws
-// that model (via SoH3D_DrawModel) and returns 1 so the caller skips the actor's
+// that model (via the direct-GL path) and returns 1 so the caller skips the actor's
 // N64 draw; returns 0 otherwise (caller draws the N64 model as normal). Replaces
 // the old per-actor `if (SoH3D_Enabled())` edits in each actor's Draw.
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
@@ -46,12 +42,6 @@ int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable);
 // from the SkelAnime-bearing draw wrappers (func_80034BA0/CC4) whose inner SkelAnime_DrawFlex (the
 // raw hook) has only the skeleton, not the animation. No-op when no replacement is pending.
 void SoH3D_SetCurAnim(void* animation);
-
-// Draws an OoT3D model display list at an actor's world position/yaw with an
-// explicit world scale (OoT3D model units -> N64 world units). Builds its own
-// MTXMODE_NEW matrix rather than inheriting the actor's N64-tuned 0.01 scale, so
-// SoH3D controls the model's true world size. Emits into POLY_OPA.
-void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale);
 
 // Generalised per-room scene divert, called from Room_Draw. If SoH3D is enabled and
 // the current scene has an OoT3D mapping (kSoH3dSceneNames) with a room CMB for
@@ -100,13 +90,6 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands
 // it at the N64 pot's height. See PROGRESS.md calibration.
 #define SOH3D_POT_WORLD_SCALE 0.12f
-
-// World scale for the OoT3D Gossip Stone (OoT3D model units -> N64 world units).
-// The model is ~485 units tall; calibrated against the N64 Gossip Stone via the
-// SOH3D_SPAWNGS A/B spawn. Second object proving the MULTI-MATERIAL pipeline:
-// 2 materials, 2 distinct fully-opaque textures (128x128 Sheikah-eye face +
-// 128x64 stone body), each drawn with its own texture in one display list.
-#define SOH3D_GS_WORLD_SCALE 0.13f
 
 // World scale for the OoT3D large wooden crate (Obj_Kibako2). Model is ~600 units
 // wide; calibrated against the N64 large crate via the SOH3D_SPAWNKIBAKO A/B spawn

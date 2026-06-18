@@ -22,11 +22,9 @@ float gSoH3dTintDiff = 0.5f; // diffuse fraction in the flat scene tint
 float gSoH3dTintMul = 1.0f;  // overall tint brightness multiplier
 int gSoH3dEnabled = -1;      // -1 = uninit (read env), 0/1 = OoT3D render off/on
 
-// Live debug orientation (degrees) applied in SoH3D_DrawModel BEFORE the model
-// dlist, so the correct in-game rest->upright bake can be found over the REPL
-// without a rebuild. Once a value is confirmed in-game it gets baked into the
-// generated model via cmb_to_c --rotx/--roty/--rotz and these reset to 0.
-// (The harness is NOT a faithful orientation proxy — see PROGRESS.md.)
+// Live debug orientation (degrees) applied in the direct-GL draw (SoH3D_EmitModelDraw)
+// BEFORE the model, so a correct in-game rest->upright orientation can be found over the
+// REPL (`rotx/roty/rotz`) without a rebuild.
 float gSoH3dRotX = 0.0f;
 float gSoH3dRotY = 0.0f;
 float gSoH3dRotZ = 0.0f;
@@ -505,37 +503,10 @@ static void SoH3D_SceneTint(PlayState* play, u8 out[3]) {
     }
 }
 
-// Draw an OoT3D model at an actor's world position/yaw with an explicit world
-// scale. Builds its own MTXMODE_NEW matrix instead of inheriting the actor's
-// N64-tuned 0.01 scale: that inherited fixed-point matrix fails to render the
-// model at all (the OoT3D dlist needs SoH3D's own transform), and it would size
-// the full-res model wrongly besides.
-void SoH3D_DrawModel(PlayState* play, Gfx* dlist, Actor* actor, float worldScale) {
-    u8 tint[3];
-    OPEN_DISPS(play->state.gfxCtx);
-
-    Gfx_SetupDL_25Opa(play->state.gfxCtx);
-    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
-    Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
-    // Debug rest->upright orientation, found live then baked into the model (see above).
-    if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dRotZ != 0.0f) Matrix_RotateZ(gSoH3dRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
-    // Flat scene tint -> PRIMITIVE; the unlit dlist's combiner is TEXEL0 * PRIM.
-    // Must be set before the dlist runs (the dlist deliberately sets no prim).
-    SoH3D_SceneTint(play, tint);
-    gDPSetPrimColor(POLY_OPA_DISP++, 0, 0, tint[0], tint[1], tint[2], 255);
-    gSPDisplayList(POLY_OPA_DISP++, dlist);
-
-    CLOSE_DISPS(play->state.gfxCtx);
-}
-
-// Direct-GL draw: same world matrix as SoH3D_DrawModel, but instead of a Fast3D
-// dlist it loads the modelview and emits the OTR_G_SOH3D_DRAW opcode. At dlist-exec
-// time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current MP_matrix
-// — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
+// Direct-GL draw: builds the model's own MTXMODE_NEW world matrix (translate * yaw * scale,
+// not the actor's N64-tuned 0.01 matrix), loads the modelview and emits the OTR_G_SOH3D_DRAW
+// opcode. At dlist-exec time libultraship runs our GL renderer (SoH3D_GL_Draw) with the current
+// MP_matrix — model verts are raw 3DS geometry, textures uploaded from the runtime loader, no
 // N64 TMEM/segment path. Depth-correct because it draws inside the scene pass.
 // Emit the OoT3D model draw at an actor's world position/yaw/scale (+ground offset) into
 // POLY_OPA. Assumes the model's GPU pose (skin matrices) was already set this frame (via
@@ -663,9 +634,8 @@ static int SoH3D_Joints_EnGe1(Actor* actor, const s16** outJointRots, int* outLi
 typedef struct {
     s16 actorId;
     const char* name; // REPL handle for `scale <name>` / `spawn <name>`
-    Gfx* dlist;       // legacy Fast3D dlist (used when glModelId < 0)
     float worldScale; // live (REPL-pokeable)
-    int glModelId;    // >=0 = render via the direct-GL path with this asset id; -1 = legacy dlist
+    int glModelId;    // >=0 = render via the direct-GL path with this asset id
     const char* anim; // CSAB base name to play on the GL path (NULL = bind pose / no anim).
                       // Used as the fallback when resolveAnim is NULL or scrubbing live=0.
     float groundOffset; // model-space Y added BEFORE scale, so the model's feet land on
@@ -683,11 +653,10 @@ typedef struct {
 
 // Non-const so the REPL can tune worldScale/groundOffset live.
 static SoH3D_ModelEntry sModelTable[] = {
-    { ACTOR_OBJ_TSUBO, "pot", soh3d_pot_model_dl, SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL, NULL, 0 },
-    { ACTOR_EN_GS, "gs", soh3d_gs_model_dl, SOH3D_GS_WORLD_SCALE, -1, NULL, 0.0f, NULL, NULL, 0 },
-    { ACTOR_OBJ_KIBAKO2, "kibako", soh3d_kibako_model_dl, SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL, NULL, 0 },
-    { ACTOR_EN_KUSA, "kusa", NULL, 0.5f, 2, NULL, 0.0f, NULL, NULL, 0 }, // bush (scale tuned live via REPL)
-    { ACTOR_EN_GE1, "geldwoman", soh3d_geldwoman_model_dl, SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait",
+    { ACTOR_OBJ_TSUBO, "pot", SOH3D_POT_WORLD_SCALE, 3, NULL, 0.0f, NULL, NULL, 0 },
+    { ACTOR_OBJ_KIBAKO2, "kibako", SOH3D_KIBAKO_WORLD_SCALE, 1, NULL, 0.0f, NULL, NULL, 0 },
+    { ACTOR_EN_KUSA, "kusa", 0.5f, 2, NULL, 0.0f, NULL, NULL, 0 }, // bush (scale tuned live via REPL)
+    { ACTOR_EN_GE1, "geldwoman", SOH3D_GELDWOMAN_WORLD_SCALE, 0, "ge1_s_wait",
       SOH3D_GELDWOMAN_GROUND_OFFSET, SoH3D_ResolveAnim_EnGe1, SoH3D_Joints_EnGe1, 1 },
 };
 
@@ -894,13 +863,9 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
                     gSoH3dPendingBoneMap = NULL; // hand-calibrated entries use the identity retarget
                     return 0;
                 }
-                if (sModelTable[i].glModelId >= 0) {
-                    SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
-                                      sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim,
-                                      sModelTable[i].resolveJoints);
-                } else {
-                    SoH3D_DrawModel(play, sModelTable[i].dlist, actor, sModelTable[i].worldScale);
-                }
+                SoH3D_DrawModelGL(play, sModelTable[i].glModelId, actor, sModelTable[i].worldScale,
+                                  sModelTable[i].anim, sModelTable[i].groundOffset, sModelTable[i].resolveAnim,
+                                  sModelTable[i].resolveJoints);
                 return 1;
             }
         }

@@ -1741,6 +1741,10 @@ void Play_Main(GameState* thisx) {
         HREG(94) = 10;
     }
 
+    // SoH3D: inject any held `walkhold` control-stick input before the player reads it, so Link
+    // really walks/runs via the locomotion system (for verifying the N64-retarget walk cycle).
+    SoH3D_WalkInject(play);
+
     if ((HREG(80) != 10) || (HREG(81) != 0)) {
         Play_Update(play);
     }

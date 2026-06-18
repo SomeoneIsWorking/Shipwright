@@ -38,8 +38,9 @@ typedef float (*SoH3D_FloorFn)(float x, float z);
 // tools/soh3d_link_retarget_derive.py and [[soh3d-n64anim-retarget]].
 typedef struct {
     signed char limb;
-    unsigned char mode;
+    unsigned char mode; // 0 rest, 1 replace, 2 left C·R, 3 right R·C, 4 two-sided C·R·C2
     float C[9];
+    float C2[9];        // right factor for mode 4 (identity otherwise)
 } SoH3dBoneCorr;
 
 namespace {
@@ -1107,6 +1108,7 @@ extern "C" void SoH3D_UpdateAnimN64Corr(int modelId, const int16_t* jointRots, i
             Mat4 R = matMul(matMul(matRz(rz), matRy(ry)), matRx(rx)); // N64 local rotation (Rz·Ry·Rx)
             if (mode == 2) R = matMul(corrMat(c->C), R);              // left:  C·R_n64
             else if (mode == 3) R = matMul(R, corrMat(c->C));         // right: R_n64·C
+            else if (mode == 4) R = matMul(matMul(corrMat(c->C), R), corrMat(c->C2)); // C·R·C2
             L = matMul(L, R);
         } else {
             // No live joint / rest mode: keep the CMB rest orientation (bind pose).

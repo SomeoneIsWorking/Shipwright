@@ -377,8 +377,15 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
         for (const auto& prms : sepd.prms) {
             const Prm& prm = prms.prm;
             int boneId = prms.bone_table.empty() ? 0 : prms.bone_table[0];
-            bool smooth = bd > 1 && slotBi >= 0 && slotBw >= 0 &&
-                          sepd.attrs[slotBi].mode == 0 && sepd.attrs[slotBw].mode == 0;
+            // A mesh with bone_dimension > 1 stores its verts in MODEL space and blends `bd`
+            // bones per vertex (smooth skinning); bd == 1 is rigid (bone-local verts -> the
+            // bound bone's bind-world matrix). The per-vertex weights/indices may be ARRAY
+            // (one set per vertex) OR CONSTANT (a single set shared by every vertex, e.g. a
+            // head riding a 2-bone neck/head chain with constant indices + per-vertex weights).
+            // The CONSTANT case is STILL smooth/model-space — classifying it rigid double-applies
+            // the bind matrix and flings the mesh away (the Kokiri "floating head": kokirimaster/
+            // kokiripeople face & hat are bd=2 with constant boneIndices). So smooth == bd > 1.
+            bool smooth = bd > 1 && slotBi >= 0 && slotBw >= 0;
             // model-space bake: rigid verts come in bone-local space -> bound bone's
             // bind world; smooth verts are already model space (identity).
             Mat4 M = smooth ? matId()
@@ -409,11 +416,14 @@ std::vector<CmbDrawGroup> Cmb::buildDrawGroupsSkinned(const std::array<float, 16
                     const SepdAttr& bia = sepd.attrs[slotBi];
                     float wbuf[8] = {};
                     readAttr(sepd.attrs[slotBw], slotBw, idx, bd, wbuf);
+                    // boneIndices: CONSTANT -> one local-index set (bia.constant[e]) shared by
+                    // every vertex; ARRAY -> per-vertex local indices in the attribute stream.
                     uint32_t bioff = biBase + bia.start + idx * (uint32_t)bd * biSz;
                     for (int e = 0; e < bd && e < 8; e++) {
                         float w = wbuf[e];
                         if (w <= 0) continue;
-                        int li = (int)dtRead(b, bioff + (size_t)e * biSz, bia.data_type);
+                        int li = (bia.mode == 1) ? (int)bia.constant[e]
+                                                 : (int)dtRead(b, bioff + (size_t)e * biSz, bia.data_type);
                         int gb = (li >= 0 && li < (int)prms.bone_table.size()) ? prms.bone_table[li] : boneId;
                         ids[nb] = gb; wts[nb] = w; nb++;
                     }

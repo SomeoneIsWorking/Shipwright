@@ -2,6 +2,7 @@
 #include "soh3d.h"
 #include "soh3d_collision.h" // C-ABI bridge for OoT3D scene collision (soh3d_model.cpp)
 #include "overlays/actors/ovl_En_Ge1/z_en_ge1.h" // EnGe1 (read live SkelAnime state)
+#include "overlays/actors/ovl_En_Ko/z_en_ko.h"   // EnKo ENKO_TYPE_* (shared-CMB head-variant select)
 #include "objects/object_ge1/object_ge1.h"       // dgGerudoWhite*Anim OTR-path strings
 #include <stdlib.h>
 #include <stdio.h>
@@ -96,6 +97,7 @@ float SoH3D_AutoModelHeight(int modelId);
 float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
+const char* SoH3D_AutoModelZar(int modelId); // ZAR path the model was allocated from (stable id)
 float SoH3D_AutoModelBoneLenSum(int modelId); // Σ|trans| of non-root OoT3D bones (skeleton size)
 const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
@@ -959,6 +961,48 @@ static void SoH3D_DumpLimbFileCb(int limbIndex, StandardLimb* lb, void* ud) {
 // deferred for replacement (gSoH3dPending*), retarget its OoT3D model and draw it; return 1 so
 // the N64 limbs are skipped. Shared by the SkelAnime* wrapper and the raw (skeleton,jointTable)
 // wrapper so all the common draw choke points get coverage.
+// --- En_Ko Kokiri-kid shared-CMB head-variant selection ----------------------------------------
+// kokiripeople.cmb (zelda_kw1, girl body) bakes MULTIPLE head variants on distinct CMB mesh_ids;
+// the N64 actor swaps WHICH head limb DL it draws per ENKO_TYPE (sHead[headId] in z_en_ko.c). With
+// every head attached (the cmb.cpp smooth-skinning fix), drawing the whole CMB overlaps two heads,
+// so we pick the one this actor's ENKO_TYPE wants via a per-emit mesh_id mask (same mechanism as
+// Link equipment). mesh_id -> part (tools/link_cmb_dump.py):
+//   kokiripeople (kw1): mid 0,1 = body; mid 2,3 = FADO head (fado_00 + fa_eye01); mid 4 = girl
+//                       head (kokiripeople_00 + kw1_eye01).
+//   kokirimaster (km1): single head (mid 2 face+eyes, mid 3 hat) -> no selection needed.
+// ENKO_TYPE_CHILD_FADO is the only type wanting the Fado head; all other (girl) types want mid 4.
+// NB: the actual "floating head" was a SKINNING bug (bd>1 + constant boneIndices mis-classed rigid)
+// fixed in cmb.cpp; this mask only resolves kokiripeople's genuine 2-head overlap.
+static unsigned long long gSoH3dEnKoMaskOverride = ~0ull; // REPL `enkomask <hex>` (mid-ident sweep)
+static int gSoH3dEnKoMaskOverrideSet = 0;
+#define ENKO_MID(n) (1ull << (n))
+static unsigned long long SoH3D_EnKoMidMask(int modelId, Actor* actor) {
+    if (gSoH3dEnKoMaskOverrideSet) {
+        return gSoH3dEnKoMaskOverride; // debug identification override
+    }
+    if (actor == NULL || actor->id != ACTOR_EN_KO) {
+        return ~0ull; // not a Kokiri kid -> draw everything (clears any stale per-model mask)
+    }
+    const char* zar = SoH3D_AutoModelZar(modelId);
+    if (zar != NULL && strstr(zar, "zelda_kw1") != NULL) {
+        // kokiripeople bakes TWO heads (the skinning fix in cmb.cpp now attaches BOTH at the head,
+        // so they overlap unless we pick one): mid 2,3 = Fado head, mid 4 = girl head. Keep the
+        // body (mid 0,1) + the head this actor's ENKO_TYPE wants.
+        int enkoType = actor->params & 0xFF;
+        if (enkoType == ENKO_TYPE_CHILD_FADO) {
+            return ENKO_MID(0) | ENKO_MID(1) | ENKO_MID(2) | ENKO_MID(3); // body + Fado head (cull girl mid4)
+        }
+        return ENKO_MID(0) | ENKO_MID(1) | ENKO_MID(4); // body + girl head (cull Fado head 2,3)
+    }
+    if (zar != NULL && strstr(zar, "zelda_km1") != NULL) {
+        // kokirimaster ALSO bakes two heads: mid 2 = a separate blinking character (ksh_eye01 eye
+        // mesh), mid 3 = the En_Ko boy head gKm1DL (N64 sHead[KO_BOY] has NULL eye textures -> no
+        // eye-swap mesh -> matches mid 3). Every En_Ko boy uses gKm1DL, so keep body + mid 3.
+        return ENKO_MID(0) | ENKO_MID(1) | ENKO_MID(3);
+    }
+    return ~0ull;
+}
+
 static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable, int limbCount) {
     // ORACLE DUMP (SOH3D_SKELDUMP=1): print the live N64 skeleton + the OoT3D skeleton once per
     // model, for offline analysis. Tree walk is OOB-safe.
@@ -1025,6 +1069,10 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         }
         SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate, gSoH3dPendingN64CurFrame,
                              gSoH3dPendingN64AnimLength);
+        // Shared multi-variant CMBs (En_Ko Kokiri kids) bake several heads on distinct mesh_ids;
+        // select the one this actor's ENKO_TYPE wants. Set BEFORE EmitModelDraw's EmitPose so the
+        // mask pairs with this draw item (the GL pass snapshots pendingMidMask at emit time).
+        SoH3D_GL_SetMidMask(gSoH3dPendingModel, SoH3D_EnKoMidMask(gSoH3dPendingModel, gSoH3dPendingActor));
         SoH3D_EmitModelDraw(play, gSoH3dPendingModel, gSoH3dPendingActor, gSoH3dPendingScale, gSoH3dPendingGroundOff);
         gSoH3dPendingModel = -1;
         gSoH3dPendingBoneMap = NULL;
@@ -2367,6 +2415,29 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "linkmid override=%s mask=0x%llx",
                         gSoH3dLinkMidOverrideSet ? "ON" : "OFF(auto)", gSoH3dLinkMidOverride);
+    } else if (strcmp(cmd, "enkomask") == 0) {
+        // `enkomask <arg>` — debug override of the En_Ko Kokiri-kid mesh_id mask (kokiripeople/
+        // kokirimaster bake multiple heads on distinct mesh_ids). Same grammar as `linkmid`:
+        // `only <n>` / `add <n>` / `del <n>` / `0xHEX` / `all` / `auto` (release -> per-type policy).
+        char arg[32] = "";
+        int n = 0;
+        if (sscanf(line, "%*s %31s", arg) == 1) {
+            if (strcmp(arg, "auto") == 0) {
+                gSoH3dEnKoMaskOverrideSet = 0;
+            } else if (strcmp(arg, "all") == 0) {
+                gSoH3dEnKoMaskOverride = ~0ull; gSoH3dEnKoMaskOverrideSet = 1;
+            } else if (strcmp(arg, "only") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                gSoH3dEnKoMaskOverride = (n >= 0 && n < 64) ? (1ull << n) : 0ull; gSoH3dEnKoMaskOverrideSet = 1;
+            } else if (strcmp(arg, "add") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                if (n >= 0 && n < 64) gSoH3dEnKoMaskOverride |= (1ull << n); gSoH3dEnKoMaskOverrideSet = 1;
+            } else if (strcmp(arg, "del") == 0 && sscanf(line, "%*s %*s %d", &n) == 1) {
+                if (n >= 0 && n < 64) gSoH3dEnKoMaskOverride &= ~(1ull << n); gSoH3dEnKoMaskOverrideSet = 1;
+            } else {
+                gSoH3dEnKoMaskOverride = strtoull(arg, NULL, 0); gSoH3dEnKoMaskOverrideSet = 1;
+            }
+        }
+        SoH3D_ReplReply(outPath, "enkomask override=%s mask=0x%llx",
+                        gSoH3dEnKoMaskOverrideSet ? "ON" : "OFF(auto)", gSoH3dEnKoMaskOverride);
     } else if (strcmp(cmd, "linkgear") == 0) {
         // `linkgear <sword 0-3> <shield 0-3>` — equip a sword (0=none,1=kokiri,2=master,3=biggoron)
         // + shield (0=none,1=deku,2=hylian,3=mirror) on Link so the boy/adult equipment mids can be

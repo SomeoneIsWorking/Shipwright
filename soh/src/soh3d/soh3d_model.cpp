@@ -730,6 +730,16 @@ int SoH3D_AutoModelSkinned(int modelId) {
     return lm->skinned ? 1 : 0;
 }
 
+// The ZAR path an auto model was allocated from (e.g. "/actor/zelda_kw1.zar"), or NULL. Lets the
+// actor draw path identify WHICH model is loaded by archive name (stable), since the numeric model
+// id is allocation-order dependent. Used to pick a shared-CMB variant subset (e.g. En_Ko Kokiri
+// kids: kokiripeople/kokirimaster bake multiple head variants on distinct mesh_ids).
+const char* SoH3D_AutoModelZar(int modelId) {
+    int idx = modelId - kAutoModelBase;
+    if (idx < 0 || idx >= (int)g_autoModelPaths.size()) return nullptr;
+    return g_autoModelPaths[idx].c_str();
+}
+
 // Number of bones in a loaded model's OoT3D skeleton (0 if none/failed). The N64-anim retarget
 // maps N64 jointTable[i+1] -> OoT3D bone i, so a correct retarget needs the OoT3D bone count to
 // match the actor's N64 limb count; the auto path uses this to refuse mismatched rigs (which

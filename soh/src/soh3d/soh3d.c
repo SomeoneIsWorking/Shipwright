@@ -1573,7 +1573,7 @@ static const char* SoH3D_ResolvePlayerCsab(const char* otr) {
 // those to the matching childlink_v2 mesh_ids. The N64 state is self-consistent (sword drawn =>
 // empty sheath on back + sword in left hand + shield on right arm; stowed => open hands + shield +
 // sword on back), so just composing per-limb avoids double shields/swords. mesh_id map: see
-// scratch/link/mid_map.md (texture + posed-geometry + render-sweep identification).
+// link_mesh_id_map.md (next to this file) (texture + posed-geometry + render-sweep identification).
 #define LINK_MID(n) (1ull << (n))
 static unsigned long long SoH3D_LinkComputeMidMask(Player* player) {
     unsigned long long m;

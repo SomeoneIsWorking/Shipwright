@@ -15,6 +15,10 @@ int SoH3D_Enabled(void);
 // the old per-actor `if (SoH3D_Enabled())` edits in each actor's Draw.
 int SoH3D_TryDrawActor(PlayState* play, Actor* actor);
 
+// Pure predicate (no drawing): does this actor have an OoT3D replacement right now? Used by the
+// engine draw-distance check so replaced actors keep drawing/updating past the N64 cull distance.
+int SoH3D_ActorHasReplacement(PlayState* play, Actor* actor);
+
 // Called from Actor_Draw immediately AFTER an actor's N64 draw (only when
 // SoH3D_TryDrawActor returned 0, i.e. the N64 model drew). Closes the auto-scale
 // measure bracket opened by SoH3D_TryDrawActor so the SOH3D_AUTO path can measure the

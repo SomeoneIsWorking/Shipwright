@@ -903,6 +903,42 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     return 0;
 }
 
+// Pure predicate (no drawing): does this actor currently have an OoT3D replacement? Mirrors the
+// lookups in SoH3D_TryDrawActor / SoH3D_TryAuto without side effects. The engine's draw-distance
+// check (Ship_CalcShouldDrawAndUpdate) calls this so replaced actors — e.g. the Kokiri kids — keep
+// drawing + updating past the vanilla N64 cull distance instead of popping out. (BACKLOG #7)
+int SoH3D_ActorHasReplacement(PlayState* play, Actor* actor) {
+    s32 i;
+    int objId;
+    if (!SoH3D_Enabled() || actor == NULL) {
+        return 0;
+    }
+    if (SoH3D_AutoMode() != 2) {
+        if (actor->id == ACTOR_OBJ_HANA) {
+            int v = actor->params & 3;
+            if (v == 0 || v == 2) {
+                return 1;
+            }
+        }
+        if (actor->id == ACTOR_EN_ISHI) {
+            return 1;
+        }
+        for (i = 0; i < (s32)ARRAY_COUNT(sModelTable); i++) {
+            if (sModelTable[i].actorId == actor->id) {
+                return 1;
+            }
+        }
+    }
+    if (SoH3D_AutoMode() >= 1) {
+        objId = SoH3D_ActorObjectId(play, actor);
+        if (objId >= 0 && objId < (int)ARRAY_COUNT(kSoH3dObjectZars) && kSoH3dObjectZars[objId] != NULL &&
+            objId != OBJECT_KANBAN && sAuto[objId].state != 3) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // Walk a live N64 skeleton's limb TREE (child/sibling from the root), invoking cb(limbIndex,
 // limb) for every limb EXCEPT the root (limb 0). MUST walk the tree, not a blind 0..limbCount-1
 // loop: some skeletons carry an unreferenced trailing limb whose skeleton[]/jointTable[] slots
@@ -2340,9 +2376,9 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                     float dx = a->world.pos.x - pl->actor.world.pos.x;
                     float dy = a->world.pos.y - pl->actor.world.pos.y;
                     float dz = a->world.pos.z - pl->actor.world.pos.z;
-                    SoH3D_ReplReply(outPath, "  [%d] pos=(%.0f,%.0f,%.0f) dist=%.0f cat=%d", n,
+                    SoH3D_ReplReply(outPath, "  [%d] pos=(%.0f,%.0f,%.0f) dist=%.0f cat=%d drawn=%d", n,
                                     a->world.pos.x, a->world.pos.y, a->world.pos.z,
-                                    sqrtf(dx * dx + dy * dy + dz * dz), cat);
+                                    sqrtf(dx * dx + dy * dy + dz * dz), cat, a->isDrawn);
                     n++;
                 }
             }

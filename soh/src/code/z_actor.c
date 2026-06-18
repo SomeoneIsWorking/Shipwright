@@ -2995,6 +2995,14 @@ s32 Ship_CalcShouldDrawAndUpdate(PlayState* play, Actor* actor, Vec3f* projected
         return false;
     }
 
+    // SoH3D: actors with an OoT3D replacement (e.g. Kokiri kids) must keep drawing + updating past
+    // the N64 cull distance, or the replacement pops out while the N64 actor is gone. (BACKLOG #7)
+    if (SoH3D_ActorHasReplacement(play, actor)) {
+        *shouldDraw = true;
+        *shouldUpdate = true;
+        return true;
+    }
+
     s32 multiplier = CVarGetInteger(CVAR_ENHANCEMENT("DisableDrawDistance"), 1);
     multiplier = MAX(multiplier, 1);
 

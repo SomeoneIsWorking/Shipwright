@@ -119,6 +119,14 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 #define ZSPOT01 "/actor/zelda_spot01_objects.zar"
 #define SOH3D_SPOT01_WORLD_SCALE 0.01268f
 
+// Kakariko DM-trail gate (Bg_Gate_Shutter, OBJECT_SPOT01_MATOYAB). It shares
+// zelda_spot01_matoyab.zar with the windmill mechanism (c_matoate_before), but the two CMBs are
+// authored at DIFFERENT unit scales (matoate ~1402 units tall, the gate c_s01tomegate ~111), so the
+// gate needs its OWN scale — calibrated to 1.4 in-game (gate fills the DM-trail archway). REPL
+// `gscale 10 <f>`.
+#define ZMATOYAB "/actor/zelda_spot01_matoyab.zar"
+#define SOH3D_MATOYAB_WORLD_SCALE 1.4f
+
 // World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
 // model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
 // --ground), so it drops into the same Translate*RotateY*Scale path as the props

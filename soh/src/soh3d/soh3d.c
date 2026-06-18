@@ -892,6 +892,16 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
                               SOH3D_GSCALE(9, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
             return 1;
         }
+        // Kakariko Death Mountain gate (Bg_Gate_Shutter) uses OBJECT_SPOT01_MATOYAB, which it shares
+        // with the windmill mechanism (Bg_Spot01_Objects2). That ZAR's largest CMB is the mechanism
+        // (c_matoate_before), so the auto pick rendered the gate as that structure (BACKLOG #26).
+        // Force the gate to its own CMB (c_s01tomegate = 留め門). (Collision is the N64 actor's own
+        // dynapoly — unaffected by the render swap; if the gate still has none, that's separate.)
+        if (actor->id == ACTOR_BG_GATE_SHUTTER) {
+            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZMATOYAB "|c_s01tomegate"), actor,
+                              SOH3D_GSCALE(10, SOH3D_MATOYAB_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            return 1;
+        }
     }
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.

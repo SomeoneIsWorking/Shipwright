@@ -30,6 +30,12 @@ float gSoH3dRotX = 0.0f;
 float gSoH3dRotY = 0.0f;
 float gSoH3dRotZ = 0.0f;
 
+// Live world-scale override per glModelId for the param-keyed field-keep props (rock/flower/
+// bush). 0 = use the per-call SOH3D_*_WORLD_SCALE default. REPL `gscale <id> <f>` pokes it so
+// new props can be size-calibrated against the N64 actor without a rebuild per guess.
+float gSoH3dGScale[16] = { 0 };
+#define SOH3D_GSCALE(id, def) (((id) >= 0 && (id) < 16 && gSoH3dGScale[id] > 0.0f) ? gSoH3dGScale[id] : (def))
+
 // Live CSAB animation playback (GPU skinning). gSoH3dAnimRate = anim-frames advanced
 // per draw (the OoT3D logic tick is ~20 fps; tune live over the REPL). The frame is
 // a free-running accumulator — the CSAB wraps it (REPEAT) internally.
@@ -847,14 +853,24 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     // animLength stays 0 -> the auto branch free-runs (no stale phase-lock from a prior actor).
     gSoH3dPendingN64CurFrame = 0.0f;
     gSoH3dPendingN64AnimLength = 0.0f;
-    // Obj_Hana shares gameplay_field_keep across three param variants (params & 3): 0 = gHanaDL
-    // (flower), 1 = gFieldKakeraDL (debris), 2 = gFieldBushDL (the cuttable field BUSH — what the
-    // grass-cutting Kokiri picks). Only the bush has an OoT3D equivalent so far: it's the same
-    // cuttable bush as En_Kusa, so draw the kusa model (glModelId 2). Flower/debris have no model
-    // yet -> leave them N64. Param-keyed, so it can't live in sModelTable (actorId-only).
-    if (actor->id == ACTOR_OBJ_HANA && (actor->params & 3) == 2 && SoH3D_AutoMode() != 2) {
-        SoH3D_DrawModelGL(play, /*kusa bush*/ 2, actor, SOH3D_HANABUSH_WORLD_SCALE, NULL, 0.0f, NULL, NULL);
-        return 1;
+    // Param-keyed field-keep actors: one keep object shared across param variants, so the model
+    // depends on (actor, params) — can't live in the actorId-only sModelTable. The OoT3D models
+    // come from zelda_field_keep.zar (glModelIds 2,4,5,6; see kModels in soh3d_model.cpp).
+    // gSoH3dGScale[id] (REPL `gscale <id> <f>`, 0 = use the per-call default) tunes them live.
+    if (SoH3D_AutoMode() != 2) {
+        // Obj_Hana (params & 3): 0 = gHanaDL flower, 1 = gFieldKakeraDL debris, 2 = gFieldBushDL
+        // bush. Bush -> the kusa model (same cuttable bush as En_Kusa); flower -> field-keep
+        // flower. Debris (1) is a transient break effect -> leave N64.
+        if (actor->id == ACTOR_OBJ_HANA) {
+            int v = actor->params & 3;
+            if (v == 2) { SoH3D_DrawModelGL(play, 2, actor, SOH3D_GSCALE(2, SOH3D_HANABUSH_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
+            if (v == 0) { SoH3D_DrawModelGL(play, 6, actor, SOH3D_GSCALE(6, SOH3D_FLOWER_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
+        }
+        // En_Ishi (params & 1): 0 = small liftable rock, 1 = large/silver rock.
+        if (actor->id == ACTOR_EN_ISHI) {
+            if ((actor->params & 1) == 0) { SoH3D_DrawModelGL(play, 4, actor, SOH3D_GSCALE(4, SOH3D_ROCK_SMALL_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
+            SoH3D_DrawModelGL(play, 5, actor, SOH3D_GSCALE(5, SOH3D_ROCK_LARGE_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1;
+        }
     }
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.
@@ -2313,7 +2329,10 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                 for (ti = 0; ti < (int)ARRAY_COUNT(sModelTable); ti++)
                     if (sModelTable[ti].actorId == a->id) { inTable = 1; break; }
                 if (a->id == ACTOR_OBJ_HANA) {
-                    cov = ((a->params & 3) == 2) ? "HANA-bush(3DS)" : "HANA-other(N64)";
+                    int v = a->params & 3;
+                    cov = (v == 2) ? "HANA-bush(3DS)" : (v == 0) ? "HANA-flower(3DS)" : "HANA-debris(N64)";
+                } else if (a->id == ACTOR_EN_ISHI) {
+                    cov = "ISHI-rock(3DS)";
                 } else if (inTable) {
                     cov = "TABLE";
                 } else {
@@ -2494,6 +2513,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "enkomask override=%s mask=0x%llx",
                         gSoH3dEnKoMaskOverrideSet ? "ON" : "OFF(auto)", gSoH3dEnKoMaskOverride);
+    } else if (strcmp(cmd, "gscale") == 0 && sscanf(line, "%*s %i %f", &iv, &f1) == 2) {
+        // `gscale <glModelId> <f>` — live world-scale override for a param-keyed field-keep prop
+        // (4=rock_s, 5=rock_l, 6=flower, 2=bush). 0 releases back to the compiled default.
+        if (iv >= 0 && iv < 16) {
+            gSoH3dGScale[iv] = f1;
+            SoH3D_ReplReply(outPath, "gscale[%d]=%.4f%s", iv, f1, f1 <= 0.0f ? " (default)" : "");
+        } else {
+            SoH3D_ReplReply(outPath, "gscale: id out of range (0..15)");
+        }
     } else if (strcmp(cmd, "linkgear") == 0) {
         // `linkgear <sword 0-3> <shield 0-3>` — equip a sword (0=none,1=kokiri,2=master,3=biggoron)
         // + shield (0=none,1=deku,2=hylian,3=mirror) on Link so the boy/adult equipment mids can be

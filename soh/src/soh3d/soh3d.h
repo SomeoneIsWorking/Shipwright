@@ -102,6 +102,13 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 // starts at the kusa scale and is fine-tuned against the N64 Obj_Hana bush. REPL `scale kusa`.
 #define SOH3D_HANABUSH_WORLD_SCALE 0.5f
 
+// World scales for the field-keep props (En_Ishi rocks, Obj_Hana flower) reused from
+// zelda_field_keep.zar. Starting estimates against the N64 actor scale (rock 0.1/0.4,
+// flower 0.01); fine-tune live with REPL `scale rock_s|rock_l|flower`.
+#define SOH3D_ROCK_SMALL_WORLD_SCALE 0.12f  // calibrated vs N64 in Kokiri Forest
+#define SOH3D_ROCK_LARGE_WORLD_SCALE 0.12f  // UNCALIBRATED: no silver rocks in Kokiri Forest yet
+#define SOH3D_FLOWER_WORLD_SCALE 0.12f      // UNCALIBRATED: no field flowers in Kokiri Forest yet
+
 // World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
 // model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
 // --ground), so it drops into the same Translate*RotateY*Scale path as the props

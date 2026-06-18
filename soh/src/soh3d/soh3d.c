@@ -2827,6 +2827,21 @@ void SoH3D_ReplPoll(PlayState* play) {
         }
     }
 
+    // RmlUi Debug-menu "Restart → Title Screen": return to the title gamestate (same teardown the
+    // debug Select menu uses in Select_LoadTitle). Done here because the menu has no PlayState.
+    {
+        extern int gSoH3dMenuRestart; // SohRmlUi.cpp; 1 = return-to-title requested
+        if (gSoH3dMenuRestart && play != NULL) {
+            gSoH3dMenuRestart = 0;
+            // Stop the scene BGM — jumping straight from gameplay to Title_Init skips the normal
+            // play->fileselect->title teardown, so the scene music would otherwise keep playing on
+            // the title screen. NA_BGM_STOP on the main player (same idiom as Select_LoadGame).
+            Audio_QueueSeqCmd(NA_BGM_STOP);
+            play->state.running = false;
+            SET_NEXT_GAMESTATE(&play->state, Title_Init, TitleContext);
+        }
+    }
+
     if (fd == -2) {
         const char* p = getenv("SOH3D_REPL");
         if (p == NULL || p[0] == '\0') {

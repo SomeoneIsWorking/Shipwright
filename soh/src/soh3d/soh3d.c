@@ -871,6 +871,27 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
             if ((actor->params & 1) == 0) { SoH3D_DrawModelGL(play, 4, actor, SOH3D_GSCALE(4, SOH3D_ROCK_SMALL_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
             SoH3D_DrawModelGL(play, 5, actor, SOH3D_GSCALE(5, SOH3D_ROCK_LARGE_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1;
         }
+        // Kakariko well/windmill: Bg_Spot01_Fusya (windmill), _Idohashira (well pillar/ladder) and
+        // _Idomizu (well water) all share OBJECT_SPOT01_OBJECTS, so the auto "largest CMB" pick gave
+        // every one the windmill blades (c_s01fusya) — the well showed windmill blades, not water
+        // (BACKLOG #24). Route each to its OWN CMB via the forced-CMB auto key ("<zar>|<cmb>"). They
+        // share one ZAR coordinate space, so one world scale (auto-derived ~0.0127 for this object)
+        // renders all three at their authored sizes. Tunable live via REPL `gscale`.
+        if (actor->id == ACTOR_BG_SPOT01_FUSYA) {
+            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZSPOT01 "|c_s01fusya"), actor,
+                              SOH3D_GSCALE(7, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            return 1;
+        }
+        if (actor->id == ACTOR_BG_SPOT01_IDOHASHIRA) {
+            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZSPOT01 "|c_s01idohashira"), actor,
+                              SOH3D_GSCALE(8, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            return 1;
+        }
+        if (actor->id == ACTOR_BG_SPOT01_IDOMIZU) {
+            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZSPOT01 "|c_s01idomizu"), actor,
+                              SOH3D_GSCALE(9, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            return 1;
+        }
     }
     // Explicit table wins (calibrated scale + anim resolvers), unless validation mode (=2)
     // routes everything through the auto path to check the derived scale.

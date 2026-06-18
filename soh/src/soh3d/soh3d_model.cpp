@@ -421,13 +421,42 @@ static size_t vertCountGroups(const std::vector<SoH3D::CmbDrawGroup>& groups) {
 static void loadAutoModel(int modelId, LoadedModel* out) {
     int idx = modelId - kAutoModelBase;
     if (idx < 0 || idx >= (int)g_autoModelPaths.size()) return;
-    const std::string& zarPath = g_autoModelPaths[idx];
+    // A key may carry a forced-CMB selector: "<zar>|<cmbSubstr>". Used when one shared ZAR holds
+    // several distinct objects, each needed by a DIFFERENT actor (e.g. zelda_spot01_objects.zar =
+    // windmill c_s01fusya + well pillar c_s01idohashira + well water c_s01idomizu). The default
+    // "largest CMB" heuristic would give every such actor the same (biggest) CMB. With a selector
+    // we pick the named CMB instead; scale still auto-derives (per-actor N64 height / this CMB).
+    const std::string& key = g_autoModelPaths[idx];
+    std::string zarPath = key;
+    std::string forcedCmb;
+    if (auto bar = key.find('|'); bar != std::string::npos) {
+        zarPath = key.substr(0, bar);
+        forcedCmb = key.substr(bar + 1);
+    }
     SoH3D::CtrRom* r = rom();
     if (!r) return;
     auto zarBytes = r->read(zarPath);
     if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] auto: zar not found: %s\n", zarPath.c_str()); return; }
     out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
     if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] auto Zar %s: %s\n", zarPath.c_str(), out->zar->error().c_str()); return; }
+
+    // Forced-CMB selection: load exactly the named CMB (first match) and skip the heuristic.
+    if (!forcedCmb.empty()) {
+        for (const auto& f : out->zar->files()) {
+            if (f.name.size() < 4 || f.name.compare(f.name.size() - 4, 4, ".cmb") != 0) continue;
+            if (f.name.find(forcedCmb) == std::string::npos) continue;
+            auto cmb = std::make_unique<SoH3D::Cmb>(out->zar->read(f));
+            if (!cmb->ok()) { fprintf(stderr, "[SoH3D] auto forced-cmb %s '%s': %s\n", zarPath.c_str(), f.name.c_str(), cmb->error().c_str()); return; }
+            out->cmb = std::move(cmb);
+            out->skinned = out->cmb->bones().size() > 1;
+            buildFromCmb(out, /*bakedVertexColor=*/false);
+            printf("[SoH3D] auto-loaded model %d (%s | %s): cmb '%s', height=%.1f, %zu groups, %zu textures\n",
+                   modelId, zarPath.c_str(), forcedCmb.c_str(), f.name.c_str(), bboxHeight(out->groups),
+                   out->cGroups.size(), out->cTexs.size());
+            return;
+        }
+        fprintf(stderr, "[SoH3D] auto forced-cmb %s: no cmb matches '%s' -> heuristic pick\n", zarPath.c_str(), forcedCmb.c_str());
+    }
 
     // Hand-curated multi-part assembly? Merge exactly the named CMBs (in order) instead of
     // single-picking one (which would render one detached sub-piece). See kAssemblies.

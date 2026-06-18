@@ -113,6 +113,12 @@ int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 #define SOH3D_ROCK_LARGE_WORLD_SCALE 0.12f  // UNCALIBRATED: no silver rocks in Kokiri Forest yet
 #define SOH3D_FLOWER_WORLD_SCALE 0.12f      // UNCALIBRATED: no field flowers in Kokiri Forest yet
 
+// Kakariko well + windmill (Bg_Spot01_Fusya / _Idohashira / _Idomizu), all from one shared ZAR
+// coordinate space (zelda_spot01_objects.zar). Seeded from the auto-derived per-object scale
+// (n64h 130 / fusya CMB 10255 ~= 0.0127). Tune live with REPL `gscale 7|8|9 <f>`.
+#define ZSPOT01 "/actor/zelda_spot01_objects.zar"
+#define SOH3D_SPOT01_WORLD_SCALE 0.01268f
+
 // World scale for the OoT3D Gerudo (En_Ge1). FIRST CHARACTER divert: the OoT3D
 // model is smooth-skinned and baked UPRIGHT + grounded (cmb_to_c --rotx 180
 // --ground), so it drops into the same Translate*RotateY*Scale path as the props

@@ -2818,12 +2818,56 @@ void SoH3D_ReplPoll(PlayState* play) {
     // has no PlayState, so it just records the target entrance in this global; we trigger the actual
     // scene transition here, where the PlayState is in hand (same mechanism as the `warp` REPL cmd).
     {
-        extern int gSoH3dMenuWarp; // SohRmlUi.cpp; -1 = none pending
+        extern int gSoH3dMenuWarp;     // SohRmlUi.cpp; -1 = none pending
+        extern int gSoH3dMenuWarpTime; // SohRmlUi.cpp; 0 Default / 1 Day / 2 Night
         if (gSoH3dMenuWarp >= 0 && play != NULL) {
+            // Apply the menu's chosen time-of-day to the destination scene. gSoH3dForceTime is
+            // honored by SoH3D_ApplyForceTime() in the new scene's Play_Init (before the day/night
+            // setup layer is picked), so this selects the day vs night NPC set, not just a recolour.
+            if (gSoH3dMenuWarpTime == 1) {
+                gSoH3dForceTime = 0x6000; // Day (proven day value; the game.sh default)
+            } else if (gSoH3dMenuWarpTime == 2) {
+                gSoH3dForceTime = 0x0000; // Night (midnight; < 0x4555 sets nightFlag)
+            } else {
+                gSoH3dForceTime = -1; // Default: release the clock so it runs normally
+            }
             play->nextEntranceIndex = gSoH3dMenuWarp;
             play->transitionTrigger = TRANS_TRIGGER_START;
             play->transitionType = TRANS_TYPE_FADE_BLACK;
             gSoH3dMenuWarp = -1;
+        }
+    }
+
+    // RmlUi Graphics-menu "Link Model / Anim" cycle row. The menu records a 3-way mode in
+    // gSoH3dMenuLinkMode (SohRmlUi.cpp); apply it to the live Link toggles here. Seed it once from
+    // the current mode so the menu opens reflecting reality, then only act on user changes (so the
+    // REPL `link`/`linksrc` commands still work between menu touches).
+    {
+        extern int gSoH3dMenuLinkMode; // SohRmlUi.cpp; 0 N64 / 1 3DS+N64anim / 2 3DS+3DSanim
+        static int linkModeSeeded = 0;
+        static int lastLinkMode = -1;
+        if (!linkModeSeeded) {
+            int m = !SoH3D_LinkEnabled() ? 0 : (SoH3D_LinkAnimSrc() == 1 ? 1 : 2);
+            gSoH3dMenuLinkMode = m;
+            lastLinkMode = m;
+            linkModeSeeded = 1;
+        } else if (gSoH3dMenuLinkMode != lastLinkMode) {
+            lastLinkMode = gSoH3dMenuLinkMode;
+            switch (gSoH3dMenuLinkMode) {
+                case 0:
+                    gSoH3dLinkOn = 0;
+                    break;
+                case 1:
+                    gSoH3dLinkOn = 1;
+                    gSoH3dLinkAnimSrc = 1;
+                    break;
+                case 2:
+                    gSoH3dLinkOn = 1;
+                    gSoH3dLinkAnimSrc = 0;
+                    break;
+                default:
+                    break;
+            }
         }
     }
 

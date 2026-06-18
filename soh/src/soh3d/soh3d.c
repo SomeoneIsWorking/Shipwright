@@ -1966,6 +1966,11 @@ static void SoH3D_ReplReply(const char* outPath, const char* fmt, ...) {
     }
 }
 
+// RmlUi (ESC) menu navigation injection (libultraship Fast3dGui bridge). Action codes:
+// 0 next (Down), 1 prev (Up), 2 activate (Enter), 3 close (Esc), 4 toggle (Esc). Lets the REPL
+// drive the menu through the real input path for deterministic, headless nav verification.
+void SoH3D_RmlMenuKey(int action);
+
 static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     char cmd[32];
     char arg[64];
@@ -1994,6 +1999,24 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "enable") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dEnabled = (int)f1;
         SoH3D_ReplReply(outPath, "enabled=%d", gSoH3dEnabled);
+    } else if (strcmp(cmd, "menu") == 0 && sscanf(line, "%*s %63s", arg) == 1) {
+        // Inject RmlUi menu navigation through the real input path (tools/soh3d_repl.py menu ...).
+        int action = -1;
+        if (strcmp(arg, "next") == 0 || strcmp(arg, "down") == 0) {
+            action = 0;
+        } else if (strcmp(arg, "prev") == 0 || strcmp(arg, "up") == 0) {
+            action = 1;
+        } else if (strcmp(arg, "activate") == 0 || strcmp(arg, "enter") == 0 || strcmp(arg, "a") == 0) {
+            action = 2;
+        } else if (strcmp(arg, "close") == 0 || strcmp(arg, "esc") == 0 || strcmp(arg, "toggle") == 0) {
+            action = 3;
+        }
+        if (action >= 0) {
+            SoH3D_RmlMenuKey(action);
+            SoH3D_ReplReply(outPath, "menu %s", arg);
+        } else {
+            SoH3D_ReplReply(outPath, "menu: unknown action '%s' (next|prev|activate|close)", arg);
+        }
     } else if (strcmp(cmd, "tp") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         Player* p = GET_PLAYER(play);
         p->actor.world.pos.x = f1;

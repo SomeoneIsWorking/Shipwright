@@ -1970,6 +1970,7 @@ static void SoH3D_ReplReply(const char* outPath, const char* fmt, ...) {
 // 0 next (Down), 1 prev (Up), 2 activate (Enter), 3 close (Esc), 4 toggle (Esc). Lets the REPL
 // drive the menu through the real input path for deterministic, headless nav verification.
 void SoH3D_RmlMenuKey(int action);
+void SoH3D_RmlMenuClick(int x, int y); // synthesize a menu mouse click at window pixel (x, y)
 
 static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     char cmd[32];
@@ -2021,6 +2022,10 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "menu: unknown action '%s' (next|prev|activate|close|left|right)", arg);
         }
+    } else if (strcmp(cmd, "menuclick") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        // Inject a menu mouse click at window pixel (x, y) through the real input path.
+        SoH3D_RmlMenuClick((int)f1, (int)f2);
+        SoH3D_ReplReply(outPath, "menuclick (%d,%d)", (int)f1, (int)f2);
     } else if (strcmp(cmd, "tp") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         Player* p = GET_PLAYER(play);
         p->actor.world.pos.x = f1;

@@ -59,6 +59,11 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 // N64 SkyboxDraw_Draw), 0 otherwise (caller draws the N64 skybox as normal). #28.
 int SoH3D_TryDrawSky(PlayState* play);
 
+// Draw the OoT3D sun/moon discs (BlueSky.zar fine_sun.ctxb / fine_moon0.ctxb billboards) in place
+// of the N64 Environment_DrawSunAndMoon sprites. Called from Play_Draw at that call site; returns 1
+// if it drew the OoT3D sun/moon (caller skips the N64 path), 0 otherwise (caller draws N64). #28e.
+int SoH3D_TryDrawSunMoon(PlayState* play);
+
 // Emit the once-per-frame SoH3D render-pass marker (drains all SoH3D draws collected this frame
 // in one GL-state-bracketed pass). Call from Play_Draw right after the actor draw-all.
 void SoH3D_EmitRenderPass(PlayState* play);

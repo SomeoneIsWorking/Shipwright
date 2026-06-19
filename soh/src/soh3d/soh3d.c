@@ -1504,6 +1504,103 @@ int SoH3D_TryDrawSky(PlayState* play) {
     return 1;
 }
 
+// #28e — the OoT3D sun/moon discs. N64 Environment_DrawSunAndMoon billboards two I-format sprites
+// (gSun1Tex / gMoonTex). OoT3D ships them as standalone CTXB sprites (tex/fine_sun.ctxb additive
+// glow, tex/fine_moon0.ctxb alpha-masked disc) that its engine billboards itself. We draw those
+// CTXBs as synthetic billboard quads (loadBillboard) at the SAME world positions, sizes and
+// camera-facing transform the N64 path uses — so the placement is byte-identical to N64, only the
+// texture is the OoT3D asset. The quad verts already match the N64 sprite (-31..32), so here we
+// just reproduce N64's translate * billboardMtxF * scale per sprite and pin both to the far plane
+// (handle bit 30) like the dome. Tint is left white (the CTXB carries its own colour, unlike the
+// N64 I-format sprites that need the prim/env tint); only the moon's day/night alpha fade is kept.
+static int SoH3D_SunModelId(void) {
+    return SoH3D_AutoModelId("BILLBOARDADD:/kankyo/BlueSky.zar|tex/fine_sun.ctxb");
+}
+static int SoH3D_MoonModelId(void) {
+    return SoH3D_AutoModelId("BILLBOARD:/kankyo/BlueSky.zar|tex/fine_moon0.ctxb");
+}
+
+int SoH3D_TryDrawSunMoon(PlayState* play) {
+    f32 y, color, scale, temp, alpha;
+    int sunId, moonId;
+
+    if (!gSoH3dSky || !SoH3D_Enabled()) {
+        return 0;
+    }
+    if (play->skyboxId != SKYBOX_NORMAL_SKY) {
+        return 0;
+    }
+    if (SoH3D_SceneName(play) == NULL) {
+        return 0;
+    }
+
+    // Update sunPos exactly as Environment_DrawSunAndMoon does (we skip the N64 draw, so we must
+    // keep advancing the position other code reads — lens flare, lighting). Cutscene path uses the
+    // same smooth-step easing; gameplay path snaps.
+    if (play->csCtx.state != 0) {
+        Math_SmoothStepToF(&play->envCtx.sunPos.x,
+                           -(Math_SinS(((void)0, gSaveContext.dayTime) - 0x8000) * 120.0f) * 25.0f, 1.0f, 0.8f, 0.8f);
+        Math_SmoothStepToF(&play->envCtx.sunPos.y,
+                           (Math_CosS(((void)0, gSaveContext.dayTime) - 0x8000) * 120.0f) * 25.0f, 1.0f, 0.8f, 0.8f);
+        Math_SmoothStepToF(&play->envCtx.sunPos.y,
+                           (Math_CosS(((void)0, gSaveContext.dayTime) - 0x8000) * 20.0f) * 25.0f, 1.0f, 0.8f, 0.8f);
+    } else {
+        play->envCtx.sunPos.x = -(Math_SinS(((void)0, gSaveContext.dayTime) - 0x8000) * 120.0f) * 25.0f;
+        play->envCtx.sunPos.y = +(Math_CosS(((void)0, gSaveContext.dayTime) - 0x8000) * 120.0f) * 25.0f;
+        play->envCtx.sunPos.z = +(Math_CosS(((void)0, gSaveContext.dayTime) - 0x8000) * 20.0f) * 25.0f;
+    }
+
+    // The one entrance/setup where the N64 draws nothing (Hyrule Field past-bridge cutscene). Match
+    // it: skip both sprites but still own the call (return 1) so the N64 path stays off.
+    if (gSaveContext.entranceIndex != ENTR_HYRULE_FIELD_PAST_BRIDGE_SPAWN ||
+        ((void)0, gSaveContext.sceneSetupIndex) != 5) {
+        sunId = SoH3D_SunModelId();
+        moonId = SoH3D_MoonModelId();
+        y = play->envCtx.sunPos.y / 25.0f;
+
+        OPEN_DISPS(play->state.gfxCtx);
+        SoH3D_EnsureModelProvider();
+        Gfx_SetupDL_25Opa(play->state.gfxCtx);
+
+        // Sun: glow disc at eye + sunPos. scale = (color * 2) + 10, color = clamp(y / 80, 0, 1)
+        // (matches N64). Additive over the sky; far-plane pinned (bit 30) so terrain occludes it
+        // when it dips below the horizon, exactly like the N64 sprite.
+        color = y / 80.0f;
+        if (color < 0.0f) color = 0.0f;
+        if (color > 1.0f) color = 1.0f;
+        scale = (color * 2.0f) + 10.0f;
+        Matrix_Translate(play->view.eye.x + play->envCtx.sunPos.x, play->view.eye.y + play->envCtx.sunPos.y,
+                         play->view.eye.z + play->envCtx.sunPos.z, MTXMODE_NEW);
+        Matrix_Mult(&play->billboardMtxF, MTXMODE_APPLY);
+        Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+        gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+        if (sunId >= 0) {
+            gSPSoH3DDraw(POLY_OPA_DISP++, sunId | (1 << 30), 255, 255, 255);
+        }
+
+        // Moon: alpha-masked disc at eye - sunPos. scale = -15 * color + 25, color = max(-y/120, 0);
+        // alpha fades the moon in at night = clamp(min(-y/80, 1) * 255). Drawn only when alpha > 0.
+        color = -y / 120.0f;
+        if (color < 0.0f) color = 0.0f;
+        scale = (-15.0f * color) + 25.0f;
+        temp = -y / 80.0f;
+        if (temp > 1.0f) temp = 1.0f;
+        alpha = temp * 255.0f;
+        if (alpha > 0.0f && moonId >= 0) {
+            if (alpha > 255.0f) alpha = 255.0f;
+            Matrix_Translate(play->view.eye.x - play->envCtx.sunPos.x, play->view.eye.y - play->envCtx.sunPos.y,
+                             play->view.eye.z - play->envCtx.sunPos.z, MTXMODE_NEW);
+            Matrix_Mult(&play->billboardMtxF, MTXMODE_APPLY);
+            Matrix_Scale(scale, scale, scale, MTXMODE_APPLY);
+            gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+            gSPSoH3DDrawA(POLY_OPA_DISP++, moonId | (1 << 30), (u8)alpha, 255, 255, 255);
+        }
+
+        CLOSE_DISPS(play->state.gfxCtx);
+    }
+    return 1;
+}
+
 // Emit the once-per-frame SoH3D render-pass marker into POLY_OPA. When the interpreter reaches
 // it, every SoH3D draw collected this frame is rendered in ONE GL-state-bracketed pass
 // (libultraship SoH3D_GL_RenderPass) — so OoT3D content composites after Fast3D's opaque 3D and

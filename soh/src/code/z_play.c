@@ -1520,7 +1520,10 @@ void Play_Draw(PlayState* play) {
 
         if ((HREG(80) != 10) || (HREG(90) & 2)) {
             if (!play->envCtx.sunMoonDisabled) {
-                Environment_DrawSunAndMoon(play);
+                // SoH3D #28e: draw the OoT3D sun/moon discs in place of the N64 sprites. 0 => N64.
+                if (!SoH3D_TryDrawSunMoon(play)) {
+                    Environment_DrawSunAndMoon(play);
+                }
             }
         }
 

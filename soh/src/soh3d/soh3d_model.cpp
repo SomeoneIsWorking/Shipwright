@@ -9,6 +9,7 @@
 #include "asset/zsi.h"
 #include "asset/zcol.h"
 #include "asset/cmb.h"
+#include "asset/ctxb.h"
 #include "asset/csab.h"
 #include "asset/mat4.h"
 #include "asset/pica_texture.h"
@@ -418,6 +419,85 @@ static size_t vertCountGroups(const std::vector<SoH3D::CmbDrawGroup>& groups) {
 // (draw groups are split by mesh_id). So nothing Link-specific is culled at load anymore — the
 // old build-time hand-variant/equipment cull was replaced by that per-frame mesh_id mask.
 
+// #28e — build a synthetic textured BILLBOARD quad as a LoadedModel from a standalone CTXB
+// sprite (no CMB). Used for the OoT3D sun/moon discs (tex/fine_sun.ctxb, tex/fine_moon0.ctxb in
+// /kankyo/BlueSky.zar), which the engine billboards itself — there is no CMB to hang the texture
+// on. The quad geometry matches the N64 sun/moon billboard exactly (VTX -31..32 in the XY plane),
+// so with the same translate*billboard*scale transform (set in SoH3D_TryDrawSunMoon) it renders
+// pixel-identically to the N64 sprite, just with the OoT3D texture. The caller pins it to the far
+// plane (handle bit 30) and faces it to the camera via play->billboardMtxF. `additive` selects the
+// blend: the sun/lens-flare discs are a glow on black (src_alpha,ONE = add over the sky), the moon
+// is an alpha-masked disc (src_alpha,1-src_alpha = normal alpha blend).
+static void loadBillboard(LoadedModel* out, const std::string& zarPath, const std::string& ctxbName,
+                          bool additive) {
+    SoH3D::CtrRom* r = rom();
+    if (!r) return;
+    auto zarBytes = r->read(zarPath);
+    if (zarBytes.empty()) { fprintf(stderr, "[SoH3D] billboard: zar not found: %s\n", zarPath.c_str()); return; }
+    out->zar = std::make_unique<SoH3D::Zar>(std::move(zarBytes));
+    if (!out->zar->ok()) { fprintf(stderr, "[SoH3D] billboard Zar %s: %s\n", zarPath.c_str(), out->zar->error().c_str()); return; }
+    const SoH3D::ZarFile* zf = nullptr;
+    for (const auto& f : out->zar->files())
+        if (f.name.find(ctxbName) != std::string::npos) { zf = &f; break; }
+    if (!zf) { fprintf(stderr, "[SoH3D] billboard %s: no '%s'\n", zarPath.c_str(), ctxbName.c_str()); return; }
+    SoH3D::Ctxb ctxb(out->zar->read(*zf));
+    if (!ctxb.ok() || ctxb.textures().empty()) {
+        fprintf(stderr, "[SoH3D] billboard ctxb %s: %s\n", ctxbName.c_str(), ctxb.error().c_str());
+        return;
+    }
+    int tw = 0, th = 0;
+    auto rgba = ctxb.decodeRGBA(0, &tw, &th);
+    if (rgba.empty()) { fprintf(stderr, "[SoH3D] billboard %s: decode failed\n", ctxbName.c_str()); return; }
+    out->texRgba.push_back(std::move(rgba));
+    out->cTexs.push_back({ out->texRgba[0].data(), tw, th });
+
+    // One quad (two triangles) in the XY plane, matching the N64 sun/moon billboard vertices.
+    // weights[0]=1, boneIds[0]=0 so with identity uBones the GPU-skin pass is a no-op (pos == model
+    // pos) — a non-skinned sprite. Per-vertex colour white; the draw's tint/alpha multiplies it.
+    auto mkv = [](float x, float y, float u, float v) {
+        SoH3D::CmbVertex vtx{};
+        vtx.pos[0] = x; vtx.pos[1] = y; vtx.pos[2] = 0.0f;
+        vtx.nrm[2] = 1.0f;
+        vtx.uv[0] = u; vtx.uv[1] = v;
+        vtx.weights[0] = 1.0f;
+        vtx.color[0] = vtx.color[1] = vtx.color[2] = vtx.color[3] = 1.0f;
+        return vtx;
+    };
+    SoH3D::CmbVertex bl = mkv(-31, -31, 0, 0), br = mkv(32, -31, 1, 0), tl = mkv(-31, 32, 0, 1),
+                     tr = mkv(32, 32, 1, 1);
+    SoH3D::CmbDrawGroup g;
+    g.material_index = -1;
+    g.mesh_id = -1;
+    // N64 tris: gSP2Triangles(0,1,2, 0, 2,1,3, 0) over verts {bl,br,tl,tr}.
+    g.verts = { bl, br, tl, tl, br, tr };
+    out->groups.push_back(std::move(g));
+
+    SoH3DGlGroup cg{};
+    cg.verts = reinterpret_cast<const SoH3DGlVtx*>(out->groups[0].verts.data());
+    cg.vertCount = (int)out->groups[0].verts.size();
+    cg.texIndex = 0;
+    cg.alphaTest = 0;
+    cg.alphaRef = 0.0f;
+    cg.wrapS = cg.wrapT = 0x2900; // GL_CLAMP (disc is centred; edges fade to black/transparent)
+    cg.blendEnable = 1;
+    cg.blendSrcRGB = 0x0302; // GL_SRC_ALPHA
+    cg.blendDstRGB = additive ? 0x0001 : 0x0303; // GL_ONE (add) : GL_ONE_MINUS_SRC_ALPHA
+    cg.blendEqRGB = 0x8006;  // GL_FUNC_ADD
+    cg.blendSrcA = 0x0001;   // GL_ONE
+    cg.blendDstA = additive ? 0x0001 : 0x0303;
+    cg.blendEqA = 0x8006;
+    for (int k = 0; k < 4; k++) cg.blendColor[k] = (k == 3) ? 1.0f : 0.0f;
+    cg.depthWrite = 0; // sky element: never occlude the world
+    cg.polygonOffset = 0.0f;
+    cg.cull = 0;
+    cg.meshId = -1;
+    out->cGroups.push_back(cg);
+    out->skinned = false;
+    out->ok = true;
+    printf("[SoH3D] billboard %s|%s%s: %dx%d tex\n", zarPath.c_str(), ctxbName.c_str(),
+           additive ? " [add]" : "", tw, th);
+}
+
 static void loadAutoModel(int modelId, LoadedModel* out) {
     int idx = modelId - kAutoModelBase;
     if (idx < 0 || idx >= (int)g_autoModelPaths.size()) return;
@@ -427,6 +507,22 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     // "largest CMB" heuristic would give every such actor the same (biggest) CMB. With a selector
     // we pick the named CMB instead; scale still auto-derives (per-actor N64 height / this CMB).
     std::string key = g_autoModelPaths[idx];
+    // "BILLBOARD:" / "BILLBOARDADD:" prefix marks a standalone CTXB sprite (no CMB) drawn as a
+    // camera-facing quad — the OoT3D sun/moon discs (#28e). Key = "<prefix><zar>|<ctxbName>".
+    {
+        bool add = false;
+        const char* pfx = nullptr;
+        if (key.rfind("BILLBOARDADD:", 0) == 0) { add = true; pfx = "BILLBOARDADD:"; }
+        else if (key.rfind("BILLBOARD:", 0) == 0) { pfx = "BILLBOARD:"; }
+        if (pfx) {
+            std::string rest = key.substr(std::strlen(pfx));
+            auto bar = rest.find('|');
+            std::string zp = (bar == std::string::npos) ? rest : rest.substr(0, bar);
+            std::string ctxb = (bar == std::string::npos) ? std::string() : rest.substr(bar + 1);
+            loadBillboard(out, zp, ctxb, add);
+            return;
+        }
+    }
     // "SKY:" prefix marks the skybox dome (a vertex-coloured, untextured CMB). It must keep its baked
     // per-vertex colour (the day/night gradient) and write NO depth (drawn behind all world geometry).
     // The renderer pins it to the far plane via the per-draw sky flag; see SoH3D_GL_Submit.

@@ -11,15 +11,25 @@
 typedef struct {
     const char* n64otr; // N64 animation OTR resource path (no __OTR__ prefix)
     const char* csab;   // OoT3D CSAB base name to play
+    const char* zar;    // model ZAR this entry is specific to, or NULL for any model.
+                        // Set only for OTR paths shared across skeletons (object_os_anime
+                        // bank: km1/Kokiri vs ane/Cucco-Lady) so the resolver can pick the
+                        // right CSAB by the live model's ZAR (SoH3D_AutoModelZar).
 } SoH3DAnimMap;
 
-#define SOH3D_ANIMMAP(otr_, csab_) { otr_, csab_ }
+#define SOH3D_ANIMMAP(otr_, csab_) { otr_, csab_, NULL }
+#define SOH3D_ANIMMAP_Z(otr_, csab_, zar_) { otr_, csab_, zar_ }
 
 static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     // ---- /actor/zelda_am.zar (object_am) ----
     SOH3D_ANIMMAP("objects/object_am/gArmosRicochetAnim", "am_mamori"),
     SOH3D_ANIMMAP("objects/object_am/gArmosHopAnim", "am_jump"),
     SOH3D_ANIMMAP("objects/object_am/gArmosDamagedAnim", "am_yarare"),
+    // ---- /actor/zelda_ane.zar (object_os_anime) ----
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_0718", "Ane_hanasu", "/actor/zelda_ane.zar"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_07D0", "Ane_matsu", "/actor/zelda_ane.zar"),  // OVERRIDE (was onegai_c)
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_9F94", "onegai_c", "/actor/zelda_ane.zar"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_A630", "oro_oro", "/actor/zelda_ane.zar"),
     // ---- /actor/zelda_ani.zar (object_ani) ----
     SOH3D_ANIMMAP("objects/object_ani/gRoofManKnockbackAnim", "ani_nanyarona"),
     SOH3D_ANIMMAP("objects/object_ani/gRoofManGettingUpAfterKnockbackAnim", "ani_nanyarona"),
@@ -408,11 +418,11 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_horse/gEponaWhinnyAnim", "hl_anim_wait022"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaRefuseAnim", "hl_anim_stop2"),
     SOH3D_ANIMMAP("objects/object_horse/gEponaRearingAnim", "hl_anim_stand2"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaWalkingAnim", "hl_anim_walk2_30"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaTrottingAnim", "hl_anim_slowrun2_30"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaGallopingAnim", "hl_anim_fastrun2_30"),
+    SOH3D_ANIMMAP("objects/object_horse/gEponaWalkingAnim", "hl_anim_walk2_30"),  // OVERRIDE (was hl_anim_slowrun_to_fastrun)
+    SOH3D_ANIMMAP("objects/object_horse/gEponaTrottingAnim", "hl_anim_slowrun2_30"),  // OVERRIDE (was hl_anim_slowrun_to_fastrun)
+    SOH3D_ANIMMAP("objects/object_horse/gEponaGallopingAnim", "hl_anim_fastrun2_30"),  // OVERRIDE (was hl_anim_slowrun_to_fastrun)
     SOH3D_ANIMMAP("objects/object_horse/gEponaJumpingAnim", "hl_anim_jump1002"),
-    SOH3D_ANIMMAP("objects/object_horse/gEponaJumpingHighAnim", "hl_anim_jump2002"),
+    SOH3D_ANIMMAP("objects/object_horse/gEponaJumpingHighAnim", "hl_anim_jump2002"),  // OVERRIDE (was hl_anim_wait022)
     // ---- /actor/zelda_horse_ganon.zar (object_horse_ganon) ----
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonIdleAnim", "hg_anim_wait"),
     SOH3D_ANIMMAP("objects/object_horse_ganon/gHorseGanonWhinnyAnim", "hg_anim_wait02"),
@@ -517,8 +527,8 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_00B4", "fad_kusu_to_wait"),
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0170", "fad_kusu_to_wait"),
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0228", "fad_kusu_to_wait"),
-    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0718", "km1_asekaki_wait"),
-    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_07D0", "fad_kusu_to_wait"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_0718", "km1_asekaki_wait", "/actor/zelda_km1.zar"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_07D0", "fad_kusu_to_wait", "/actor/zelda_km1.zar"),
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0894", "fad_kusu_to_wait"),
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_092C", "fad_kusu_to_wait"),
     SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_0BFC", "km1_out_in_pose3"),
@@ -577,8 +587,8 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLeaningForwardAnim", "km1_utsumuki_pose"),  // OVERRIDE (was fad_kusu_to_wait)
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingCrossedLegsAnim", "km1_agura_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandUpAnim", "km1_ukiuki_wait"),  // OVERRIDE (was fad_kusu_to_wait)
-    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_9F94", "km1_out_in_pose3"),
-    SOH3D_ANIMMAP("objects/object_os_anime/gObjOsAnim_A630", "kw1_out_in_pose2"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_9F94", "km1_out_in_pose3", "/actor/zelda_km1.zar"),
+    SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_A630", "kw1_out_in_pose2", "/actor/zelda_km1.zar"),
     // ---- /actor/zelda_kz.zar (object_kz) ----
     SOH3D_ANIMMAP("objects/object_kz/gKzMweepAnim", "kz_kani"),
     SOH3D_ANIMMAP("objects/object_kz/gKzIdleAnim", "kz_matsu"),

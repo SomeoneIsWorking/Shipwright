@@ -177,19 +177,33 @@ static const SoH3DBoneMap* gSoH3dPendingBoneMap = NULL;
 // Resolve the actor's LIVE N64 animation (skelAnime->animation, an OTR path string in SoH) to the
 // CSAB base it maps to, or NULL if unlisted (-> caller falls back to the default idle). The runtime
 // string carries an "__OTR__" prefix the map keys omit, so skip it before the strcmp.
-static const char* SoH3D_ResolveAutoCsab(const char* n64AnimOtr) {
+// Resolve the OoT3D CSAB for a live N64 animation OTR path. modelZar is the ZAR the replacement
+// model was loaded from (SoH3D_AutoModelZar). Most entries are generic (zar==NULL, match any model),
+// but anims from a SHARED bank (object_os_anime: km1 Kokiri vs ane Cucco-Lady) are ZAR-qualified so
+// the SAME OTR path resolves to the right CSAB per skeleton. A ZAR-specific match wins; a generic
+// entry is the fallback. No matching generic + no matching ZAR -> NULL (caller uses default idle).
+static const char* SoH3D_ResolveAutoCsab(const char* n64AnimOtr, const char* modelZar) {
     if (n64AnimOtr == NULL) {
         return NULL;
     }
     if (strncmp(n64AnimOtr, "__OTR__", 7) == 0) {
         n64AnimOtr += 7;
     }
+    const char* generic = NULL;
     for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dAnimMaps); i++) {
-        if (strcmp(kSoH3dAnimMaps[i].n64otr, n64AnimOtr) == 0) {
-            return kSoH3dAnimMaps[i].csab;
+        if (strcmp(kSoH3dAnimMaps[i].n64otr, n64AnimOtr) != 0) {
+            continue;
+        }
+        const char* z = kSoH3dAnimMaps[i].zar;
+        if (z == NULL) {
+            if (generic == NULL) {
+                generic = kSoH3dAnimMaps[i].csab;
+            }
+        } else if (modelZar != NULL && strcmp(z, modelZar) == 0) {
+            return kSoH3dAnimMaps[i].csab; // model-specific match wins
         }
     }
-    return NULL;
+    return generic;
 }
 
 // Live N64 animation OTR path for the actor currently deferred for auto replacement. Reset per
@@ -1517,7 +1531,8 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // Select the CSAB from the actor's LIVE N64 animation (true N64->3DS anim mapping): map the
         // current animation OTR path through kSoH3dAnimMaps; if it isn't mapped, fall back to the
         // model's default idle so an unmapped state still reads as standing rather than freezing.
-        const char* mapped = SoH3D_ResolveAutoCsab(gSoH3dPendingAnimOtr);
+        const char* mapped = SoH3D_ResolveAutoCsab(gSoH3dPendingAnimOtr,
+                                                    SoH3D_AutoModelZar(gSoH3dPendingModel));
         const char* csab = (mapped != NULL) ? mapped : SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
         // LIVE anim-compare tooling: REPL `animforce <base>` pins a chosen CSAB on every replaced
         // actor so its motion can be eyeballed against the N64 anim (toggle `auto 0/1`). Empty = auto.

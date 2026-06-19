@@ -294,6 +294,58 @@ int SoH3D_CollisionEnabled(void) {
 // arrays, so they must outlive the call). Verts are N64-unit world-space (same frame as the
 // render mesh), so no transform — direct copy. One generic SurfaceType (plain ground) backs
 // all polys; floor/wall/ceiling classification comes from each poly's normal, not the type.
+// Find the N64 floor poly under world (x,y,z) and return its SurfaceType.data[0]; the low 13
+// bits hold the camera-region index (0x00FF) + the scene-EXIT index (0x1F00). Manual
+// point-in-triangle over the N64 header (BgCheck isn't wired to it at build time), choosing the
+// floor whose plane Y is closest to y (multi-level scenes). Returns 1 on hit.
+// Why: SoH places Link using the N64 spawn list, which is authored against the N64 EXIT layout.
+// OoT3D's own collision puts exit triangles at different XZ extents, so an N64 spawn point can
+// land on an OoT3D exit poly and bounce Link straight back out (the Kakariko-graveyard "spawns
+// on the leave trigger" bug). Re-sourcing exit+cam from the N64 floor makes exits/cameras fire
+// at the SAME world places as vanilla, matching the spawn points.
+static int SoH3D_N64FloorData0(CollisionHeader* n64, float x, float y, float z, u32* outData0) {
+    int i, best = -1;
+    float bestDy = 1e9f;
+    if (n64 == NULL || n64->polyList == NULL || n64->vtxList == NULL ||
+        n64->surfaceTypeList == NULL) {
+        return 0;
+    }
+    for (i = 0; i < n64->numPolygons; i++) {
+        CollisionPoly* p = &n64->polyList[i];
+        float ny = COLPOLY_GET_NORMAL(p->normal.y);
+        Vec3s *a, *b, *c;
+        float ax, az, bx, bz, cx, cz, d1, d2, d3, planeY, dy;
+        if (ny < 0.5f) {
+            continue; // floors only
+        }
+        a = &n64->vtxList[p->flags_vIA & 0x1FFF];
+        b = &n64->vtxList[p->flags_vIB & 0x1FFF];
+        c = &n64->vtxList[p->vIC & 0x1FFF];
+        ax = a->x; az = a->z; bx = b->x; bz = b->z; cx = c->x; cz = c->z;
+        d1 = (x - bx) * (az - bz) - (ax - bx) * (z - bz);
+        d2 = (x - cx) * (bz - cz) - (bx - cx) * (z - cz);
+        d3 = (x - ax) * (cz - az) - (cx - ax) * (z - az);
+        if (((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0))) {
+            continue; // (x,z) not inside this triangle
+        }
+        planeY = -(COLPOLY_GET_NORMAL(p->normal.x) * x + COLPOLY_GET_NORMAL(p->normal.z) * z +
+                   (float)p->dist) / ny;
+        dy = planeY - y;
+        if (dy < 0.0f) {
+            dy = -dy;
+        }
+        if (dy < bestDy) {
+            bestDy = dy;
+            best = i;
+        }
+    }
+    if (best < 0) {
+        return 0;
+    }
+    *outData0 = n64->surfaceTypeList[n64->polyList[best].type].data[0];
+    return 1;
+}
+
 CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64) {
     static CollisionHeader* sHeader = NULL;
     static SurfaceType* sSurfaceTypes = NULL;
@@ -333,7 +385,9 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
     sCamData = NULL;
     sWaterBoxes = NULL;
 
-    nSurf = (raw.numSurf > 0) ? raw.numSurf : 1;
+    // One SurfaceType PER POLY (not the compact OoT3D list): each floor poly's exit+cam bits get
+    // re-sourced from the N64 collision below, so they must be addressable individually.
+    nSurf = (raw.numPolys > 0) ? raw.numPolys : 1;
     h = (CollisionHeader*)calloc(1, sizeof(CollisionHeader));
     vtx = (Vec3s*)malloc(sizeof(Vec3s) * raw.numVerts);
     poly = (CollisionPoly*)calloc(raw.numPolys, sizeof(CollisionPoly));
@@ -344,18 +398,14 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         SoH3D_FreeRawCollision(&raw);
         return NULL;
     }
-
-    // SurfaceTypes carry the per-poly gameplay semantics: data[0] low byte = camDataIndex (which
-    // camera region), (data[0]>>8)&0x1F = scene EXIT index (how Link leaves the area), plus
-    // floor/wall flags; data[1] = floor type / material. OoT3D uses the SAME bitfield layout as
-    // N64 (same game), and its cam/exit indices line up with the N64 cameraDataList / exit list
-    // SoH loads (same scenes) — so copy them verbatim. This is what makes exits, per-region
-    // cameras, and special floors work (vs the earlier single generic type that broke exits +
-    // forced one camera scene-wide).
-    for (i = 0; i < raw.numSurf; i++) {
-        sSurfaceTypes[i].data[0] = raw.surf0[i];
-        sSurfaceTypes[i].data[1] = raw.surf1[i];
-    }
+    // SurfaceType.data[0]: low byte = camDataIndex (camera region), (data[0]>>8)&0x1F = scene EXIT
+    // index, higher bits = floor/wall flags; data[1] = floor type / material. The OoT3D bitfield
+    // layout matches N64 (same game), so floor-type/flag bits copy verbatim. But the cam + exit
+    // INDICES point into the OoT3D scene's own camera/exit lists, whose triangles sit at different
+    // XZ extents than N64's. SoH spawns Link at N64-authored coords, so trusting OoT3D's exit polys
+    // drops Link onto a leave-trigger at spawn. Per floor poly (below) we splice the cam+exit (low
+    // 13 bits) from the N64 floor at that location, so exits/cameras fire exactly where vanilla's
+    // do. The per-poly init happens in the poly loop after vtx[] is built.
 
     // Waterboxes + camera REGION data are gameplay volumes actors index + DEREFERENCE (e.g.
     // Bg_Spot01_Idomizu writes waterBoxes[0].ySurface -> NULL crash if absent; the surfaceType cam
@@ -391,7 +441,10 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
     }
     for (i = 0; i < raw.numPolys; i++) {
         u16 ty = raw.polyType[i];
-        poly[i].type = (ty < (u16)raw.numSurf) ? ty : 0; // index into surfaceTypeList
+        u32 d0 = (ty < (u16)raw.numSurf && raw.surf0 != NULL) ? raw.surf0[ty] : 0;
+        u32 d1 = (ty < (u16)raw.numSurf && raw.surf1 != NULL) ? raw.surf1[ty] : 0;
+        float ny;
+        poly[i].type = i; // each poly indexes its OWN SurfaceType slot
         poly[i].flags_vIA = raw.polyVtx[i * 3 + 0] & 0x1FFF;
         poly[i].flags_vIB = raw.polyVtx[i * 3 + 1] & 0x1FFF;
         poly[i].vIC = raw.polyVtx[i * 3 + 2] & 0x1FFF;
@@ -400,6 +453,27 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         poly[i].normal.z = raw.polyNrm[i * 3 + 2];
         // SoH plane: normal.p + dist == 0; OoT3D plane: n.p == -dist -> SoH dist == OoT3D dist.
         poly[i].dist = (s16)lrintf(raw.polyDist[i]);
+        // Floor polys: re-source cam+exit (low 13 bits) from the N64 floor at this triangle's
+        // centroid so exits/cameras align with the N64 spawn points (see header above). When no
+        // N64 floor exists under it (OoT3D-only geometry), drop the exit bits so a stray OoT3D
+        // exit triangle can't bounce Link; keep the OoT3D cam region as a best guess.
+        ny = COLPOLY_GET_NORMAL(poly[i].normal.y);
+        if (ny > 0.5f) {
+            Vec3s* va = &vtx[poly[i].flags_vIA];
+            Vec3s* vb = &vtx[poly[i].flags_vIB];
+            Vec3s* vc = &vtx[poly[i].vIC];
+            float cx = (va->x + vb->x + vc->x) / 3.0f;
+            float cy = (va->y + vb->y + vc->y) / 3.0f;
+            float cz = (va->z + vb->z + vc->z) / 3.0f;
+            u32 n0;
+            if (SoH3D_N64FloorData0(n64, cx, cy, cz, &n0)) {
+                d0 = (d0 & ~0x1FFFu) | (n0 & 0x1FFFu);
+            } else {
+                d0 = d0 & ~0x1F00u; // no N64 floor here -> no exit
+            }
+        }
+        sSurfaceTypes[i].data[0] = d0;
+        sSurfaceTypes[i].data[1] = d1;
     }
 
     h->minBounds.x = minX; h->minBounds.y = minY; h->minBounds.z = minZ;

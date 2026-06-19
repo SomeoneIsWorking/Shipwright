@@ -21,6 +21,7 @@
 #include "xbox_glyphs_png.h"  // embedded PNGs of assets/soh3d/xbox_{a,b,x,y}.svg (HUD button glyphs, #32)
 #include "heart_tex_png.h"    // embedded PNGs of the crisp HUD heart textures (#31, gen_hud_tex.sh)
 #include "digit_tex_png.h"    // embedded PNGs of the crisp HUD counter font (#31, gen_digit_tex.sh)
+#include "button_tex_png.h"   // embedded PNG of the crisp HUD button-background disc (#31, gen_button_tex.sh)
 
 #include <algorithm>
 #include <array>
@@ -1299,6 +1300,32 @@ const void* SoH3D_HeartTex(int kind, int* w, int* h) {
     if (w) *w = t[kind].w;
     if (h) *h = t[kind].hh;
     return t[kind].rgba.data();
+}
+
+// #31 — crisp HUD button-background disc (round beveled circle behind the B / C / A buttons).
+// Decode the embedded PNG once into persistent RGBA32 (grayscale, a=coverage). Returns the buffer
+// + dims, or NULL on failure. The button combine is G_CC_MODULATEIA_PRIM, so the grayscale disc
+// tints to each button's PRIM colour exactly like the original 32x32 IA8 gButtonBackgroundTex.
+const void* SoH3D_ButtonBgTex(int* w, int* h) {
+    static std::vector<uint8_t> rgba;
+    static int bw = 0, bh = 0;
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        int sw = 0, sh = 0, n = 0;
+        stbi_uc* px = stbi_load_from_memory(kButtonBgPng, (int)kButtonBgPngLen, &sw, &sh, &n, 4);
+        if (px) {
+            rgba.assign(px, px + (size_t)sw * sh * 4);
+            bw = sw; bh = sh;
+            stbi_image_free(px);
+        } else {
+            fprintf(stderr, "[SoH3D] button bg tex: PNG decode failed\n");
+        }
+    }
+    if (rgba.empty()) { if (w) *w = 0; if (h) *h = 0; return nullptr; }
+    if (w) *w = bw;
+    if (h) *h = bh;
+    return rgba.data();
 }
 
 // #31 — crisp HUD counter font (0..9 = digit, 10 = ':'). Decode the embedded PNGs once into

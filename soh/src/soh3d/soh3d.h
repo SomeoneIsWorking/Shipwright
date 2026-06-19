@@ -142,6 +142,12 @@ int SoH3D_HudTexEnabled(void); // lazily resolves the env on first call; HUD dra
 // so the grayscale glyph reproduces the N64 8x16 I8 digit at higher resolution (see Gfx_TextureI8).
 const void* SoH3D_DigitTex(int glyph, int* w, int* h);
 
+// #31 — crisp HUD button-background disc (the round beveled circle behind the B / C / A action
+// buttons). Returns a persistent RGBA32 (grayscale: rgb=bevel intensity, a=circle coverage) + dims,
+// or NULL. The button combine is G_CC_MODULATEIA_PRIM (out.rgb=TEXEL0.rgb*PRIM, out.a=TEXEL0.a*PRIM),
+// so the grayscale disc tints to each button's PRIM colour exactly like the N64 32x32 IA8 original.
+const void* SoH3D_ButtonBgTex(int* w, int* h);
+
 // #2 — press-to-skip: on a Start/Space press, force-end any active onepoint cutscene camera
 // (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
 // before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.

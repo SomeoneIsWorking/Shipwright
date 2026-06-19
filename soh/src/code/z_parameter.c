@@ -1377,6 +1377,26 @@ void Interface_SetSceneRestrictions(PlayState* play) {
 
 Gfx* Gfx_TextureIA8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 textureHeight, s16 rectLeft, s16 rectTop,
                     s16 rectWidth, s16 rectHeight, u16 dsdx, u16 dtdy) {
+    // #31 — substitute the crisp higher-res button-background disc for the blocky N64 32x32 IA8
+    // gButtonBackgroundTex (the round circle behind the B / C / item buttons). The button combine
+    // is G_CC_MODULATEIA_PRIM, so a grayscale RGBA32 disc (a=coverage) tints to the per-button PRIM
+    // colour exactly; rescale dsdx/dtdy so the full disc maps onto the same rect (the A-button quad
+    // is handled separately in Interface_DrawActionButton).
+    if (SoH3D_HudTexEnabled() && texture == (void*)gButtonBackgroundTex) {
+        int gw = 0, gh = 0;
+        const void* gt = SoH3D_ButtonBgTex(&gw, &gh);
+        if (gt != NULL && gw > 0 && gh > 0 && rectWidth > 0 && rectHeight > 0) {
+            gDPLoadTextureBlock(displayListHead++, gt, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0,
+                                G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                G_TX_NOLOD, G_TX_NOLOD);
+            u16 gdsdx = (u16)(((u32)gw << 10) / (u32)rectWidth);
+            u16 gdtdy = (u16)(((u32)gh << 10) / (u32)rectHeight);
+            gSPWideTextureRectangle(displayListHead++, rectLeft << 2, rectTop << 2, (rectLeft + rectWidth) << 2,
+                                    (rectTop + rectHeight) << 2, G_TX_RENDERTILE, 0, 0, gdsdx, gdtdy);
+            return displayListHead;
+        }
+    }
+
     gDPLoadTextureBlock(displayListHead++, texture, G_IM_FMT_IA, G_IM_SIZ_8b, textureWidth, textureHeight, 0,
                         G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
                         G_TX_NOLOD);
@@ -1385,6 +1405,23 @@ Gfx* Gfx_TextureIA8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 t
                             (rectTop + rectHeight) << 2, G_TX_RENDERTILE, 0, 0, dsdx, dtdy);
 
     return displayListHead;
+}
+
+// #31 — texcoord-step multiplier for the bare C-button texrects that REUSE the gButtonBackgroundTex
+// tile loaded once by the B-button Gfx_TextureIA8 call (z_parameter.c notes the tile is "reused by
+// other buttons afterwards"). Those texrects' dsdx/dtdy are tuned for the 32x32 N64 tile; when the
+// crisp disc (gw x gw) is swapped in by the intercept above, the resident tile is gw texels wide,
+// so every reused texrect must scale its dsdx/dtdy by gw/32 to map the full disc onto the same rect.
+// Returns gw/32 (>=1) when the crisp disc is active, else 1 (vanilla, no change).
+static int SoH3D_ButtonBgTexScale(void) {
+    if (!SoH3D_HudTexEnabled()) {
+        return 1;
+    }
+    int gw = 0, gh = 0;
+    if (SoH3D_ButtonBgTex(&gw, &gh) == NULL || gw < 32) {
+        return 1;
+    }
+    return gw / 32;
 }
 
 // #31 — map an N64 counter-digit texture symbol to a glyph index (0..9 digit, 10 ':'), or -1 if
@@ -4228,6 +4265,11 @@ void Interface_DrawItemButtons(PlayState* play) {
 
     OPEN_DISPS(play->state.gfxCtx);
 
+    // #31 — the B-button Gfx_TextureIA8 call below loads gButtonBackgroundTex once; the C-button
+    // texrects reuse that resident tile. When the crisp disc replaces it, the tile is bgScale*32
+    // texels wide, so the reused texrects scale their dsdx/dtdy by bgScale (1 = vanilla 32x32).
+    s16 bgScale = SoH3D_ButtonBgTexScale();
+
     // B Button Color & Texture
     // Also loads the Item Button Texture reused by other buttons afterwards
     gDPPipeSync(OVERLAY_DISP++);
@@ -4251,7 +4293,7 @@ void Interface_DrawItemButtons(PlayState* play) {
         gSPWideTextureRectangle(OVERLAY_DISP++, C_Left_BTN_Pos[0] << 2, C_Left_BTN_Pos[1] << 2,
                                 (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
                                 (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
-                                R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
+                                (R_ITEM_BTN_DD(1) << 1) * bgScale, (R_ITEM_BTN_DD(1) << 1) * bgScale);
         SoH3D_RecordHudBtn(1, C_Left_BTN_Pos[0], C_Left_BTN_Pos[1], R_ITEM_BTN_WIDTH(1), interfaceCtx->cLeftAlpha, 'X');
 
         // C-Down Button Color & Texture
@@ -4260,7 +4302,7 @@ void Interface_DrawItemButtons(PlayState* play) {
         gSPWideTextureRectangle(OVERLAY_DISP++, C_Down_BTN_Pos[0] << 2, C_Down_BTN_Pos[1] << 2,
                                 (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
                                 (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
-                                R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
+                                (R_ITEM_BTN_DD(2) << 1) * bgScale, (R_ITEM_BTN_DD(2) << 1) * bgScale);
         SoH3D_RecordHudBtn(2, C_Down_BTN_Pos[0], C_Down_BTN_Pos[1], R_ITEM_BTN_WIDTH(2), interfaceCtx->cDownAlpha, 'Y');
 
         // C-Right Button Color & Texture
@@ -4269,7 +4311,7 @@ void Interface_DrawItemButtons(PlayState* play) {
         gSPWideTextureRectangle(OVERLAY_DISP++, C_Right_BTN_Pos[0] << 2, C_Right_BTN_Pos[1] << 2,
                                 (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
                                 (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
-                                R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
+                                (R_ITEM_BTN_DD(3) << 1) * bgScale, (R_ITEM_BTN_DD(3) << 1) * bgScale);
         SoH3D_RecordHudBtn(3, C_Right_BTN_Pos[0], C_Right_BTN_Pos[1], R_ITEM_BTN_WIDTH(3), interfaceCtx->cRightAlpha,
                            'A');
     }
@@ -4331,7 +4373,7 @@ void Interface_DrawItemButtons(PlayState* play) {
             gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
             gSPWideTextureRectangle(OVERLAY_DISP++, C_Up_BTN_Pos[0] << 2, C_Up_BTN_Pos[1] << 2,
                                     (C_Up_BTN_Pos[0] + 16) << 2, (C_Up_BTN_Pos[1] + 16) << 2, G_TX_RENDERTILE, 0, 0,
-                                    2 << 10, 2 << 10);
+                                    (2 << 10) * bgScale, (2 << 10) * bgScale);
             gDPPipeSync(OVERLAY_DISP++);
             gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, temp);
             gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 0);
@@ -5061,16 +5103,37 @@ void Interface_DrawActionButton(PlayState* play, f32 x, f32 y) {
     // colour already reads as A; baking the Xbox 'A' glyph here just buried the "PutAway"/"Speak"
     // label that overlays it). The item-button cluster carries the Xbox glyphs via the corner
     // badges (SoH3D_DrawHudBadges); this prompt is the action, not an item slot.
+    // #31 — but DO upgrade the disc itself to the crisp button-background texture (same one the
+    // B/C buttons use via Gfx_TextureIA8). This is a 3D flip-animated quad with baked 32-texel
+    // texcoords, so rescale the vtx tc by gw/32 to map the full higher-res disc onto the same quad.
     {
-        interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
-            interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
-        interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[2].v.tc[1] =
-            interfaceCtx->actionVtx[3].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[1] = 1024 - 16;
-        gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
-        gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
-                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
-                            G_TX_NOLOD, G_TX_NOLOD);
-        gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+        int sButW = 0, sButH = 0;
+        const void* sButTex = SoH3D_HudTexEnabled() ? SoH3D_ButtonBgTex(&sButW, &sButH) : NULL;
+        if (sButTex != NULL && sButW > 0 && sButH > 0) {
+            s16 tcNearS = (s16)(-16 * sButW / 32);
+            s16 tcFarS = (s16)((1024 - 16) * sButW / 32);
+            s16 tcNearT = (s16)(-16 * sButH / 32);
+            s16 tcFarT = (s16)((1024 - 16) * sButH / 32);
+            interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[2].v.tc[0] = tcNearS;
+            interfaceCtx->actionVtx[0].v.tc[1] = interfaceCtx->actionVtx[1].v.tc[1] = tcNearT;
+            interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[0] = tcFarS;
+            interfaceCtx->actionVtx[2].v.tc[1] = interfaceCtx->actionVtx[3].v.tc[1] = tcFarT;
+            gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
+            gDPLoadTextureBlock(OVERLAY_DISP++, sButTex, G_IM_FMT_RGBA, G_IM_SIZ_32b, sButW, sButH, 0,
+                                G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                G_TX_NOLOD, G_TX_NOLOD);
+            gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+        } else {
+            interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
+                interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
+            interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[2].v.tc[1] =
+                interfaceCtx->actionVtx[3].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[1] = 1024 - 16;
+            gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
+            gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
+                                G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                G_TX_NOLOD, G_TX_NOLOD);
+            gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+        }
     }
 
     CLOSE_DISPS(play->state.gfxCtx);

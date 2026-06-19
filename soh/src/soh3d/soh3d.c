@@ -2767,6 +2767,59 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "floorgrid needs: x0 z0 x1 z1 step path");
         }
+    } else if (strcmp(cmd, "wallscan") == 0) {
+        // #14 climb drop-off probe: dump EVERY wall poly of the scene's STATIC collision (the
+        // installed colHeader — OoT3D when `collision 1`, N64 when `collision 0`) to a CSV, with
+        // its vertical extent and its wall-climb classification. A climbable surface is decided by
+        // the SurfaceType "wall property" (data[0] bits 21..25 -> D_80119D90 -> flags): flag bit 0
+        // = ledge-grab/vine, bit 3 (=8) = ladder climb-up. So to find why Link drops off a
+        // climbable HALFWAY, run this under `collision 1` and `collision 0` and diff the climbable
+        // walls (flags & 9): a shorter ymax / missing poly / lost flag in the OoT3D set is the bug.
+        // CSV: idx,cx,cy,cz,nx,ny,nz,ymin,ymax,wallProp,flags,data0(hex),data1(hex)
+        char gpath[1024];
+        if (sscanf(line, "%*s %1023s", gpath) == 1) {
+            CollisionHeader* ch = play->colCtx.colHeader;
+            FILE* gf = fopen(gpath, "w");
+            if (gf == NULL) {
+                SoH3D_ReplReply(outPath, "wallscan: cannot open %s", gpath);
+            } else if (ch == NULL || ch->polyList == NULL || ch->vtxList == NULL ||
+                       ch->surfaceTypeList == NULL) {
+                fclose(gf);
+                SoH3D_ReplReply(outPath, "wallscan: no static colHeader");
+            } else {
+                int i, walls = 0, climb = 0;
+                fprintf(gf, "idx,cx,cy,cz,nx,ny,nz,ymin,ymax,wallProp,flags,data0,data1\n");
+                for (i = 0; i < ch->numPolygons; i++) {
+                    CollisionPoly* p = &ch->polyList[i];
+                    float ny = COLPOLY_GET_NORMAL(p->normal.y);
+                    Vec3s *a, *b, *c;
+                    s16 ymin, ymax;
+                    s32 flags;
+                    u32 wallProp;
+                    if (ny > 0.5f || ny < -0.5f) {
+                        continue; // floors/ceilings out; keep wall-ish polys
+                    }
+                    a = &ch->vtxList[p->flags_vIA & 0x1FFF];
+                    b = &ch->vtxList[p->flags_vIB & 0x1FFF];
+                    c = &ch->vtxList[p->vIC & 0x1FFF];
+                    ymin = a->y; if (b->y < ymin) ymin = b->y; if (c->y < ymin) ymin = c->y;
+                    ymax = a->y; if (b->y > ymax) ymax = b->y; if (c->y > ymax) ymax = c->y;
+                    wallProp = func_80041D94(&play->colCtx, p, BGCHECK_SCENE);
+                    flags = func_80041DB8(&play->colCtx, p, BGCHECK_SCENE);
+                    fprintf(gf, "%d,%.1f,%.1f,%.1f,%.4f,%.4f,%.4f,%d,%d,%u,%d,0x%08x,0x%08x\n",
+                            i, (a->x + b->x + c->x) / 3.0f, (a->y + b->y + c->y) / 3.0f,
+                            (a->z + b->z + c->z) / 3.0f, COLPOLY_GET_NORMAL(p->normal.x), ny,
+                            COLPOLY_GET_NORMAL(p->normal.z), ymin, ymax, wallProp, flags,
+                            ch->surfaceTypeList[p->type].data[0], ch->surfaceTypeList[p->type].data[1]);
+                    walls++;
+                    if (flags & 9) climb++;
+                }
+                fclose(gf);
+                SoH3D_ReplReply(outPath, "wallscan -> %s (%d wall polys, %d climbable)", gpath, walls, climb);
+            }
+        } else {
+            SoH3D_ReplReply(outPath, "wallscan needs: path");
+        }
     } else if (strcmp(cmd, "terrainwarp") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         // Toggle the terrain re-level. Note: the warp is applied once per room model and
         // CACHED, so toggling off does not un-warp already-loaded rooms (re-enter the

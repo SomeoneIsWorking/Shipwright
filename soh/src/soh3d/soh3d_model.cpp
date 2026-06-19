@@ -203,6 +203,10 @@ static SoH3DGlGroup makeCgroup(const SoH3D::Cmb& cmb, const SoH3D::CmbDrawGroup&
     cg.blendEqA = mat ? mat->blend_eq_a : 0x8006;
     cg.depthWrite = mat ? (mat->depth_write ? 1 : 0) : 1;
     cg.polygonOffset = mat ? mat->polygon_offset : 0.0f;
+    // OoT3D backface culling: cull byte 1 = single-sided (cull back), 3 = double-sided.
+    // Honor it so the renderer matches N64 G_CULL_BACK (don't show terrain undersides /
+    // mesh interiors). Only value 1 culls; everything else (3, none) draws both sides.
+    cg.faceCull = (mat && mat->cull == 1) ? 1 : 0;
     cg.meshId = g.mesh_id;
     for (int k = 0; k < 4; k++) cg.blendColor[k] = mat ? mat->blend_color[k] : (k == 3 ? 1.0f : 0.0f);
     return cg;
@@ -490,6 +494,7 @@ static void loadBillboard(LoadedModel* out, const std::string& zarPath, const st
     cg.depthWrite = 0; // sky element: never occlude the world
     cg.polygonOffset = 0.0f;
     cg.cull = 0;
+    cg.faceCull = 0; // camera-facing billboard quad: always double-sided
     cg.meshId = -1;
     out->cGroups.push_back(cg);
     out->skinned = false;

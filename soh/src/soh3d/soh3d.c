@@ -3107,6 +3107,18 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "ao=%d rad=%.1f str=%.2f bias=%.5f maxdiff=%.5f", gSoH3dAoEnable,
                         gSoH3dAoRadius, gSoH3dAoStrength, gSoH3dAoBias, gSoH3dAoMaxDiff);
+    } else if (strcmp(cmd, "facecull") == 0) {
+        // Backface culling of OoT3D meshes (honor the CMB cull byte; matches N64 G_CULL_BACK so the
+        // camera never sees terrain undersides / mesh interiors). `facecull <0|1> [flip]`: arg1 = on/off,
+        // optional arg2 = front-face winding convention (0 default, 1 flipped — used to find the correct
+        // winding live, since the backend's clip-Y handling decides whether CCW or CW is front).
+        extern int gSoH3dFaceCull, gSoH3dFaceCullFlip;
+        int on = -1, flip = -1;
+        if (sscanf(line, "%*s %d %d", &on, &flip) >= 1) {
+            gSoH3dFaceCull = on;
+            if (flip >= 0) gSoH3dFaceCullFlip = flip;
+        }
+        SoH3D_ReplReply(outPath, "facecull=%d flip=%d", gSoH3dFaceCull, gSoH3dFaceCullFlip);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

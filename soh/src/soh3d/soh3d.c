@@ -866,6 +866,70 @@ int gSoH3dCamOverride = 0;
 float gSoH3dCamEye[3] = { 0, 0, 0 };
 float gSoH3dCamAt[3] = { 0, 0, 0 };
 
+// --- #4 cutscene / title-demo camera reconcile -------------------------------------------------
+// Scripted N64 cameras (the title demo gHyruleFieldIntroCs, in-scene cutscenes) author the eye at
+// low / sub-ground heights — e.g. spot00's intro holds eye.y=-1 while the ground there is ~+10.
+// On N64 the double-sided terrain hid a buried eye; SoH3D culls terrain backfaces (#1), so the
+// same buried eye now sees THROUGH the ground (a void / skybox seam across the lower frame).
+// Where the eye is below the visible OoT3D mesh at its XZ, translate the WHOLE camera (eye +
+// lookAt by the same delta, so the look direction is preserved) up until the eye clears the mesh
+// by a near-plane margin. Only ever LIFTS (never lowers), and the correction -> 0 continuously as
+// the eye rises above ground, so it cannot pop at a shot boundary. Scoped to cinematic cameras (an
+// active cutscene OR a non-MAIN subcamera) so gameplay framing — already kept above ground by the
+// engine's own camera collision — is untouched. Gate: SoH3D_Enabled() + env SOH3D_CAMLIFT
+// (default ON) + REPL `camlift`.
+int gSoH3dCamLift = 1;
+float gSoH3dCamLiftLast = 0.0f; // last applied lift (units), for `camlift` / verification readout
+// Units the eye is held above the visible mesh: a near-plane clearance so the ground does not clip
+// the near frustum, not a per-scene fudge (the same value works for any scripted shot).
+static const float kSoH3dCamLiftClearance = 18.0f;
+
+static int SoH3D_CamLiftEnabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char* v = getenv("SOH3D_CAMLIFT");
+        cached = (v != NULL && v[0] == '0') ? 0 : 1; // default ON
+    }
+    return SoH3D_Enabled() && cached && gSoH3dCamLift;
+}
+
+// Lift play->view.eye/lookAt out of the OoT3D terrain for a cinematic camera. Returns the applied
+// lift (0 = none). Call AFTER the engine has computed play->view for the frame (i.e. in ReplPoll,
+// after Play_Update), so the corrected view is what Play_Draw renders.
+static float SoH3D_ReconcileCutsceneCam(PlayState* play) {
+    const char* sceneName;
+    int modelId;
+    float meshY, deficit;
+    gSoH3dCamLiftLast = 0.0f;
+    if (play == NULL || !SoH3D_CamLiftEnabled()) {
+        return 0.0f;
+    }
+    // Cinematic cameras only: an active cutscene, or a non-MAIN subcamera (onepoint / demo). During
+    // normal gameplay csCtx is idle and the active camera is MAIN_CAM, so this leaves it alone.
+    if (play->csCtx.state == CS_STATE_IDLE && play->activeCamera == MAIN_CAM) {
+        return 0.0f;
+    }
+    sceneName = SoH3D_SceneName(play);
+    if (sceneName == NULL) {
+        return 0.0f; // scene has no OoT3D mesh -> nothing to clear
+    }
+    modelId = SoH3D_RoomModelId(sceneName, play->roomCtx.curRoom.num);
+    if (modelId < 0) {
+        return 0.0f;
+    }
+    if (!SoH3D_RoomMeshFloorAt(modelId, play->view.eye.x, play->view.eye.z, &meshY)) {
+        return 0.0f; // no OoT3D ground under the eye here
+    }
+    deficit = (meshY + kSoH3dCamLiftClearance) - play->view.eye.y;
+    if (deficit <= 0.0f) {
+        return 0.0f; // eye already clears the mesh
+    }
+    play->view.eye.y += deficit;
+    play->view.lookAt.y += deficit; // rigid vertical shift: preserve the authored look direction
+    gSoH3dCamLiftLast = deficit;
+    return deficit;
+}
+
 // Resolve the actor's CURRENT animation to a CSAB base name, by reading the actor's
 // live N64 state, so the OoT3D model plays the same animation the game logic chose
 // (idle/talk/gate-open). Returns the CSAB base name (NULL = bind pose). The CSAB is
@@ -3761,6 +3825,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "cam needs 6 floats: eyeX eyeY eyeZ atX atY atZ");
         }
+    } else if (strcmp(cmd, "camlift") == 0) {
+        // #4 toggle/inspect the cutscene/title camera-lift. `camlift 0|1` sets it; `camlift` alone
+        // reports state + the live view eye and the lift applied THIS frame (post-reconcile).
+        if (sscanf(line, "%*s %i", &iv) == 1) {
+            gSoH3dCamLift = iv ? 1 : 0;
+        }
+        SoH3D_ReplReply(outPath, "camlift=%d csState=%d activeCam=%d view.eye=(%.0f,%.0f,%.0f) lift=%.1f",
+                        gSoH3dCamLift, play->csCtx.state, play->activeCamera, play->view.eye.x,
+                        play->view.eye.y, play->view.eye.z, gSoH3dCamLiftLast);
     } else if (strcmp(cmd, "camorbit") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         // Rotate the frozen eye about the frozen `at` by f1 degrees around world +Y,
         // preserving radius and height. Auto-freezes from the live camera first if not
@@ -4020,5 +4093,9 @@ void SoH3D_ReplPoll(PlayState* play) {
         play->view.up.x = 0.0f;
         play->view.up.y = 1.0f;
         play->view.up.z = 0.0f;
+    } else {
+        // #4: lift a buried cinematic camera out of the OoT3D terrain (skipped while the diagnostic
+        // `cam` override holds the view, so A/B tests see the raw authored camera).
+        SoH3D_ReconcileCutsceneCam(play);
     }
 }

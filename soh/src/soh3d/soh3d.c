@@ -338,6 +338,8 @@ float gSoH3dSkyScale = 12.0f;
 // #32 — show Xbox face-button glyphs (A/B/X/Y) in the in-game HUD button prompts instead of
 // the shared N64 colored circle. -1 = uninit (read SOH3D_XBOXUI env, default on). The HUD
 // (z_parameter.c) reads this and swaps the per-button texture; see SoH3D_XboxGlyphTex.
+// The Xbox glyph must REPLACE the N64 button UI cleanly (user 2026-06-19), not be stacked
+// under the N64 item icon / do-action label — see z_parameter.c draw sites.
 int gSoH3dXboxBtn = -1;
 int SoH3D_XboxBtnEnabled(void) {
     if (gSoH3dXboxBtn < 0) {

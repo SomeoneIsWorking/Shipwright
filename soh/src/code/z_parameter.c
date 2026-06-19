@@ -1424,6 +1424,51 @@ static Gfx* SoH3D_DrawXboxBtn(Gfx* dl, char which, s16 left, s16 top, s16 w, s16
     return dl;
 }
 
+// #32 (clean replace, not overlay — user 2026-06-19): instead of swapping each HUD button
+// BACKGROUND for a full Xbox disc (which the N64 item icon / do-action label then stacked on top
+// of, burying the letter), the button backgrounds stay vanilla and the item icons render normally;
+// each button's screen rect is recorded here during Interface_DrawItemButtons, and a SMALL Xbox
+// face-button glyph badge is drawn in the corner AFTER all the item icons (SoH3D_DrawHudBadges),
+// so the controller button is identified without obscuring the item. Indices: 0=B,1=C-Left,
+// 2=C-Down,3=C-Right.
+typedef struct {
+    s16 x, y, w;
+    u8 alpha;
+    char glyph;
+    u8 active;
+} SoH3DHudBtnRect;
+static SoH3DHudBtnRect sSoH3dHudBtns[4];
+static void SoH3D_RecordHudBtn(int i, s16 x, s16 y, s16 w, u8 alpha, char glyph) {
+    if (i < 0 || i >= 4) {
+        return;
+    }
+    sSoH3dHudBtns[i].x = x;
+    sSoH3dHudBtns[i].y = y;
+    sSoH3dHudBtns[i].w = w;
+    sSoH3dHudBtns[i].alpha = alpha;
+    sSoH3dHudBtns[i].glyph = glyph;
+    sSoH3dHudBtns[i].active = 1;
+}
+static Gfx* SoH3D_DrawHudBadges(Gfx* dl) {
+    int i;
+    for (i = 0; i < 4; i++) {
+        if (!sSoH3dHudBtns[i].active) {
+            continue;
+        }
+        sSoH3dHudBtns[i].active = 0; // consume; re-recorded each frame
+        if (!SoH3D_XboxBtnEnabled() || SoH3D_XboxGlyphTex(sSoH3dHudBtns[i].glyph, NULL, NULL) == NULL) {
+            continue;
+        }
+        // Badge ~9/16 of the button, tucked into the TOP-RIGHT corner (the ammo count sits along the
+        // bottom, the equipped-item outline along the edges — top-right is the clearest quadrant).
+        s16 bw = (s16)(sSoH3dHudBtns[i].w * 9 / 16);
+        s16 bx = (s16)(sSoH3dHudBtns[i].x + sSoH3dHudBtns[i].w - bw);
+        s16 by = sSoH3dHudBtns[i].y;
+        dl = SoH3D_DrawXboxBtn(dl, sSoH3dHudBtns[i].glyph, bx, by, bw, bw, sSoH3dHudBtns[i].alpha);
+    }
+    return dl;
+}
+
 void Rando_Inventory_SwapAgeEquipment(void) {
     s16 i;
     u16 shieldEquipValue;
@@ -4152,31 +4197,14 @@ void Interface_DrawItemButtons(PlayState* play) {
     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, bButtonColor.r, bButtonColor.g, bButtonColor.b, interfaceCtx->bAlpha);
     gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
 
-    // #32 — when Xbox HUD glyphs are on, draw the item-button cluster (B + the three C buttons) as
-    // full-colour Xbox face-button glyphs instead of the shared N64 circle tinted per button. Fixed
-    // mapping for a full Xbox diamond: B->B (red), C-Left->X (blue), C-Down->Y (yellow), C-Right->A
-    // (green). (C buttons have no canonical Xbox face-button on the SoH default layout — they're on
-    // the right stick — so this is a deliberate, easily-retuned cosmetic mapping, not a control hint.)
-    // After the glyphs we reload the IA8 circle tile + restore MODULATEIA_PRIM so the Start-button
-    // draw below (which reuses the loaded tile) is byte-for-byte identical to the non-Xbox path.
-    if (SoH3D_XboxBtnEnabled() && SoH3D_XboxGlyphTex('B', NULL, NULL) != NULL) {
-        OVERLAY_DISP =
-            SoH3D_DrawXboxBtn(OVERLAY_DISP, 'B', PosX_BtnB, PosY_BtnB, BBtnScaled, BBtnScaled, interfaceCtx->bAlpha);
-        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'X', C_Left_BTN_Pos[0], C_Left_BTN_Pos[1], R_ITEM_BTN_WIDTH(1),
-                                         R_ITEM_BTN_WIDTH(1), interfaceCtx->cLeftAlpha);
-        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'Y', C_Down_BTN_Pos[0], C_Down_BTN_Pos[1], R_ITEM_BTN_WIDTH(2),
-                                         R_ITEM_BTN_WIDTH(2), interfaceCtx->cDownAlpha);
-        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'A', C_Right_BTN_Pos[0], C_Right_BTN_Pos[1], R_ITEM_BTN_WIDTH(3),
-                                         R_ITEM_BTN_WIDTH(3), interfaceCtx->cRightAlpha);
-        gDPPipeSync(OVERLAY_DISP++);
-        gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
-        gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
-        gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
-                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
-                            G_TX_NOLOD);
-    } else {
+    // #32 — button backgrounds stay vanilla N64 (the Xbox glyph is now a small corner BADGE drawn
+    // on top of the item icons by SoH3D_DrawHudBadges, a clean replacement of the N64 button-label
+    // role rather than a disc stacked under the icon). Record each button's screen rect + per-button
+    // glyph (B->B, C-Left->X, C-Down->Y, C-Right->A) so the badge pass can place the glyph.
+    {
         OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, BBtn_Size, BBtn_Size, PosX_BtnB, PosY_BtnB,
                                       BBtnScaled, BBtnScaled, BBtn_factor, BBtn_factor);
+        SoH3D_RecordHudBtn(0, PosX_BtnB, PosY_BtnB, BBtnScaled, interfaceCtx->bAlpha, 'B');
 
         // C-Left Button Color & Texture
         gDPPipeSync(OVERLAY_DISP++);
@@ -4186,6 +4214,7 @@ void Interface_DrawItemButtons(PlayState* play) {
                                 (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
                                 (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
                                 R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
+        SoH3D_RecordHudBtn(1, C_Left_BTN_Pos[0], C_Left_BTN_Pos[1], R_ITEM_BTN_WIDTH(1), interfaceCtx->cLeftAlpha, 'X');
 
         // C-Down Button Color & Texture
         gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cDownButtonColor.r, cDownButtonColor.g, cDownButtonColor.b,
@@ -4194,6 +4223,7 @@ void Interface_DrawItemButtons(PlayState* play) {
                                 (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
                                 (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
                                 R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
+        SoH3D_RecordHudBtn(2, C_Down_BTN_Pos[0], C_Down_BTN_Pos[1], R_ITEM_BTN_WIDTH(2), interfaceCtx->cDownAlpha, 'Y');
 
         // C-Right Button Color & Texture
         gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cRightButtonColor.r, cRightButtonColor.g, cRightButtonColor.b,
@@ -4202,6 +4232,8 @@ void Interface_DrawItemButtons(PlayState* play) {
                                 (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
                                 (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
                                 R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
+        SoH3D_RecordHudBtn(3, C_Right_BTN_Pos[0], C_Right_BTN_Pos[1], R_ITEM_BTN_WIDTH(3), interfaceCtx->cRightAlpha,
+                           'A');
     }
 
     if ((pauseCtx->state < 8) || (pauseCtx->state >= 18)) {
@@ -4417,19 +4449,9 @@ void Interface_DrawItemButtons(PlayState* play) {
                                 interfaceCtx->cRightAlpha);
             }
 
-            // #32 — empty C-button background: an Xbox glyph (with its letter, now unobscured since
-            // the slot has no item) when enabled, matching the main cluster mapping (Left->X, Down->Y,
-            // Right->A); else the N64 circle. The empty-direction arrow below still draws over it.
-            char cGlyph = (temp == 1) ? 'X' : (temp == 2) ? 'Y' : 'A';
-            if (SoH3D_XboxBtnEnabled() && SoH3D_XboxGlyphTex(cGlyph, NULL, NULL) != NULL) {
-                u8 cAlpha = (temp == 1) ? interfaceCtx->cLeftAlpha
-                                        : (temp == 2) ? interfaceCtx->cDownAlpha : interfaceCtx->cRightAlpha;
-                OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, cGlyph, ItemIconPos[temp - 1][0],
-                                                 ItemIconPos[temp - 1][1], ItemIconWidthFactor[temp - 1][0],
-                                                 ItemIconWidthFactor[temp - 1][0], cAlpha);
-                gDPPipeSync(OVERLAY_DISP++);
-                gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
-            } else {
+            // #32 — empty C-button background: vanilla N64 circle (the Xbox glyph is the corner badge
+            // drawn by SoH3D_DrawHudBadges, recorded for these slots in the main cluster above).
+            {
                 OVERLAY_DISP =
                     Gfx_TextureIA8(OVERLAY_DISP, ((u8*)gButtonBackgroundTex), 32, 32, ItemIconPos[temp - 1][0],
                                    ItemIconPos[temp - 1][1], ItemIconWidthFactor[temp - 1][0],
@@ -4997,32 +5019,11 @@ void Interface_DrawActionButton(PlayState* play, f32 x, f32 y) {
 
     gSPMatrix(OVERLAY_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
 
-    // #32 — when Xbox HUD glyphs are on, draw the A action button as the green Xbox 'A' glyph on
-    // the SAME flip-animated 3D quad (position + RotateX wobble preserved). The quad's baked
-    // texcoords (origin -16, far 1024-16) assume a 32-texel tile, so a 64x64 RGBA glyph would show
-    // only its top-left quarter; remap the far tc to the glyph's real size (gw/gh texels) so the
-    // FULL glyph maps onto the quad. Combine shows TEXEL0.rgb faded by the HUD aAlpha (white prim).
-    // tc are set explicitly in BOTH branches so toggling xboxui off restores the IA8 mapping.
-    int gw = 0, gh = 0;
-    const void* glyph = SoH3D_XboxBtnEnabled() ? SoH3D_XboxGlyphTex('A', &gw, &gh) : NULL;
-    if (glyph != NULL && gw > 0 && gh > 0) {
-        s16 farU = (s16)((gw << 5) - 16);
-        s16 farV = (s16)((gh << 5) - 16);
-        interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
-            interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
-        interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[0] = farU;
-        interfaceCtx->actionVtx[2].v.tc[1] = interfaceCtx->actionVtx[3].v.tc[1] = farV;
-        gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
-        gDPPipeSync(OVERLAY_DISP++);
-        gDPSetCombineLERP(OVERLAY_DISP++, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0, 0, 0, 0, TEXEL0, TEXEL0, 0,
-                          PRIMITIVE, 0);
-        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->aAlpha);
-        gDPLoadTextureBlock(OVERLAY_DISP++, glyph, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0,
-                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
-                            G_TX_NOLOD, G_TX_NOLOD);
-        gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
-    } else {
-        // Original N64 IA8 circle (restore the 32-texel tc in case Xbox UI was toggled off).
+    // #32 — the do-action 'A' button stays the vanilla N64 green circle + action label (the green
+    // colour already reads as A; baking the Xbox 'A' glyph here just buried the "PutAway"/"Speak"
+    // label that overlays it). The item-button cluster carries the Xbox glyphs via the corner
+    // badges (SoH3D_DrawHudBadges); this prompt is the action, not an item slot.
+    {
         interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
             interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
         interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[2].v.tc[1] =
@@ -5736,6 +5737,10 @@ void Interface_Draw(PlayState* play) {
                 Interface_DrawAmmoCount(play, 7, interfaceCtx->dpadRightAlpha);
             }
         }
+
+        // #32 — draw the small Xbox face-button badges on top of the item icons (the buttons were
+        // recorded during Interface_DrawItemButtons). No-op unless SOH3D_XBOXUI is on.
+        OVERLAY_DISP = SoH3D_DrawHudBadges(OVERLAY_DISP);
 
         // A Button
         Gfx_SetupDL_42Overlay(play->state.gfxCtx);

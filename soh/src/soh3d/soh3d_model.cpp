@@ -418,9 +418,21 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
     std::vector<SoH3D::CmbVertex> outv;
     outv.reserve(g.verts.size() * 4);
 
+    static int stairDbg = -1;
+    if (stairDbg < 0) { const char* e = getenv("SOH3D_STAIRDBG"); stairDbg = (e && *e) ? atoi(e) : 0; }
+
     for (const std::vector<int>& tris : patches) {
         StairFrame f;
         bool ok = stairFrameOf(g, tris, nrm, f);
+        if (stairDbg && ok) {
+            float ac = (f.amin + f.amax) * 0.5f, cc = (f.cmin + f.cmax) * 0.5f;
+            float wx = f.aDir[0] * ac + f.cDir[0] * cc, wz = f.aDir[2] * ac + f.cDir[2] * cc;
+            printf("[SoH3D] stairdbg: patch world XZ=(%.0f,%.0f) y=[%.0f,%.0f] N=%d aSpan=%.0f cSpan=%.0f "
+                   "aDir=(%.2f,%.2f) cDir=(%.2f,%.2f)\n",
+                   wx, wz, f.ymin, f.ymax, f.N, f.amax - f.amin, f.cmax - f.cmin,
+                   f.aDir[0], f.aDir[2], f.cDir[0], f.cDir[2]);
+            fflush(stdout);
+        }
 
         // Affine UV(a,c) fit + average color over the patch (render-only; the generated step
         // verts inherit the original ramp's texture coordinates and baked lighting).
@@ -457,31 +469,53 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
             continue;
         }
 
-        // Emit a vertex at surface coords (a, y, c) with affine-mapped UV, patch color,
-        // and the source vertex's bone binding (rigid weight=1 on the room's bone).
-        auto emit = [&](float a, float y, float c, const float nrmv[3]) {
+        // Emit a vertex: geometry at (aGeom, y, c); UV from a SEPARATE unrolled coord `ae`.
+        // The affine UV(a,c) was fit on the flat ramp, so for vertical risers (constant a) it
+        // collapses to a smeared horizontal slice. Instead we walk an unrolled arc-length `s`
+        // up the step profile (advancing by da across each tread, dy up each riser) and feed a
+        // matched effective-a `ae = amin + s*da/(da+dy)` into the UV map, so the texture flows
+        // continuously over treads AND risers (ae spans exactly [amin,amax] over the patch).
+        auto emit = [&](float aGeom, float y, float c, float ae, const float nrmv[3]) {
             SoH3D::CmbVertex v = src;
-            v.pos[0] = f.aDir[0] * a + f.cDir[0] * c;
+            v.pos[0] = f.aDir[0] * aGeom + f.cDir[0] * c;
             v.pos[1] = y;
-            v.pos[2] = f.aDir[2] * a + f.cDir[2] * c;
+            v.pos[2] = f.aDir[2] * aGeom + f.cDir[2] * c;
             v.nrm[0] = nrmv[0]; v.nrm[1] = nrmv[1]; v.nrm[2] = nrmv[2];
-            v.uv[0] = (float)(mu[0] * a + mu[1] * c + mu[2]);
-            v.uv[1] = (float)(mv[0] * a + mv[1] * c + mv[2]);
+            v.uv[0] = (float)(mu[0] * ae + mu[1] * c + mu[2]);
+            v.uv[1] = (float)(mv[0] * ae + mv[1] * c + mv[2]);
             for (int e = 0; e < 4; e++) v.color[e] = col[e];
             outv.push_back(v);
         };
         const float nUp[3] = { 0, 1, 0 };
-        const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] }; // riser faces downhill
+        const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] }; // riser faces downhill (toward the climber)
+        const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side cap at cmin faces -c
+        const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side cap at cmax faces +c
+        const float stepLen = f.da + f.dy;                  // unrolled profile length per step
+        const float uvA = (stepLen > 1e-6f) ? (f.da / stepLen) : 1.0f;
         for (int k = 0; k < f.N; k++) {
             float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-            float yTop = f.ymin + (k + 1) * f.dy, yBot = f.ymin + k * f.dy;
-            // Tread (top face, +Y): (a0,cmin)(a1,cmin)(a1,cmax) + (a0,cmin)(a1,cmax)(a0,cmax)
-            emit(a0, yTop, f.cmin, nUp); emit(a1, yTop, f.cmin, nUp); emit(a1, yTop, f.cmax, nUp);
-            emit(a0, yTop, f.cmin, nUp); emit(a1, yTop, f.cmax, nUp); emit(a0, yTop, f.cmax, nUp);
-            // Riser (front face, -aDir): (a0,cmin,yBot)(a0,cmin,yTop)(a0,cmax,yTop) +
-            //                            (a0,cmin,yBot)(a0,cmax,yTop)(a0,cmax,yBot)
-            emit(a0, yBot, f.cmin, nDn); emit(a0, yTop, f.cmin, nDn); emit(a0, yTop, f.cmax, nDn);
-            emit(a0, yBot, f.cmin, nDn); emit(a0, yTop, f.cmax, nDn); emit(a0, yBot, f.cmax, nDn);
+            // Treads sit at the step's LOWER y (yk), not the upper (yTop). This tucks the whole
+            // staircase at/under the original ramp diagonal — the riser tops touch the diagonal at
+            // the nosings, the treads dip below — so the surrounding terrain (which meets the ramp
+            // surface) occludes the step sides instead of leaving the steps poking above it with
+            // open sides (the "render gap" / see-through). The riser then climbs at the BACK of the
+            // tread (a1) up to the next tread's height.
+            float yk = f.ymin + k * f.dy, yk1 = f.ymin + (k + 1) * f.dy;
+            float aeF = f.amin + (k * stepLen) * uvA;          // tread front
+            float aeB = f.amin + (k * stepLen + f.da) * uvA;   // tread back / riser bottom
+            float aeT = f.amin + ((k + 1) * stepLen) * uvA;    // riser top
+            // Tread (top face, +Y) at yk
+            emit(a0, yk, f.cmin, aeF, nUp); emit(a1, yk, f.cmin, aeB, nUp); emit(a1, yk, f.cmax, aeB, nUp);
+            emit(a0, yk, f.cmin, aeF, nUp); emit(a1, yk, f.cmax, aeB, nUp); emit(a0, yk, f.cmax, aeF, nUp);
+            // Riser (front face, -aDir) at a1, yk -> yk1
+            emit(a1, yk, f.cmin, aeB, nDn); emit(a1, yk1, f.cmin, aeT, nDn); emit(a1, yk1, f.cmax, aeT, nDn);
+            emit(a1, yk, f.cmin, aeB, nDn); emit(a1, yk1, f.cmax, aeT, nDn); emit(a1, yk, f.cmax, aeB, nDn);
+            // Side caps: fill the triangular sliver between this lowered tread and the original
+            // ramp's straight side diagonal (the edge the surrounding terrain meets), on BOTH c
+            // edges, so the open sides no longer show the background through them. The cap's
+            // hypotenuse (a0,yk)->(a1,yk1) traces that diagonal == the original ramp silhouette.
+            emit(a0, yk, f.cmin, aeF, nCmin); emit(a1, yk1, f.cmin, aeT, nCmin); emit(a1, yk, f.cmin, aeB, nCmin);
+            emit(a0, yk, f.cmax, aeF, nCmax); emit(a1, yk, f.cmax, aeB, nCmax); emit(a1, yk1, f.cmax, aeT, nCmax);
         }
     }
     g.verts.swap(outv);
@@ -1734,14 +1768,14 @@ extern "C" int SoH3D_CollectSceneStairTreads(const char* sceneName,
                 if (!stairFrameOf(g, pt, nrm, f)) continue;
                 for (int k = 0; k < f.N; k++) {
                     float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-                    float yTop = f.ymin + (k + 1) * f.dy;
-                    // Tread quad corners (world XZ from a,c; y at the step top), CCW from above.
+                    float yk = f.ymin + k * f.dy; // tread at the step's LOWER y, matching the render
+                    // Tread quad corners (world XZ from a,c; y at the lowered tread), CCW from above.
                     const float cc[4][2] = { { a0, f.cmin }, { a1, f.cmin }, { a1, f.cmax }, { a0, f.cmax } };
                     int base = (int)(verts.size() / 3);
                     for (int j = 0; j < 4; j++) {
                         float a = cc[j][0], c = cc[j][1];
                         verts.push_back(f.aDir[0] * a + f.cDir[0] * c);
-                        verts.push_back(yTop);
+                        verts.push_back(yk);
                         verts.push_back(f.aDir[2] * a + f.cDir[2] * c);
                     }
                     tris.push_back(base + 0); tris.push_back(base + 1); tris.push_back(base + 2);

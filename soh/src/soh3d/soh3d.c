@@ -2218,6 +2218,12 @@ float gSoH3dLinkRotY = 0.0f;
 float gSoH3dLinkRotZ = 0.0f;
 char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link (verify idle/walk/run
                                    // deterministically without real movement input); empty = live-resolve
+// #7: CSAB frames advanced per draw per unit of Link's ground speed, when speed-driving the
+// locomotion cycle (run/walk) — Link's run/walk advances its pose through a player-internal
+// accumulator, NOT skelAnime.curFrame (pinned at 0 the whole run), so curFrame can't phase-lock the
+// CSAB (it froze at frame 0 -> the motionless slide). A footstep cadence is a function of movement
+// speed, so we free-run the CSAB at speedXZ * this gain. Calibrated live vs N64 (REPL `linkloco`).
+float gSoH3dLinkLocoGain = 0.30f;
 // Player animation SOURCE (REPL `linksrc`, env SOH3D_LINK_SRC). Two independent, both-working modes:
 //   0 = 3DS own-CSAB: play the OoT3D link rig's own CSAB matching the named player anim (kPlayerAnimMap).
 //       Faithful for discrete states (idle fidgets, jumps, item use) but BLIND to walk/run — OoT blends
@@ -2661,9 +2667,17 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
                 fflush(stdout);
             }
         }
+        int isLoco = (strstr(csab, "run") != NULL) || (strstr(csab, "walk") != NULL);
         if (strcmp(csab, "rest") == 0) {
             SoH3D_UpdateAnim(modelId, NULL, 0); // diagnostic: force bind pose (linkanim rest)
+        } else if (isLoco && gSoH3dLinkForceCsab[0] == '\0' && player->actor.speedXZ > 0.5f) {
+            // #7 SLIDE FIX: Link's run/walk advances its pose via a player-internal accumulator, not
+            // skelAnime.curFrame (verified pinned at 0 across an entire run). Phase-locking to that
+            // dead clock froze the run CSAB at frame 0 -> static pose sliding over the ground. Drive
+            // the leg cycle by ground speed instead (free-run; the CSAB wraps the frame internally).
+            SoH3D_UpdateAnimAuto(modelId, csab, player->actor.speedXZ * gSoH3dLinkLocoGain, 0.0f, 0.0f);
         } else {
+            // Idle / one-shot anims: curFrame is valid here, so keep the N64-progress phase-lock.
             SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
                                  player->skelAnime.animLength);
         }
@@ -3462,6 +3476,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         gSoH3dLinkScale = f1;
         SoH3D_ReplReply(outPath, "linkscale=%.5f (OoT3D-link-local -> N64 player world units)",
                         gSoH3dLinkScale);
+    } else if (strcmp(cmd, "linkloco") == 0) {
+        // #7 calibrate the speed->CSAB-cadence gain for Link's locomotion cycle. `linkloco <gain>`
+        // sets it; no-arg reports it + Link's live speedXZ (so the cadence can be tuned vs N64).
+        extern float gSoH3dLinkLocoGain;
+        if (sscanf(line, "%*s %f", &f1) == 1) {
+            gSoH3dLinkLocoGain = f1;
+        }
+        SoH3D_ReplReply(outPath, "linkloco gain=%.3f (CSAB frames/draw per speed unit); link speedXZ=%.2f",
+                        gSoH3dLinkLocoGain, GET_PLAYER(play)->actor.speedXZ);
     } else if (strcmp(cmd, "linkrot") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         extern float gSoH3dLinkRotX, gSoH3dLinkRotY, gSoH3dLinkRotZ;
         gSoH3dLinkRotX = f1;

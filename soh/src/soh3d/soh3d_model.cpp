@@ -426,7 +426,15 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
     // windmill c_s01fusya + well pillar c_s01idohashira + well water c_s01idomizu). The default
     // "largest CMB" heuristic would give every such actor the same (biggest) CMB. With a selector
     // we pick the named CMB instead; scale still auto-derives (per-actor N64 height / this CMB).
-    const std::string& key = g_autoModelPaths[idx];
+    std::string key = g_autoModelPaths[idx];
+    // "SKY:" prefix marks the skybox dome (a vertex-coloured, untextured CMB). It must keep its baked
+    // per-vertex colour (the day/night gradient) and write NO depth (drawn behind all world geometry).
+    // The renderer pins it to the far plane via the per-draw sky flag; see SoH3D_GL_Submit.
+    bool sky = false;
+    if (key.rfind("SKY:", 0) == 0) {
+        sky = true;
+        key = key.substr(4);
+    }
     std::string zarPath = key;
     std::string forcedCmb;
     if (auto bar = key.find('|'); bar != std::string::npos) {
@@ -449,10 +457,13 @@ static void loadAutoModel(int modelId, LoadedModel* out) {
             if (!cmb->ok()) { fprintf(stderr, "[SoH3D] auto forced-cmb %s '%s': %s\n", zarPath.c_str(), f.name.c_str(), cmb->error().c_str()); return; }
             out->cmb = std::move(cmb);
             out->skinned = out->cmb->bones().size() > 1;
-            buildFromCmb(out, /*bakedVertexColor=*/false);
-            printf("[SoH3D] auto-loaded model %d (%s | %s): cmb '%s', height=%.1f, %zu groups, %zu textures\n",
-                   modelId, zarPath.c_str(), forcedCmb.c_str(), f.name.c_str(), bboxHeight(out->groups),
-                   out->cGroups.size(), out->cTexs.size());
+            buildFromCmb(out, /*bakedVertexColor=*/sky);
+            if (sky) {
+                for (auto& grp : out->cGroups) grp.depthWrite = 0; // never occlude the world
+            }
+            printf("[SoH3D] auto-loaded model %d (%s | %s)%s: cmb '%s', height=%.1f, %zu groups, %zu textures\n",
+                   modelId, zarPath.c_str(), forcedCmb.c_str(), sky ? " [sky]" : "", f.name.c_str(),
+                   bboxHeight(out->groups), out->cGroups.size(), out->cTexs.size());
             return;
         }
         fprintf(stderr, "[SoH3D] auto forced-cmb %s: no cmb matches '%s' -> heuristic pick\n", zarPath.c_str(), forcedCmb.c_str());

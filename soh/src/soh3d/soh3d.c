@@ -218,6 +218,13 @@ void SoH3D_SetCurAnim(void* animation) {
 float gSoH3dSceneScale = 1.0f;
 float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 
+// #28 OoT3D sky: replace the low-res N64 normal-sky skybox with the OoT3D BlueSky.zar gradient
+// dome (kankyo/BlueSky.zar tenkyu). gSoH3dSky toggles it; gSoH3dSkyScale sizes the dome (it is
+// pinned to the far plane in the shader, so the scale only needs to keep its verts in front of
+// the near plane — any moderate value works). REPL `sky`.
+int gSoH3dSky = 1;
+float gSoH3dSkyScale = 12.0f;
+
 // --- Terrain warp: re-level the OoT3D room render ground to the N64 collision floor
 // (so Link, who walks on N64 collision, stands on the visible ground). The mesh re-level
 // runs in soh3d_model.cpp (SoH3D_WarpRoomToN64); this side supplies the N64 floor probe
@@ -1342,6 +1349,84 @@ static void SoH3D_DrawRoomGL(PlayState* play, int modelId) {
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId, tint[0], tint[1], tint[2]);
 
     CLOSE_DISPS(play->state.gfxCtx);
+}
+
+// #28 — map a N64 normal-sky index (envCtx.skybox1Index, 0..8 into the game's sSkyboxTable:
+// Fine sunrise/day/sunset/night, Cloud sunrise/day/sunset/night, Holy) to the matching OoT3D
+// celestial-dome CMB in /kankyo/BlueSky.zar. The OoT3D fine_tenkyu_0..3 baked vertex colours line
+// up 1:1 with the N64 order (0=sunrise yellow-green, 1=day blue, 2=sunset red, 3=night dark-blue;
+// verified by dumping the dome vertex colours). The "SKY:" key prefix loads it with baked vertex
+// colour + depth-write off (see loadAutoModel). Returns a stable, deduped SoH3D model id.
+static int SoH3D_SkyModelId(int idx) {
+    static const char* const kTenkyu[9] = {
+        "fine_tenkyu_0",  "fine_tenkyu_1",  "fine_tenkyu_2",  "fine_tenkyu_3",
+        "cloud_tenkyu_0", "cloud_tenkyu_1", "cloud_tenkyu_2", "cloud_tenkyu_3",
+        "holy_tenkyu0",
+    };
+    char key[128];
+    if (idx < 0 || idx > 8) {
+        idx = 1; // default to clear day
+    }
+    snprintf(key, sizeof(key), "SKY:/kankyo/BlueSky.zar|%s", kTenkyu[idx]);
+    return SoH3D_AutoModelId(key);
+}
+
+// The cloud layer (kumo) that sits over the dome — a textured, alpha-blended band near the horizon.
+// fine/cloud/holy share the per-time _a0.._a3 set; matched to the dome's weather variant.
+static int SoH3D_SkyCloudModelId(int idx) {
+    static const char* const kKumo[9] = {
+        "fine_kumo_a0",  "fine_kumo_a1",  "fine_kumo_a2",  "fine_kumo_a3",
+        "cloud_kumo_a0", "cloud_kumo_a1", "cloud_kumo_a2", "cloud_kumo_a3",
+        "holy_kumo_a0",
+    };
+    char key[128];
+    if (idx < 0 || idx > 8) {
+        idx = 1;
+    }
+    snprintf(key, sizeof(key), "SKY:/kankyo/BlueSky.zar|%s", kKumo[idx]);
+    return SoH3D_AutoModelId(key);
+}
+
+int SoH3D_TryDrawSky(PlayState* play) {
+    int modelId;
+    if (!gSoH3dSky || !SoH3D_Enabled()) {
+        return 0;
+    }
+    // Only the normal day/night gradient sky. Shop/indoor/cutscene skyboxes keep the N64 path.
+    if (play->skyboxId != SKYBOX_NORMAL_SKY) {
+        return 0;
+    }
+    // Only when this scene renders OoT3D world geometry (so the OoT3D sky matches the OoT3D world).
+    if (SoH3D_SceneName(play) == NULL) {
+        return 0;
+    }
+    modelId = SoH3D_SkyModelId(play->envCtx.skybox1Index);
+    if (modelId < 0) {
+        return 0;
+    }
+    {
+        OPEN_DISPS(play->state.gfxCtx);
+        SoH3D_EnsureModelProvider();
+        Gfx_SetupDL_25Opa(play->state.gfxCtx);
+        // Centre the dome on the camera eye (follows the camera; no parallax). The camera is folded
+        // into the projection matrix, so this model matrix is model->world only; the shader pins the
+        // dome to the far plane regardless of gSoH3dSkyScale.
+        Matrix_Translate(play->view.eye.x, play->view.eye.y, play->view.eye.z, MTXMODE_NEW);
+        Matrix_Scale(gSoH3dSkyScale, gSoH3dSkyScale, gSoH3dSkyScale, MTXMODE_APPLY);
+        gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+        // Bit 30 of the handle = sky flag (far-plane depth, no shadow/AO; see the draw opcode handler).
+        // Dome first (opaque gradient), then the cloud band (alpha-blended) over it — both pinned to
+        // the far plane, so the clouds composite onto the dome and neither occludes the world.
+        gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (1 << 30), 255, 255, 255);
+        {
+            int cloudId = SoH3D_SkyCloudModelId(play->envCtx.skybox1Index);
+            if (cloudId >= 0) {
+                gSPSoH3DDraw(POLY_OPA_DISP++, cloudId | (1 << 30), 255, 255, 255);
+            }
+        }
+        CLOSE_DISPS(play->state.gfxCtx);
+    }
+    return 1;
 }
 
 // Emit the once-per-frame SoH3D render-pass marker into POLY_OPA. When the interpreter reaches
@@ -2829,6 +2914,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "scenescale") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dSceneScale = f1;
         SoH3D_ReplReply(outPath, "scenescale=%.4f", gSoH3dSceneScale);
+    } else if (strcmp(cmd, "sky") == 0) {
+        // `sky <0|1>` toggles the OoT3D sky dome (#28); `sky scale <f>` tunes the dome size.
+        char sub[32];
+        if (sscanf(line, "%*s scale %f", &f1) == 1) {
+            gSoH3dSkyScale = f1;
+        } else if (sscanf(line, "%*s %31s", sub) == 1) {
+            gSoH3dSky = (atoi(sub) != 0);
+        }
+        SoH3D_ReplReply(outPath, "sky=%d scale=%.2f", gSoH3dSky, gSoH3dSkyScale);
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;

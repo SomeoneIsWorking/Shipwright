@@ -54,6 +54,11 @@ void SoH3D_SetCurAnim(void* animation);
 // skips the N64 room mesh; returns 0 otherwise (caller draws the N64 room as normal).
 int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 
+// Draw the OoT3D sky (BlueSky.zar tenkyu gradient dome) in place of the N64 normal-sky skybox.
+// Called from Play_Draw at the skybox point; returns 1 if it drew the OoT3D sky (caller skips the
+// N64 SkyboxDraw_Draw), 0 otherwise (caller draws the N64 skybox as normal). #28.
+int SoH3D_TryDrawSky(PlayState* play);
+
 // Emit the once-per-frame SoH3D render-pass marker (drains all SoH3D draws collected this frame
 // in one GL-state-bracketed pass). Call from Play_Draw right after the actor draw-all.
 void SoH3D_EmitRenderPass(PlayState* play);

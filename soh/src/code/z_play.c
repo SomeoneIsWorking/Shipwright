@@ -1505,8 +1505,12 @@ void Play_Draw(PlayState* play) {
             if (play->skyboxId && (play->skyboxId != SKYBOX_UNSET_1D) && !play->envCtx.skyboxDisabled) {
                 if ((play->skyboxId == SKYBOX_NORMAL_SKY) || (play->skyboxId == SKYBOX_CUTSCENE_MAP)) {
                     Environment_UpdateSkybox(play, play->skyboxId, &play->envCtx, &play->skyboxCtx);
-                    SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, play->envCtx.skyboxBlend,
-                                    play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                    // SoH3D #28: draw the OoT3D sky dome in place of the low-res N64 skybox (uses the
+                    // N64-computed skybox1Index for the time-of-day variant). 0 => keep the N64 path.
+                    if (!SoH3D_TryDrawSky(play)) {
+                        SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, play->envCtx.skyboxBlend,
+                                        play->view.eye.x, play->view.eye.y, play->view.eye.z);
+                    }
                 } else if (play->skyboxCtx.unk_140 == 0) {
                     SkyboxDraw_Draw(&play->skyboxCtx, gfxCtx, play->skyboxId, 0, play->view.eye.x, play->view.eye.y,
                                     play->view.eye.z);

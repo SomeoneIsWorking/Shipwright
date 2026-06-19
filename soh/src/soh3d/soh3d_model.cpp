@@ -18,6 +18,7 @@
 #include "fast/soh3d_gl.h"
 #include <stb_image.h>
 #include "stairs_stone_png.h" // embedded PNG of assets/soh3d/stairs_stone.svg (custom stair texture)
+#include "xbox_glyphs_png.h"  // embedded PNGs of assets/soh3d/xbox_{a,b,x,y}.svg (HUD button glyphs, #32)
 
 #include <algorithm>
 #include <array>
@@ -1224,6 +1225,45 @@ void SoH3D_SetStairRiserY(float v) {
     SoH3D_GL_RequestEvictRange(kSceneModelBase, kAutoModelBase);
 }
 float SoH3D_GetStairRiserY(void) { return gSoH3dStairRiserY; }
+
+// #32 — Xbox face-button HUD glyphs. Decode the embedded A/B/X/Y PNGs to persistent RGBA8888
+// (== N64 G_IM_FMT_RGBA / G_IM_SIZ_32b: one byte each R,G,B,A per texel, matching stbi's order)
+// once, and hand the in-game Fast3D HUD a raw pointer it can gDPLoadTextureBlock as a 32b RGBA
+// texture (the HUD already feeds gfx_pc raw RAM texture pointers, e.g. the do-action labels).
+// `which` is 'A'/'B'/'X'/'Y' (case-insensitive). Returns NULL (and *w=*h=0) on decode failure.
+const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
+    struct Glyph { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
+    static Glyph g[4];
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        const unsigned char* png[4] = { kXboxGlyphAPng, kXboxGlyphBPng, kXboxGlyphXPng, kXboxGlyphYPng };
+        unsigned int len[4] = { kXboxGlyphAPngLen, kXboxGlyphBPngLen, kXboxGlyphXPngLen, kXboxGlyphYPngLen };
+        for (int i = 0; i < 4; i++) {
+            int sw = 0, sh = 0, n = 0;
+            stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
+            if (px) {
+                g[i].rgba.assign(px, px + (size_t)sw * sh * 4);
+                g[i].w = sw; g[i].hh = sh;
+                stbi_image_free(px);
+            } else {
+                fprintf(stderr, "[SoH3D] xbox glyph %d: PNG decode failed\n", i);
+            }
+        }
+    }
+    int idx;
+    switch (which) {
+        case 'A': case 'a': idx = 0; break;
+        case 'B': case 'b': idx = 1; break;
+        case 'X': case 'x': idx = 2; break;
+        case 'Y': case 'y': idx = 3; break;
+        default: if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    if (g[idx].rgba.empty()) { if (w) *w = 0; if (h) *h = 0; return nullptr; }
+    if (w) *w = g[idx].w;
+    if (h) *h = g[idx].hh;
+    return g[idx].rgba.data();
+}
 
 // Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR
 // path (e.g. "/actor/zelda_box.zar"). The geometry loads lazily on first draw via the

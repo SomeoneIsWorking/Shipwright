@@ -22,6 +22,7 @@
 #include "soh/ResourceManagerHelpers.h"
 #include "soh/Enhancements/gameplaystats.h"
 #include "soh/ObjectExtension/ActorMaximumHealth.h"
+#include "soh3d/soh3d.h" // #32 — Xbox face-button HUD glyphs (SoH3D_XboxBtnEnabled / SoH3D_XboxGlyphTex)
 
 #include "message_data_static.h"
 extern MessageTableEntry* sNesMessageEntryTablePtr;
@@ -1396,6 +1397,31 @@ Gfx* Gfx_TextureI8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 te
                             (rectTop + rectHeight) << 2, G_TX_RENDERTILE, 0, 0, dsdx, dtdy);
 
     return displayListHead;
+}
+
+// #32 — draw one HUD button as a full-colour Xbox face-button glyph (RGBA32) at the given screen
+// top-left + on-screen size, in place of the shared N64 button circle. Self-contained: it sets its
+// own combine (out.rgb = TEXEL0.rgb, out.a = TEXEL0.a * PRIMITIVE.a so the HUD fade still applies),
+// prim alpha, loads the glyph as a 32b RGBA tile, and draws the rectangle. dsdx/dtdy are derived
+// from the glyph dims so any glyph size maps onto the same screen rect (the glyph is 64x64 today).
+// `which` = 'A'/'B'/'X'/'Y'. Returns the advanced display-list head. No-op (returns dl) if the glyph
+// can't be decoded — callers gate on SoH3D_XboxBtnEnabled() + a non-NULL SoH3D_XboxGlyphTex first.
+static Gfx* SoH3D_DrawXboxBtn(Gfx* dl, char which, s16 left, s16 top, s16 w, s16 h, u8 alpha) {
+    int gw = 0, gh = 0;
+    const void* tex = SoH3D_XboxGlyphTex(which, &gw, &gh);
+    if (tex == NULL || gw <= 0 || gh <= 0 || w <= 0 || h <= 0) {
+        return dl;
+    }
+    gDPPipeSync(dl++);
+    gDPSetCombineLERP(dl++, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0);
+    gDPSetPrimColor(dl++, 0, 0, 255, 255, 255, alpha);
+    gDPLoadTextureBlock(dl++, tex, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0, G_TX_NOMIRROR | G_TX_WRAP,
+                        G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    u16 dsdx = (u16)(((u32)gw << 10) / (u32)w);
+    u16 dtdy = (u16)(((u32)gh << 10) / (u32)h);
+    gSPWideTextureRectangle(dl++, left << 2, top << 2, (left + w) << 2, (top + h) << 2, G_TX_RENDERTILE, 0, 0, dsdx,
+                            dtdy);
+    return dl;
 }
 
 void Rando_Inventory_SwapAgeEquipment(void) {
@@ -4126,33 +4152,57 @@ void Interface_DrawItemButtons(PlayState* play) {
     gDPSetPrimColor(OVERLAY_DISP++, 0, 0, bButtonColor.r, bButtonColor.g, bButtonColor.b, interfaceCtx->bAlpha);
     gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
 
-    OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, BBtn_Size, BBtn_Size, PosX_BtnB, PosY_BtnB,
-                                  BBtnScaled, BBtnScaled, BBtn_factor, BBtn_factor);
+    // #32 — when Xbox HUD glyphs are on, draw the item-button cluster (B + the three C buttons) as
+    // full-colour Xbox face-button glyphs instead of the shared N64 circle tinted per button. Fixed
+    // mapping for a full Xbox diamond: B->B (red), C-Left->X (blue), C-Down->Y (yellow), C-Right->A
+    // (green). (C buttons have no canonical Xbox face-button on the SoH default layout — they're on
+    // the right stick — so this is a deliberate, easily-retuned cosmetic mapping, not a control hint.)
+    // After the glyphs we reload the IA8 circle tile + restore MODULATEIA_PRIM so the Start-button
+    // draw below (which reuses the loaded tile) is byte-for-byte identical to the non-Xbox path.
+    if (SoH3D_XboxBtnEnabled() && SoH3D_XboxGlyphTex('B', NULL, NULL) != NULL) {
+        OVERLAY_DISP =
+            SoH3D_DrawXboxBtn(OVERLAY_DISP, 'B', PosX_BtnB, PosY_BtnB, BBtnScaled, BBtnScaled, interfaceCtx->bAlpha);
+        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'X', C_Left_BTN_Pos[0], C_Left_BTN_Pos[1], R_ITEM_BTN_WIDTH(1),
+                                         R_ITEM_BTN_WIDTH(1), interfaceCtx->cLeftAlpha);
+        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'Y', C_Down_BTN_Pos[0], C_Down_BTN_Pos[1], R_ITEM_BTN_WIDTH(2),
+                                         R_ITEM_BTN_WIDTH(2), interfaceCtx->cDownAlpha);
+        OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, 'A', C_Right_BTN_Pos[0], C_Right_BTN_Pos[1], R_ITEM_BTN_WIDTH(3),
+                                         R_ITEM_BTN_WIDTH(3), interfaceCtx->cRightAlpha);
+        gDPPipeSync(OVERLAY_DISP++);
+        gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPSetEnvColor(OVERLAY_DISP++, 0, 0, 0, 255);
+        gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
+                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
+                            G_TX_NOLOD);
+    } else {
+        OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, gButtonBackgroundTex, BBtn_Size, BBtn_Size, PosX_BtnB, PosY_BtnB,
+                                      BBtnScaled, BBtnScaled, BBtn_factor, BBtn_factor);
 
-    // C-Left Button Color & Texture
-    gDPPipeSync(OVERLAY_DISP++);
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cLeftButtonColor.r, cLeftButtonColor.g, cLeftButtonColor.b,
-                    interfaceCtx->cLeftAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Left_BTN_Pos[0] << 2, C_Left_BTN_Pos[1] << 2,
-                            (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
-                            (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
+        // C-Left Button Color & Texture
+        gDPPipeSync(OVERLAY_DISP++);
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cLeftButtonColor.r, cLeftButtonColor.g, cLeftButtonColor.b,
+                        interfaceCtx->cLeftAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Left_BTN_Pos[0] << 2, C_Left_BTN_Pos[1] << 2,
+                                (C_Left_BTN_Pos[0] + R_ITEM_BTN_WIDTH(1)) << 2,
+                                (C_Left_BTN_Pos[1] + R_ITEM_BTN_WIDTH(1)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(1) << 1, R_ITEM_BTN_DD(1) << 1);
 
-    // C-Down Button Color & Texture
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cDownButtonColor.r, cDownButtonColor.g, cDownButtonColor.b,
-                    interfaceCtx->cDownAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Down_BTN_Pos[0] << 2, C_Down_BTN_Pos[1] << 2,
-                            (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
-                            (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
+        // C-Down Button Color & Texture
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cDownButtonColor.r, cDownButtonColor.g, cDownButtonColor.b,
+                        interfaceCtx->cDownAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Down_BTN_Pos[0] << 2, C_Down_BTN_Pos[1] << 2,
+                                (C_Down_BTN_Pos[0] + R_ITEM_BTN_WIDTH(2)) << 2,
+                                (C_Down_BTN_Pos[1] + R_ITEM_BTN_WIDTH(2)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(2) << 1, R_ITEM_BTN_DD(2) << 1);
 
-    // C-Right Button Color & Texture
-    gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cRightButtonColor.r, cRightButtonColor.g, cRightButtonColor.b,
-                    interfaceCtx->cRightAlpha);
-    gSPWideTextureRectangle(OVERLAY_DISP++, C_Right_BTN_Pos[0] << 2, C_Right_BTN_Pos[1] << 2,
-                            (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
-                            (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
-                            R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
+        // C-Right Button Color & Texture
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, cRightButtonColor.r, cRightButtonColor.g, cRightButtonColor.b,
+                        interfaceCtx->cRightAlpha);
+        gSPWideTextureRectangle(OVERLAY_DISP++, C_Right_BTN_Pos[0] << 2, C_Right_BTN_Pos[1] << 2,
+                                (C_Right_BTN_Pos[0] + R_ITEM_BTN_WIDTH(3)) << 2,
+                                (C_Right_BTN_Pos[1] + R_ITEM_BTN_WIDTH(3)) << 2, G_TX_RENDERTILE, 0, 0,
+                                R_ITEM_BTN_DD(3) << 1, R_ITEM_BTN_DD(3) << 1);
+    }
 
     if ((pauseCtx->state < 8) || (pauseCtx->state >= 18)) {
         if ((play->pauseCtx.state != 0) || (play->pauseCtx.debugState != 0)) {
@@ -4367,10 +4417,25 @@ void Interface_DrawItemButtons(PlayState* play) {
                                 interfaceCtx->cRightAlpha);
             }
 
-            OVERLAY_DISP = Gfx_TextureIA8(OVERLAY_DISP, ((u8*)gButtonBackgroundTex), 32, 32, ItemIconPos[temp - 1][0],
-                                          ItemIconPos[temp - 1][1], ItemIconWidthFactor[temp - 1][0],
-                                          ItemIconWidthFactor[temp - 1][0], ItemIconWidthFactor[temp - 1][1],
-                                          ItemIconWidthFactor[temp - 1][1]);
+            // #32 — empty C-button background: an Xbox glyph (with its letter, now unobscured since
+            // the slot has no item) when enabled, matching the main cluster mapping (Left->X, Down->Y,
+            // Right->A); else the N64 circle. The empty-direction arrow below still draws over it.
+            char cGlyph = (temp == 1) ? 'X' : (temp == 2) ? 'Y' : 'A';
+            if (SoH3D_XboxBtnEnabled() && SoH3D_XboxGlyphTex(cGlyph, NULL, NULL) != NULL) {
+                u8 cAlpha = (temp == 1) ? interfaceCtx->cLeftAlpha
+                                        : (temp == 2) ? interfaceCtx->cDownAlpha : interfaceCtx->cRightAlpha;
+                OVERLAY_DISP = SoH3D_DrawXboxBtn(OVERLAY_DISP, cGlyph, ItemIconPos[temp - 1][0],
+                                                 ItemIconPos[temp - 1][1], ItemIconWidthFactor[temp - 1][0],
+                                                 ItemIconWidthFactor[temp - 1][0], cAlpha);
+                gDPPipeSync(OVERLAY_DISP++);
+                gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+            } else {
+                OVERLAY_DISP =
+                    Gfx_TextureIA8(OVERLAY_DISP, ((u8*)gButtonBackgroundTex), 32, 32, ItemIconPos[temp - 1][0],
+                                   ItemIconPos[temp - 1][1], ItemIconWidthFactor[temp - 1][0],
+                                   ItemIconWidthFactor[temp - 1][0], ItemIconWidthFactor[temp - 1][1],
+                                   ItemIconWidthFactor[temp - 1][1]);
+            }
 
             const char* cButtonIcons[] = { gButtonBackgroundTex, gEquippedItemOutlineTex, gEmptyCLeftArrowTex,
                                            gEmptyCDownArrowTex, gEmptyCRightArrowTex };

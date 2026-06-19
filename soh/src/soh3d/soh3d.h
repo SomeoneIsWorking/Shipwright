@@ -114,6 +114,13 @@ int SoH3D_GetStairs(void);
 void SoH3D_SetStairRiserY(float v); // generated step rise (world-units/step); larger = bigger steps
 float SoH3D_GetStairRiserY(void);
 
+// #32 — Xbox face-button HUD glyphs. Returns a persistent RGBA8888 (G_IM_FMT_RGBA/32b) buffer for
+// the glyph 'A'/'B'/'X'/'Y' (case-insensitive) + its dims, or NULL on failure. The in-game Fast3D
+// HUD draws this raw pointer in place of the shared N64 button circle when gSoH3dXboxBtn is set.
+const void* SoH3D_XboxGlyphTex(char which, int* w, int* h);
+extern int gSoH3dXboxBtn;       // env SOH3D_XBOXUI / REPL `xboxui` gate (-1=uninit, 0/1)
+int SoH3D_XboxBtnEnabled(void); // lazily resolves the env on first call; HUD draws gate on this
+
 // World scale for the OoT3D pot (OoT3D model units -> N64 world units). Tuned by
 // matching the rendered height of the OoT3D pot to the N64 pot at the same spot
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands

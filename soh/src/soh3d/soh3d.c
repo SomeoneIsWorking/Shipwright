@@ -335,6 +335,18 @@ float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 int gSoH3dSky = 1;
 float gSoH3dSkyScale = 12.0f;
 
+// #32 — show Xbox face-button glyphs (A/B/X/Y) in the in-game HUD button prompts instead of
+// the shared N64 colored circle. -1 = uninit (read SOH3D_XBOXUI env, default on). The HUD
+// (z_parameter.c) reads this and swaps the per-button texture; see SoH3D_XboxGlyphTex.
+int gSoH3dXboxBtn = -1;
+int SoH3D_XboxBtnEnabled(void) {
+    if (gSoH3dXboxBtn < 0) {
+        const char* v = getenv("SOH3D_XBOXUI");
+        gSoH3dXboxBtn = (v != NULL && v[0] == '0') ? 0 : 1;
+    }
+    return gSoH3dXboxBtn;
+}
+
 // --- Terrain warp: re-level the OoT3D room render ground to the N64 collision floor
 // (so Link, who walks on N64 collision, stands on the visible ground). The mesh re-level
 // runs in soh3d_model.cpp (SoH3D_WarpRoomToN64); this side supplies the N64 floor probe
@@ -3464,6 +3476,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // rebuild at the new size on the next render pass.
         SoH3D_SetStairRiserY(f1);
         SoH3D_ReplReply(outPath, "stairsize riser=%.1f (live)", SoH3D_GetStairRiserY());
+    } else if (strcmp(cmd, "xboxui") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #32 — toggle Xbox face-button glyphs in the HUD button prompts (live; the HUD reads
+        // gSoH3dXboxBtn every frame). 1 = Xbox A/B/X/Y glyphs, 0 = the N64 colored circles.
+        gSoH3dXboxBtn = (f1 != 0.0f) ? 1 : 0;
+        SoH3D_ReplReply(outPath, "xboxui=%d", gSoH3dXboxBtn);
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;

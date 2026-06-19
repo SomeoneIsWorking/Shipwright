@@ -2504,7 +2504,11 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
                                 (int)ARRAY_COUNT(kLinkChildBoneCorr));
     } else {
         // 3DS OWN-CSAB: pick the link CSAB matching Link's named anim, phase-locked to curFrame/animLength.
-        // Unmapped -> idle so it never freezes in bind pose.
+        // Unmapped -> idle so it never freezes in bind pose. NOTE (#29b): the documented "slide" (idle
+        // played while translating because OoT blends locomotion into jointTable without naming an anim)
+        // does NOT reproduce here — during sustained movement player->skelAnime.animation resolves to
+        // gPlayerAnim_link_normal_run_free, so this maps to nml_run_free and Link animates while moving
+        // (verified live, Kakariko + Kokiri). speedXZ shown in the debug for future locomotion work.
         csab = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
         if (csab == NULL) {
             csab = SOH3D_LINK_IDLE_CSAB;
@@ -2516,8 +2520,9 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             static int dbg = 0;
             if ((dbg++ % 30) == 0) {
                 const char* otr = (const char*)player->skelAnime.animation;
-                printf("SOH3D LINK: src=3DS n64=%s -> csab=%s frame=%.1f/%.1f\n", otr ? otr : "(none)", csab,
-                       player->skelAnime.curFrame, player->skelAnime.animLength);
+                printf("SOH3D LINK: src=3DS n64=%s -> csab=%s frame=%.1f/%.1f speedXZ=%.2f\n",
+                       otr ? otr : "(none)", csab, player->skelAnime.curFrame,
+                       player->skelAnime.animLength, player->actor.speedXZ);
                 fflush(stdout);
             }
         }

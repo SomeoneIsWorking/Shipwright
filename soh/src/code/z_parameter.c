@@ -4996,13 +4996,43 @@ void Interface_DrawActionButton(PlayState* play, f32 x, f32 y) {
     Matrix_RotateX(interfaceCtx->unk_1F4 / 10000.0f, MTXMODE_APPLY);
 
     gSPMatrix(OVERLAY_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
-    gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
 
-    gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
-                        G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
-                        G_TX_NOLOD);
-
-    gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+    // #32 — when Xbox HUD glyphs are on, draw the A action button as the green Xbox 'A' glyph on
+    // the SAME flip-animated 3D quad (position + RotateX wobble preserved). The quad's baked
+    // texcoords (origin -16, far 1024-16) assume a 32-texel tile, so a 64x64 RGBA glyph would show
+    // only its top-left quarter; remap the far tc to the glyph's real size (gw/gh texels) so the
+    // FULL glyph maps onto the quad. Combine shows TEXEL0.rgb faded by the HUD aAlpha (white prim).
+    // tc are set explicitly in BOTH branches so toggling xboxui off restores the IA8 mapping.
+    int gw = 0, gh = 0;
+    const void* glyph = SoH3D_XboxBtnEnabled() ? SoH3D_XboxGlyphTex('A', &gw, &gh) : NULL;
+    if (glyph != NULL && gw > 0 && gh > 0) {
+        s16 farU = (s16)((gw << 5) - 16);
+        s16 farV = (s16)((gh << 5) - 16);
+        interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
+            interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
+        interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[0] = farU;
+        interfaceCtx->actionVtx[2].v.tc[1] = interfaceCtx->actionVtx[3].v.tc[1] = farV;
+        gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
+        gDPPipeSync(OVERLAY_DISP++);
+        gDPSetCombineLERP(OVERLAY_DISP++, 0, 0, 0, TEXEL0, TEXEL0, 0, PRIMITIVE, 0, 0, 0, 0, TEXEL0, TEXEL0, 0,
+                          PRIMITIVE, 0);
+        gDPSetPrimColor(OVERLAY_DISP++, 0, 0, 255, 255, 255, interfaceCtx->aAlpha);
+        gDPLoadTextureBlock(OVERLAY_DISP++, glyph, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0,
+                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                            G_TX_NOLOD, G_TX_NOLOD);
+        gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+    } else {
+        // Original N64 IA8 circle (restore the 32-texel tc in case Xbox UI was toggled off).
+        interfaceCtx->actionVtx[0].v.tc[0] = interfaceCtx->actionVtx[0].v.tc[1] =
+            interfaceCtx->actionVtx[1].v.tc[1] = interfaceCtx->actionVtx[2].v.tc[0] = -16;
+        interfaceCtx->actionVtx[1].v.tc[0] = interfaceCtx->actionVtx[2].v.tc[1] =
+            interfaceCtx->actionVtx[3].v.tc[0] = interfaceCtx->actionVtx[3].v.tc[1] = 1024 - 16;
+        gSPVertex(OVERLAY_DISP++, &interfaceCtx->actionVtx[0], 4, 0);
+        gDPLoadTextureBlock(OVERLAY_DISP++, gButtonBackgroundTex, G_IM_FMT_IA, G_IM_SIZ_8b, 32, 32, 0,
+                            G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                            G_TX_NOLOD, G_TX_NOLOD);
+        gSP1Quadrangle(OVERLAY_DISP++, 0, 2, 3, 1, 0);
+    }
 
     CLOSE_DISPS(play->state.gfxCtx);
 }

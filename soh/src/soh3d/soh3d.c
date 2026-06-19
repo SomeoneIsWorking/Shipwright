@@ -2577,6 +2577,42 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "exitat (%.0f,%.0f) NO FLOOR", f1, f2);
         }
+    } else if (strcmp(cmd, "exitgrid") == 0) {
+        // Like floorgrid, but dumps the per-floor SurfaceType exit/cam/type at each XZ cell in one
+        // FIFO round-trip (CSV: x,z,y,type,exit,cam; floorless cells get nan). Used to verify the
+        // #13 per-poly N64 exit/cam re-sourcing matches N64 collision across a whole scene
+        // (run under `collision 1` and `collision 0`, diff the two CSVs).
+        float x0, z0, x1, z1, step;
+        char gpath[1024];
+        if (sscanf(line, "%*s %f %f %f %f %f %1023s", &x0, &z0, &x1, &z1, &step, gpath) == 6 && step > 0.0f) {
+            FILE* gf = fopen(gpath, "w");
+            if (gf == NULL) {
+                SoH3D_ReplReply(outPath, "exitgrid: cannot open %s", gpath);
+            } else {
+                int hits = 0;
+                float x, z;
+                fprintf(gf, "x,z,y,type,exit,cam\n");
+                for (z = z0; z <= z1; z += step) {
+                    for (x = x0; x <= x1; x += step) {
+                        Vec3f pos = { x, 10000.0f, z };
+                        CollisionPoly* poly = NULL;
+                        f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &pos);
+                        if (poly != NULL) {
+                            u32 e = SurfaceType_GetSceneExitIndex(&play->colCtx, poly, BGCHECK_SCENE);
+                            u32 c = SurfaceType_GetCamDataIndex(&play->colCtx, poly, BGCHECK_SCENE);
+                            fprintf(gf, "%.1f,%.1f,%.2f,%d,%u,%u\n", x, z, y, poly->type, e, c);
+                            hits++;
+                        } else {
+                            fprintf(gf, "%.1f,%.1f,nan,nan,nan,nan\n", x, z);
+                        }
+                    }
+                }
+                fclose(gf);
+                SoH3D_ReplReply(outPath, "exitgrid -> %s (%d floor hits)", gpath, hits);
+            }
+        } else {
+            SoH3D_ReplReply(outPath, "exitgrid needs: x0 z0 x1 z1 step path");
+        }
     } else if (strcmp(cmd, "floorgrid") == 0) {
         // Batch raycast a regular XZ grid into a CSV (looped in C -> one FIFO round-trip,
         // not thousands). Used offline to build the dense N64 floor field for terrain warp.
@@ -3182,7 +3218,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         SoH3D_Enabled(), gSoH3dTintDiff, gSoH3dTintMul, tint[0], tint[1], tint[2], gSoH3dAnimLive,
                         gSoH3dAnimFrame, gSoH3dAnimRate, scales);
     } else {
-        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable auto autostate scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat floorgrid dump state)", line);
+        SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable auto autostate scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat exitat floorgrid exitgrid collision dump state)", line);
     }
 }
 

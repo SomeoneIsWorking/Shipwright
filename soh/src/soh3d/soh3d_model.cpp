@@ -1547,6 +1547,13 @@ static SoH3D::Csab* getCsab(LoadedModel* lm, const char* animName) {
 extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots, int rotCount,
                                           const signed char* boneToLimb, int mapCount);
 
+// Posed-feet grounding (#29b): cache this frame's skin matrices for a tracked model. Defined near
+// SoH3D_UpdateAnim (inside the same extern "C" region); forward-declared here so the N64-retarget
+// update paths below can call it too.
+extern "C" {
+static void cacheSkinForGround(int modelId, const std::vector<std::array<float, 16>>& sm);
+}
+
 extern "C" void SoH3D_UpdateAnimN64(int modelId, const int16_t* jointRots, int rotCount) {
     SoH3D_UpdateAnimN64Mapped(modelId, jointRots, rotCount, nullptr, 0);
 }
@@ -1602,6 +1609,7 @@ extern "C" void SoH3D_UpdateAnimN64Mapped(int modelId, const int16_t* jointRots,
 
     std::vector<std::array<float, 16>> sm(bind.size());
     for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    cacheSkinForGround(modelId, sm); // posed-feet grounding for the player path (#29b)
     // Upload bind for correct rigid pose interpolation (see SoH3D_UpdateAnim / interpSkinPose).
     SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
@@ -1667,6 +1675,7 @@ extern "C" void SoH3D_UpdateAnimN64Corr(int modelId, const int16_t* jointRots, i
 
     std::vector<std::array<float, 16>> sm(bind.size());
     for (size_t id = 0; id < bind.size(); id++) sm[id] = matMul(aw[id], matInverse(bind[id]));
+    cacheSkinForGround(modelId, sm); // posed-feet grounding for the player path (#29b)
     // Upload bind for correct rigid pose interpolation (see SoH3D_UpdateAnim / interpSkinPose).
     SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
     SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
@@ -1698,6 +1707,67 @@ extern "C" void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float r
     v[boneId * 3 + 2] = rz;
 }
 
+// --- Posed-feet grounding for the player path (#29b "Link floats") ---------------------------
+// The OoT3D Link CSABs carry absolute hip (bone 1) TRANSLATION tracks authored for the BOY rig;
+// applied to ANY Link rig they lift the whole skeleton off the floor (the child floats ~930 local
+// units ~= 40px on screen). The working N64-retarget path grounds precisely because it applies the
+// rest (bind) translation and only REPLACES rotations -- it never sees those hip translations. The
+// own-CSAB (linksrc 3ds) path applies the full CSAB, so it floats. We can't just drop the
+// translation (the BOY rig's own run NEEDS its hip bob), so instead we measure the posed model's
+// lowest VISIBLE vertex (its feet) each frame and offset the draw so the feet land on the actor's
+// world pos.y -- the per-frame analogue of the auto path's bind-pose groundOffset. Gated per-model
+// (only the player turns it on) so the per-vertex cost isn't paid on every NPC; needs the live mesh_id
+// visibility mask so a hidden/unposed equipment variant (which sits at its bind ~-1325) can't skew it.
+static std::unordered_map<int, char>& trackMinYFlags() {
+    static std::unordered_map<int, char> m;
+    return m;
+}
+static std::unordered_map<int, std::vector<std::array<float, 16>>>& lastSkin() {
+    static std::unordered_map<int, std::vector<std::array<float, 16>>> m;
+    return m;
+}
+// Cache this frame's skin matrices for a tracked model so SoH3D_PosedGroundOffset can recompute the
+// posed feet position against the (later-known) mesh_id mask. No-op unless tracking is enabled.
+static void cacheSkinForGround(int modelId, const std::vector<std::array<float, 16>>& sm) {
+    auto it = trackMinYFlags().find(modelId);
+    if (it == trackMinYFlags().end() || !it->second) return;
+    lastSkin()[modelId] = sm;
+}
+extern "C" void SoH3D_SetTrackPosedMinY(int modelId, int enable) {
+    trackMinYFlags()[modelId] = enable ? 1 : 0;
+    if (!enable) lastSkin().erase(modelId);
+}
+// Model-local Y translation to add (innermost, pre-scale) so the posed model's lowest VISIBLE
+// vertex lands on the actor's ground. midMask selects the drawn equipment/hand variant subset
+// (same bit convention as SoH3D_GL_SetMidMask: bit i = mesh_id i visible; mesh_id<0 or >=64 always
+// shown). Returns 0 if tracking wasn't enabled / no pose cached.
+extern "C" float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0.0f;
+    auto it = lastSkin().find(modelId);
+    if (it == lastSkin().end() || it->second.empty()) return 0.0f;
+    const auto& sm = it->second;
+    const int n = (int)sm.size();
+    float mn = 1e30f;
+    for (const auto& g : lm->groups) {
+        if (g.mesh_id >= 0 && g.mesh_id < 64 && !((midMask >> g.mesh_id) & 1ull)) continue;
+        for (const auto& v : g.verts) {
+            float y = 0.0f, wsum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+                float w = v.weights[k];
+                if (w <= 0.0f) continue;
+                int b = (int)(v.boneIds[k] + 0.5f);
+                if (b < 0 || b >= n) continue;
+                const float* M = sm[b].data();
+                y += w * (M[4] * v.pos[0] + M[5] * v.pos[1] + M[6] * v.pos[2] + M[7]);
+                wsum += w;
+            }
+            if (wsum > 0.0f) { y /= wsum; if (y < mn) mn = y; }
+        }
+    }
+    return (mn < 1e29f) ? -mn : 0.0f;
+}
+
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);
@@ -1716,6 +1786,7 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
         }
     }
     anim->skinMatrices(*lm->cmb, frame, sm, drot, dcount);
+    cacheSkinForGround(modelId, sm); // posed-feet grounding for the player path (#29b)
     // Upload the constant bind matrices (cached, no-op after the first call) so the GL layer can
     // recover the animated bone-world transform (skin*bind) and interpolate the pose RIGIDLY between
     // logic frames — interpolating the skin matrices directly shatters large per-frame rotations.

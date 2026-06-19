@@ -101,6 +101,8 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum);
 int SoH3D_AutoModelId(const char* zarPath);
 float SoH3D_AutoModelHeight(int modelId);
 float SoH3D_AutoModelMinY(int modelId);
+void SoH3D_SetTrackPosedMinY(int modelId, int enable); // per-frame posed-feet grounding (#29b player float)
+float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model-local Y to ground the feet
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
 const char* SoH3D_AutoModelZar(int modelId); // ZAR path the model was allocated from (stable id)
@@ -2456,18 +2458,13 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     }
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
-    // Build our own world matrix (do NOT inherit the actor matrix — it carries the N64 0.01
-    // actor scale through which the OoT3D dlist renders nothing; same gotcha as the props).
-    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
-    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
-    Matrix_Scale(gSoH3dLinkScale, gSoH3dLinkScale, gSoH3dLinkScale, MTXMODE_APPLY);
-    if (gSoH3dLinkRotX != 0.0f) Matrix_RotateX(gSoH3dLinkRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dLinkRotY != 0.0f) Matrix_RotateY(gSoH3dLinkRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
-    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_SceneTint(play, tint);
     // Player is Actor-first so the cast is valid (see z64player.h).
     player = (Player*)actor;
+    // Measure the posed feet this frame so we can ground them: the OoT3D Link CSABs lift the
+    // skeleton off the floor (boy-rig hip translation; #29b). The world matrix is built AFTER the
+    // pose + visible-mesh mask are known (below), so the ground offset can use the live pose.
+    SoH3D_SetTrackPosedMinY(modelId, 1);
     // linkjointdump capture: append this frame's live jointTable + phase, for offline retarget fitting.
     if (gLinkJointDumpFile != NULL && gLinkJointDumpRemaining > 0 &&
         player->skelAnime.jointTable != NULL && player->skelAnime.limbCount > 0) {
@@ -2533,19 +2530,37 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     }
     // Select Link's live equipment / hand-pose variant subset (the childlink_v2 mesh bakes them
     // all on distinct mesh_ids). Must be set BEFORE EmitPose so it pairs with this draw item.
-    {
-        unsigned long long midMask = SoH3D_LinkComputeMidMask(player);
-        if (gSoH3dAnimDebug) {
-            static int dbg = 0;
-            if ((dbg++ % 30) == 0) {
-                printf("SOH3D LINK mids: LH=%d RH=%d sheath=%d shield=%d -> mask=0x%llx\n",
-                       player->leftHandType, player->rightHandType, player->sheathType,
-                       player->currentShield, midMask);
-                fflush(stdout);
-            }
+    unsigned long long midMask = SoH3D_LinkComputeMidMask(player);
+    if (gSoH3dAnimDebug) {
+        static int dbg = 0;
+        if ((dbg++ % 30) == 0) {
+            printf("SOH3D LINK mids: LH=%d RH=%d sheath=%d shield=%d -> mask=0x%llx\n",
+                   player->leftHandType, player->rightHandType, player->sheathType,
+                   player->currentShield, midMask);
+            fflush(stdout);
         }
-        SoH3D_GL_SetMidMask(modelId, midMask);
     }
+    SoH3D_GL_SetMidMask(modelId, midMask);
+    // Build the world matrix now that the pose + visible-mesh mask are known. Do NOT inherit the
+    // actor matrix (it carries the N64 0.01 actor scale through which the OoT3D dlist renders
+    // nothing). groundOff (model-local, applied innermost/pre-scale like the auto path's
+    // groundOffset) lands the posed feet on the actor's world pos.y — fixes the #29b float.
+    float groundOff = SoH3D_PosedGroundOffset(modelId, midMask);
+    if (gSoH3dAnimDebug) {
+        static int dbg = 0;
+        if ((dbg++ % 30) == 0) {
+            printf("SOH3D LINK groundOff=%.1f (model-local)\n", groundOff);
+            fflush(stdout);
+        }
+    }
+    Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_Scale(gSoH3dLinkScale, gSoH3dLinkScale, gSoH3dLinkScale, MTXMODE_APPLY);
+    if (gSoH3dLinkRotX != 0.0f) Matrix_RotateX(gSoH3dLinkRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dLinkRotY != 0.0f) Matrix_RotateY(gSoH3dLinkRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
+    if (groundOff != 0.0f) Matrix_Translate(0.0f, groundOff, 0.0f, MTXMODE_APPLY);
+    gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);

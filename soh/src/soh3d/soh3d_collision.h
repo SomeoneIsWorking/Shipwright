@@ -33,6 +33,14 @@ typedef struct {
 int SoH3D_LoadSceneCollisionRaw(const char* sceneName, SoH3D_RawCollision* out);
 void SoH3D_FreeRawCollision(SoH3D_RawCollision* out);
 
+// #5 — collision-side stepped stairs. Mirrors the render-side kaidan->treads transform so Link
+// stands on the visible steps. Fills malloc'd world-space tread quads (treads only; the smooth
+// OoT3D ramp underneath fills the gaps). 3 floats per vert, 3 vert-indices per tri. Returns 1 on
+// success (0 verts/tris when no kaidan stairs or stairs disabled). Free with SoH3D_FreeStairTreads.
+int SoH3D_CollectSceneStairTreads(const char* sceneName, float** outVerts, int* outNVerts,
+                                  int** outTris, int* outNTris);
+void SoH3D_FreeStairTreads(float* verts, int* tris);
+
 #ifdef __cplusplus
 }
 #endif

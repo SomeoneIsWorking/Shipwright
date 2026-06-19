@@ -353,6 +353,47 @@ static int SoH3D_N64FloorData0(CollisionHeader* n64, float x, float y, float z, 
     return 1;
 }
 
+// #5 — find the freshly-built OoT3D base floor poly under world (x,z) with plane Y closest to y
+// (mirrors SoH3D_N64FloorData0 but over the in-build vtx/poly arrays). Returns the poly index
+// (== its own SurfaceType slot, since each poly indexes type=i) or -1. Used to give a generated
+// stair tread the SAME surface type (floor material + already-N64-sourced exit/cam) as the kaidan
+// ramp it sits on.
+static int SoH3D_BaseFloorPoly(Vec3s* vtx, CollisionPoly* poly, int numPolys,
+                               float x, float y, float z) {
+    int i, best = -1;
+    float bestDy = 1e9f;
+    for (i = 0; i < numPolys; i++) {
+        CollisionPoly* p = &poly[i];
+        float ny = COLPOLY_GET_NORMAL(p->normal.y);
+        Vec3s *a, *b, *c;
+        float ax, az, bx, bz, cx, cz, d1, d2, d3, planeY, dy;
+        if (ny < 0.5f) {
+            continue; // floors only
+        }
+        a = &vtx[p->flags_vIA & 0x1FFF];
+        b = &vtx[p->flags_vIB & 0x1FFF];
+        c = &vtx[p->vIC & 0x1FFF];
+        ax = a->x; az = a->z; bx = b->x; bz = b->z; cx = c->x; cz = c->z;
+        d1 = (x - bx) * (az - bz) - (ax - bx) * (z - bz);
+        d2 = (x - cx) * (bz - cz) - (bx - cx) * (z - cz);
+        d3 = (x - ax) * (cz - az) - (cx - ax) * (z - az);
+        if (((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0))) {
+            continue;
+        }
+        planeY = -(COLPOLY_GET_NORMAL(p->normal.x) * x + COLPOLY_GET_NORMAL(p->normal.z) * z +
+                   (float)p->dist) / ny;
+        dy = planeY - y;
+        if (dy < 0.0f) {
+            dy = -dy;
+        }
+        if (dy < bestDy) {
+            bestDy = dy;
+            best = i;
+        }
+    }
+    return best;
+}
+
 CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64) {
     static CollisionHeader* sHeader = NULL;
     static SurfaceType* sSurfaceTypes = NULL;
@@ -379,6 +420,24 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         return NULL;
     }
 
+    // #5 — stepped stairs: collect the kaidan tread quads (world-space) for this scene, to splice
+    // in as stepped floor polys so Link grounds on the visible steps (not the smooth ramp). Each
+    // quad is 2 tris. CollisionPoly stores 13-bit vertex indices, so the combined vertex count
+    // must stay < 8192 (and the poly/u16 count < 65535); if a scene would overflow, drop the
+    // stair collision (render steps still show — only the per-step grounding is skipped there).
+    float* stairV = NULL;  // 3 floats per vert
+    int stairNV = 0;
+    int* stairT = NULL;    // 3 vtx-indices per tri
+    int stairNT = 0;
+    SoH3D_CollectSceneStairTreads(sceneName, &stairV, &stairNV, &stairT, &stairNT);
+    if (stairNT > 0 && (raw.numVerts + stairNV >= 8000 || raw.numPolys + stairNT >= 60000)) {
+        printf("[SoH3D] stairs: %d verts + %d tread verts / %d polys + %d tread tris exceeds the "
+               "collision index budget — skipping stepped stair collision for %s\n",
+               raw.numVerts, stairNV, raw.numPolys, stairNT, sceneName);
+        SoH3D_FreeStairTreads(stairV, stairT);
+        stairV = NULL; stairT = NULL; stairNV = 0; stairNT = 0;
+    }
+
     // Free the previous scene's build (its arrays were referenced by the old colCtx, which is
     // being replaced now).
     if (sHeader != NULL) {
@@ -393,15 +452,19 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
     sWaterBoxes = NULL;
 
     // One SurfaceType PER POLY (not the compact OoT3D list): each floor poly's exit+cam bits get
-    // re-sourced from the N64 collision below, so they must be addressable individually.
-    nSurf = (raw.numPolys > 0) ? raw.numPolys : 1;
+    // re-sourced from the N64 collision below, so they must be addressable individually. The
+    // generated stair treads (stairNT tris over stairNV verts) extend all three arrays.
+    int totalVerts = raw.numVerts + stairNV;
+    int totalPolys = raw.numPolys + stairNT;
+    nSurf = (totalPolys > 0) ? totalPolys : 1;
     h = (CollisionHeader*)calloc(1, sizeof(CollisionHeader));
-    vtx = (Vec3s*)malloc(sizeof(Vec3s) * raw.numVerts);
-    poly = (CollisionPoly*)calloc(raw.numPolys, sizeof(CollisionPoly));
+    vtx = (Vec3s*)malloc(sizeof(Vec3s) * totalVerts);
+    poly = (CollisionPoly*)calloc(totalPolys, sizeof(CollisionPoly));
     sSurfaceTypes = (SurfaceType*)calloc(nSurf, sizeof(SurfaceType));
     if (h == NULL || vtx == NULL || poly == NULL || sSurfaceTypes == NULL) {
         free(h); free(vtx); free(poly); free(sSurfaceTypes);
         sHeader = NULL; sSurfaceTypes = NULL;
+        SoH3D_FreeStairTreads(stairV, stairT);
         SoH3D_FreeRawCollision(&raw);
         return NULL;
     }
@@ -483,11 +546,70 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         sSurfaceTypes[i].data[1] = d1;
     }
 
+    // #5 — append the generated stair treads as horizontal floor polys. They sit on/above the
+    // OoT3D ramp (left intact below), so BgCheck returns the tread as Link's floor and he stands
+    // on the visible steps. Each tread inherits the surface type (floor material + N64-sourced
+    // exit/cam) of the kaidan ramp poly directly beneath it.
+    for (i = 0; i < stairNV; i++) {
+        s16 x = (s16)lrintf(stairV[i * 3 + 0]);
+        s16 y = (s16)lrintf(stairV[i * 3 + 1]);
+        s16 z = (s16)lrintf(stairV[i * 3 + 2]);
+        vtx[raw.numVerts + i].x = x;
+        vtx[raw.numVerts + i].y = y;
+        vtx[raw.numVerts + i].z = z;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    for (i = 0; i < stairNT; i++) {
+        int pi = raw.numPolys + i;
+        int ia = raw.numVerts + stairT[i * 3 + 0];
+        int ib = raw.numVerts + stairT[i * 3 + 1];
+        int ic = raw.numVerts + stairT[i * 3 + 2];
+        Vec3s* va = &vtx[ia];
+        Vec3s* vb = &vtx[ib];
+        Vec3s* vc = &vtx[ic];
+        float cx = (va->x + vb->x + vc->x) / 3.0f;
+        float cy = (va->y + vb->y + vc->y) / 3.0f;
+        float cz = (va->z + vb->z + vc->z) / 3.0f;
+        u32 n0;
+        poly[pi].type = pi;
+        poly[pi].flags_vIA = ia & 0x1FFF;
+        poly[pi].flags_vIB = ib & 0x1FFF;
+        poly[pi].vIC = ic & 0x1FFF;
+        poly[pi].normal.x = 0;
+        poly[pi].normal.y = COLPOLY_SNORMAL(1.0f); // horizontal tread, +Y up
+        poly[pi].normal.z = 0;
+        poly[pi].dist = (s16)lrintf(-cy); // plane n.p + dist == 0, n=(0,1,0) -> dist = -y
+        // Surface type: take the kaidan ramp's FLOOR material (data1 + the non-exit bits of data0),
+        // but re-source cam+exit (low 13 bits) from the N64 floor at the tread centroid — EXACTLY
+        // as the main floor loop does. Copying the ramp's data0 wholesale is unsafe: the nearest
+        // base poly under a tread can be an adjacent EXIT triangle (the entrance staircase abuts the
+        // Hyrule Field transition), which would warp Link the instant he stepped on that tread.
+        {
+            int b = SoH3D_BaseFloorPoly(vtx, poly, raw.numPolys, cx, cy, cz);
+            u32 d0 = (b >= 0) ? sSurfaceTypes[b].data[0] : 0;
+            u32 d1 = (b >= 0) ? sSurfaceTypes[b].data[1] : 0;
+            if (SoH3D_N64FloorData0(n64, cx, cy, cz, &n0)) {
+                d0 = (d0 & ~0x1FFFu) | (n0 & 0x1FFFu);
+            } else {
+                d0 = d0 & ~0x1F00u; // no N64 floor here -> no exit
+            }
+            sSurfaceTypes[pi].data[0] = d0;
+            sSurfaceTypes[pi].data[1] = d1;
+        }
+    }
+    if (stairNT > 0) {
+        printf("[SoH3D] stairs: spliced %d stepped tread polys (%d verts) into %s collision\n",
+               stairNT, stairNV, sceneName);
+    }
+    SoH3D_FreeStairTreads(stairV, stairT);
+
     h->minBounds.x = minX; h->minBounds.y = minY; h->minBounds.z = minZ;
     h->maxBounds.x = maxX; h->maxBounds.y = maxY; h->maxBounds.z = maxZ;
-    h->numVertices = (u16)raw.numVerts;
+    h->numVertices = (u16)(raw.numVerts + stairNV);
     h->vtxList = vtx;
-    h->numPolygons = (u16)raw.numPolys;
+    h->numPolygons = (u16)(raw.numPolys + stairNT);
     h->polyList = poly;
     h->surfaceTypeList = sSurfaceTypes;
     h->cameraDataList = sCamData;

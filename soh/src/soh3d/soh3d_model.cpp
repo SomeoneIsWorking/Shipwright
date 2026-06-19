@@ -20,6 +20,7 @@
 #include "stairs_stone_png.h" // embedded PNG of assets/soh3d/stairs_stone.svg (custom stair texture)
 #include "xbox_glyphs_png.h"  // embedded PNGs of assets/soh3d/xbox_{a,b,x,y}.svg (HUD button glyphs, #32)
 #include "heart_tex_png.h"    // embedded PNGs of the crisp HUD heart textures (#31, gen_hud_tex.sh)
+#include "digit_tex_png.h"    // embedded PNGs of the crisp HUD counter font (#31, gen_digit_tex.sh)
 
 #include <algorithm>
 #include <array>
@@ -1298,6 +1299,40 @@ const void* SoH3D_HeartTex(int kind, int* w, int* h) {
     if (w) *w = t[kind].w;
     if (h) *h = t[kind].hh;
     return t[kind].rgba.data();
+}
+
+// #31 — crisp HUD counter font (0..9 = digit, 10 = ':'). Decode the embedded PNGs once into
+// persistent RGBA32 (grayscale, a=coverage). Returns the buffer + dims, or NULL on failure.
+const void* SoH3D_DigitTex(int glyph, int* w, int* h) {
+    struct Tex { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
+    static Tex t[11];
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        const unsigned char* png[11] = { kDigit0Png, kDigit1Png, kDigit2Png, kDigit3Png, kDigit4Png,
+                                         kDigit5Png, kDigit6Png, kDigit7Png, kDigit8Png, kDigit9Png,
+                                         kDigitColonPng };
+        unsigned int len[11] = { kDigit0PngLen, kDigit1PngLen, kDigit2PngLen, kDigit3PngLen, kDigit4PngLen,
+                                 kDigit5PngLen, kDigit6PngLen, kDigit7PngLen, kDigit8PngLen, kDigit9PngLen,
+                                 kDigitColonPngLen };
+        for (int i = 0; i < 11; i++) {
+            int sw = 0, sh = 0, n = 0;
+            stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
+            if (px) {
+                t[i].rgba.assign(px, px + (size_t)sw * sh * 4);
+                t[i].w = sw; t[i].hh = sh;
+                stbi_image_free(px);
+            } else {
+                fprintf(stderr, "[SoH3D] digit tex %d: PNG decode failed\n", i);
+            }
+        }
+    }
+    if (glyph < 0 || glyph >= 11 || t[glyph].rgba.empty()) {
+        if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    if (w) *w = t[glyph].w;
+    if (h) *h = t[glyph].hh;
+    return t[glyph].rgba.data();
 }
 
 // Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR

@@ -137,6 +137,11 @@ const void* SoH3D_HeartTex(int kind, int* w, int* h);
 extern int gSoH3dHudTex;       // env SOH3D_HUDTEX / REPL `hudtex` gate (-1=uninit, 0/1)
 int SoH3D_HudTexEnabled(void); // lazily resolves the env on first call; HUD draws gate on this
 
+// #31 — crisp HUD counter font. `glyph` 0..9 = the digit, 10 = ':'. Returns a persistent RGBA32
+// (grayscale, a=coverage) glyph + dims, or NULL. The counter combine is colour=PRIM, alpha=TEXEL0,
+// so the grayscale glyph reproduces the N64 8x16 I8 digit at higher resolution (see Gfx_TextureI8).
+const void* SoH3D_DigitTex(int glyph, int* w, int* h);
+
 // #2 — press-to-skip: on a Start/Space press, force-end any active onepoint cutscene camera
 // (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
 // before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.

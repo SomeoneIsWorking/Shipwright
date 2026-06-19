@@ -1387,8 +1387,46 @@ Gfx* Gfx_TextureIA8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 t
     return displayListHead;
 }
 
+// #31 — map an N64 counter-digit texture symbol to a glyph index (0..9 digit, 10 ':'), or -1 if
+// it isn't one of the counter digits. Used to intercept Gfx_TextureI8 (every counter — rupee/key/
+// ammo/timer/score — draws its digits through it) and substitute the crisp higher-res font.
+static int SoH3D_DigitIndex(void* tex) {
+    static void* const kDigitSyms[11] = {
+        (void*)gCounterDigit0Tex, (void*)gCounterDigit1Tex, (void*)gCounterDigit2Tex, (void*)gCounterDigit3Tex,
+        (void*)gCounterDigit4Tex, (void*)gCounterDigit5Tex, (void*)gCounterDigit6Tex, (void*)gCounterDigit7Tex,
+        (void*)gCounterDigit8Tex, (void*)gCounterDigit9Tex, (void*)gCounterColonTex,
+    };
+    for (int i = 0; i < 11; i++) {
+        if (tex == kDigitSyms[i]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 Gfx* Gfx_TextureI8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 textureHeight, s16 rectLeft, s16 rectTop,
                    s16 rectWidth, s16 rectHeight, u16 dsdx, u16 dtdy) {
+    // #31 — substitute the crisp higher-res counter font for the blocky N64 8x16 I8 digit. The
+    // caller's combine is colour=PRIMITIVE, alpha=TEXEL0, so a grayscale RGBA32 glyph (a=coverage)
+    // reproduces the digit exactly; rescale dsdx/dtdy so the full glyph maps onto the same rect.
+    if (SoH3D_HudTexEnabled()) {
+        int glyph = SoH3D_DigitIndex(texture);
+        if (glyph >= 0) {
+            int gw = 0, gh = 0;
+            const void* gt = SoH3D_DigitTex(glyph, &gw, &gh);
+            if (gt != NULL && gw > 0 && gh > 0 && rectWidth > 0 && rectHeight > 0) {
+                gDPLoadTextureBlock(displayListHead++, gt, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0,
+                                    G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                    G_TX_NOLOD, G_TX_NOLOD);
+                u16 gdsdx = (u16)(((u32)gw << 10) / (u32)rectWidth);
+                u16 gdtdy = (u16)(((u32)gh << 10) / (u32)rectHeight);
+                gSPWideTextureRectangle(displayListHead++, rectLeft << 2, rectTop << 2, (rectLeft + rectWidth) << 2,
+                                        (rectTop + rectHeight) << 2, G_TX_RENDERTILE, 0, 0, gdsdx, gdtdy);
+                return displayListHead;
+            }
+        }
+    }
+
     gDPLoadTextureBlock(displayListHead++, texture, G_IM_FMT_I, G_IM_SIZ_8b, textureWidth, textureHeight, 0,
                         G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
                         G_TX_NOLOD);

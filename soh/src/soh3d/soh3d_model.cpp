@@ -1538,6 +1538,26 @@ extern "C" {
 // at `frame`. animName==NULL/"" resets to the bind pose. Loads the model + caches the
 // parsed CSAB on first use; recomputes skin matrices each call (cheap: <=32 bones).
 // Call once per game frame before the SoH3D draw. Safe to call repeatedly.
+// Per-model procedural per-bone local-rotation deltas (radians, 3 per bone id), set by the auto
+// retarget path from an N64 OverrideLimbDraw probe (e.g. the cucco wing-flap) and consumed by the
+// next SoH3D_UpdateAnim for that model. Empty = no delta (the common case; static-pose unchanged).
+static std::unordered_map<int, std::vector<float>>& boneRotDeltas() {
+    static std::unordered_map<int, std::vector<float>> m;
+    return m;
+}
+extern "C" void SoH3D_ClearBoneRotDeltas(int modelId) { boneRotDeltas().erase(modelId); }
+extern "C" void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float ry, float rz) {
+    if (boneId < 0) return;
+    LoadedModel* lm = loadModel(modelId);
+    int n = (lm && lm->ok && lm->cmb) ? (int)lm->cmb->boneMatrices().size() : 0;
+    if (boneId >= n) return;
+    auto& v = boneRotDeltas()[modelId];
+    if ((int)v.size() != n * 3) v.assign(n * 3, 0.0f);
+    v[boneId * 3 + 0] = rx;
+    v[boneId * 3 + 1] = ry;
+    v[boneId * 3 + 2] = rz;
+}
+
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);
@@ -1547,7 +1567,15 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!anim) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
 
     std::vector<std::array<float, 16>> sm;
-    anim->skinMatrices(*lm->cmb, frame, sm);
+    const float* drot = nullptr; int dcount = 0;
+    {
+        auto it = boneRotDeltas().find(modelId);
+        if (it != boneRotDeltas().end() && !it->second.empty()) {
+            drot = it->second.data();
+            dcount = (int)it->second.size() / 3;
+        }
+    }
+    anim->skinMatrices(*lm->cmb, frame, sm, drot, dcount);
     // Upload the constant bind matrices (cached, no-op after the first call) so the GL layer can
     // recover the animated bone-world transform (skin*bind) and interpolate the pose RIGIDLY between
     // logic frames — interpolating the skin matrices directly shatters large per-frame rotations.

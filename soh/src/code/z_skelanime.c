@@ -303,7 +303,9 @@ void SkelAnime_DrawLimbOpa(PlayState* play, s32 limbIndex, void** skeleton, Vec3
 void SkelAnime_DrawSkeletonOpa(PlayState* play, SkelAnime* skelAnime, OverrideLimbDrawOpa overrideLimbDraw,
                                PostLimbDrawOpa postLimbDraw, void* arg) {
     // SoH3D: if this actor is registered for N64-anim replacement, draw the OoT3D model
-    // driven by these live N64 joints and skip the N64 limb draw.
+    // driven by these live N64 joints and skip the N64 limb draw. Pass the override callback so the
+    // auto path can replay any procedural per-limb rotation it adds (e.g. cucco wing-flap, #23).
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 0);
     if (SoH3D_SkelAnimeDraw(play, skelAnime)) {
         return;
     }
@@ -322,6 +324,7 @@ Gfx* SkelAnime_DrawSkeleton2(PlayState* play, SkelAnime* skelAnime, OverrideLimb
     // OoT3D model was drawn for this actor. Return the ADVANCED polyOpa.p (not the stale gfx) when
     // this is an OPA draw, so the caller doesn't rewind over the emit. (See SkelAnime_Draw.)
     Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 0); // #23 procedural-override replay
     if (SoH3D_SkelAnimeDraw(play, skelAnime)) {
         return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }
@@ -349,6 +352,7 @@ void SkelAnime_DrawOpa(PlayState* play, void** skeleton, Vec3s* jointTable, Over
     Vec3s rot;
 
     // SoH3D: retarget at this choke point too (actors that call DrawOpa directly).
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 0); // #23 procedural-override replay
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
         return;
     }
@@ -469,6 +473,7 @@ void SkelAnime_DrawFlexOpa(PlayState* play, void** skeleton, Vec3s* jointTable, 
 
     // SoH3D: many actors call this directly (no SkelAnime* at the DrawSkeletonOpa choke point);
     // retarget here too so they get OoT3D replacement. No-op when nothing is pending.
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 0); // #23 procedural-override replay
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
         return;
     }
@@ -641,6 +646,7 @@ Gfx* SkelAnime_Draw(PlayState* play, void** skeleton, Vec3s* jointTable, Overrid
     // commands — that rewind is what made hook-replaced actors render invisible. For an XLU /
     // other-buffer caller the opa emit is independent of gfx, so return gfx unchanged.
     Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 1); // #23 (7-arg OverrideLimbDraw)
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
         return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }
@@ -760,6 +766,7 @@ Gfx* SkelAnime_DrawFlex(PlayState* play, void** skeleton, Vec3s* jointTable, s32
     // doesn't rewind over (clobber) it — the invisible-replacement bug. XLU caller: opa emit is
     // independent of gfx, return gfx unchanged. (See SkelAnime_Draw for the full rationale.)
     Gfx* soh3dOpaEntry = play->state.gfxCtx->polyOpa.p;
+    SoH3D_SetLimbOverride((void*)overrideLimbDraw, arg, 1); // #23 (7-arg OverrideLimbDraw)
     if (SoH3D_SkelAnimeDrawRaw(play, skeleton, jointTable)) {
         return (gfx == soh3dOpaEntry) ? play->state.gfxCtx->polyOpa.p : gfx;
     }

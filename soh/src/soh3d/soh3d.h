@@ -35,6 +35,14 @@ void SoH3D_AfterActorDraw(PlayState* play, Actor* actor);
 // This is what makes N64-anim replacement generic: no per-actor jointTable accessor needed.
 int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime);
 
+// Record the limb-draw override callback (+arg) the actor passed to its SkelAnime_Draw* call, so
+// the N64-anim auto-replace path can replay a PROCEDURAL per-limb rotation the override adds (e.g.
+// the cucco wing-flap, which lives in EnNiw_OverrideLimbDraw, not in any animation) onto the
+// matching OoT3D bones. `kind`: 0 = OverrideLimbDrawOpa (6 args), 1 = OverrideLimbDraw (7 args).
+// Call right before SoH3D_SkelAnimeDraw / ...Raw at each choke point that has an override on hand;
+// NULL override clears it. Consumed once per retarget. #23.
+void SoH3D_SetLimbOverride(void* overrideFn, void* arg, int kind);
+
 // Raw variant of the N64-anim hook for draw choke points that don't have a SkelAnime* on hand
 // (SkelAnime_DrawFlexOpa / SkelAnime_DrawOpa, called directly by many actors). Same effect as
 // SoH3D_SkelAnimeDraw; derives limbCount from the skeleton tree. Returns 1 if it drew the OoT3D

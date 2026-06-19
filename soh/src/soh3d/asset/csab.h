@@ -27,10 +27,16 @@ class Csab {
 
     // Per-bone-id skinning matrix at `frame` = animWorld(bone) . inverse(bindWorld).
     // out is sized to match model.boneMatrices(); identity for any bone without anim.
-    void skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out) const;
+    // boneRotDelta (optional): 3 radians per bone id (rX,rY,rZ) ADDED to that bone's animated
+    // LOCAL rotation before world-composing — used to replay a procedural per-limb rotation the
+    // N64 actor applies in an OverrideLimbDraw (e.g. the cucco wing-flap) onto the OoT3D bones.
+    // nullptr / deltaCount 0 = no delta (the static-pose property is preserved).
+    void skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
+                      const float* boneRotDelta = nullptr, int deltaCount = 0) const;
 
     // Per-bone-id animated world matrix at `frame` (rest TRS overridden by tracks).
-    void animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out) const;
+    void animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
+                           const float* boneRotDelta = nullptr, int deltaCount = 0) const;
 
   private:
     enum { CONSTANT = 0, LINEAR = 1, HERMITE = 2 };

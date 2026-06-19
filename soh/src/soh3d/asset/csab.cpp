@@ -151,7 +151,8 @@ float Csab::sampleTrack(const Track& t, float frame, bool rotation) {
     return pointCubic(cf, tt);
 }
 
-void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out) const {
+void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
+                             const float* boneRotDelta, int deltaCount) const {
     const auto& bones = model.bones();
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
@@ -181,6 +182,13 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
             if (node->tracks[1].present) t[1] = sampleTrack(node->tracks[1], fr, false);
             if (node->tracks[2].present) t[2] = sampleTrack(node->tracks[2], fr, false);
         }
+        // Procedural OverrideLimbDraw delta: add the extra LOCAL rotation (radians) for this bone
+        // on top of the animated pose, in the SAME T·Rz·Ry·Rx·S frame the tracks use.
+        if (boneRotDelta && id >= 0 && id < deltaCount) {
+            r[0] += boneRotDelta[id * 3 + 0];
+            r[1] += boneRotDelta[id * 3 + 1];
+            r[2] += boneRotDelta[id * 3 + 2];
+        }
         Mat4 L = matMul(matT(t[0], t[1], t[2]),
                         matMul(matMul(matRz(r[2]), matRy(r[1])), matRx(r[0])));
         L = matMul(L, matS(s[0], s[1], s[2]));
@@ -192,9 +200,10 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
     for (const auto& bn : bones) world(bn.id);
 }
 
-void Csab::skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out) const {
+void Csab::skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
+                        const float* boneRotDelta, int deltaCount) const {
     std::vector<std::array<float, 16>> aw;
-    animatedBoneWorld(model, frame, aw);
+    animatedBoneWorld(model, frame, aw, boneRotDelta, deltaCount);
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
     for (size_t id = 0; id < bind.size(); id++)

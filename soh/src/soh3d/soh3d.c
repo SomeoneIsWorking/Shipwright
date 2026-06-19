@@ -109,6 +109,11 @@ const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
                           float n64AnimLength); // play OoT3D's own CSAB, phase-locked to the N64 anim
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
+// Per-OoT3D-bone local-rotation delta (radians) added on top of the CSAB pose; used to replay a
+// PROCEDURAL per-limb rotation the N64 actor applies in an OverrideLimbDraw (the cucco wing-flap,
+// z_en_niw.c, lives here — not in any anim). Cleared then re-set each auto draw. (soh3d_model.cpp)
+void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float ry, float rz);
+void SoH3D_ClearBoneRotDeltas(int modelId);
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
 static const char* SoH3D_SceneName(PlayState* play);
@@ -197,6 +202,111 @@ static const char* gSoH3dPendingAnimOtr = NULL;
 // choke point has no playhead -> animLength stays 0 -> free-run.
 static float gSoH3dPendingN64CurFrame = 0.0f;
 static float gSoH3dPendingN64AnimLength = 0.0f;
+
+// --- Procedural OverrideLimbDraw replay (#23 cucco wing-flap) -------------------------------------
+// Some N64 actors animate a few limbs PROCEDURALLY in their SkelAnime overrideLimbDraw callback
+// (rot->axis += value) rather than in any animation — the cucco wing-flap (EnNiw_OverrideLimbDraw,
+// limbs 7 & 11, local Z) is the canonical case. The OoT3D auto-replace path plays the actor's CSAB
+// but drops that callback, so the flap is missing. We capture the override callback the actor
+// passed to SkelAnime_Draw*, PROBE it per limb to recover the additive rotation delta, map the N64
+// limb -> OoT3D bone, and feed the delta to the OoT3D bone's local rotation (SoH3D_SetBoneRotDelta).
+// The 6-arg Opa and 7-arg Draw override types share their first 6 args' ABI; `kind` distinguishes
+// them so the probe passes the right argument count. Generalises to any procedural-override actor.
+static void* gSoH3dPendingOverride = NULL;
+static void* gSoH3dPendingOverrideArg = NULL;
+static int gSoH3dPendingOverrideKind = 0; // 0 = OverrideLimbDrawOpa (6 args), 1 = OverrideLimbDraw (7)
+
+void SoH3D_SetLimbOverride(void* overrideFn, void* arg, int kind) {
+    gSoH3dPendingOverride = overrideFn;
+    gSoH3dPendingOverrideArg = arg;
+    gSoH3dPendingOverrideKind = kind;
+}
+
+typedef s32 (*SoH3dOverrideOpaFn)(PlayState*, s32, Gfx**, Vec3f*, Vec3s*, void*);
+typedef s32 (*SoH3dOverride7Fn)(PlayState*, s32, Gfx**, Vec3f*, Vec3s*, void*, Gfx**);
+
+// One row per (N64 limb -> OoT3D bone) procedural-rotation correspondence, keyed by actor ZAR.
+// sign[axis] (0 = ignore that axis) multiplies the N64 binang delta on that axis before it is
+// added to the SAME-named OoT3D bone-local axis. For the cucco both rigs flap on local Z (verified:
+// chicken.cmb wing bones 3 & 5 rest rZ ~ -159deg, nw_wait swings rZ; N64 limbs 7/11 add to local z),
+// so only Z is mapped. Derived from chicken.cmb bone dump + nw_wait.csab track analysis + z_en_niw.c.
+typedef struct {
+    const char* zar;
+    s8 n64Limb;
+    s8 oot3dBone;
+    f32 sign[3]; // x,y,z multiplier on the N64 binang delta (0 = drop that axis)
+} SoH3dProcOverrideRow;
+static const SoH3dProcOverrideRow kSoH3dProcOverride[] = {
+    // cucco (En_Niw): wing-tip limbs 7 (+z) & 11 (-z) -> wing bones 3 & 5, local-Z flap only.
+    { "/actor/zelda_nw.zar", 7, 3, { 0.0f, 0.0f, 1.0f } },
+    { "/actor/zelda_nw.zar", 11, 5, { 0.0f, 0.0f, 1.0f } },
+};
+
+// Verification gate (env SOH3D_PROCOVERRIDE, default ON; REPL `wingflap <0|1>`): when 0 the
+// procedural-override replay is skipped (the OoT3D actor plays only its CSAB) so the flap can be
+// A/B'd in the same scene. gSoH3dWingForce >= 0 forces a fixed binang on the mapped Z axis (REPL
+// `wingflap force <binang>`) to confirm the flap DIRECTION/amplitude visually.
+int gSoH3dProcOverride = -1;
+int gSoH3dWingForce = -1;
+
+// Probe the captured override callback for each mapped limb of the current auto actor and push the
+// resulting per-bone local-rotation delta (binang -> radians) onto the OoT3D model. No-op when no
+// override was captured or this ZAR has no procedural-override rows.
+static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTable, int limbCount) {
+    SoH3D_ClearBoneRotDeltas(modelId); // stale-delta guard (model may be drawn via a path w/o probe)
+    if (gSoH3dProcOverride < 0) {
+        const char* v = getenv("SOH3D_PROCOVERRIDE");
+        gSoH3dProcOverride = (v != NULL && v[0] == '0') ? 0 : 1;
+    }
+    if (!gSoH3dProcOverride || gSoH3dPendingOverride == NULL || jointTable == NULL) {
+        return;
+    }
+    const char* zar = SoH3D_AutoModelZar(modelId);
+    if (zar == NULL) {
+        return;
+    }
+    const float kBinangToRad = 3.14159265358979f / 32768.0f;
+    for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dProcOverride); i++) {
+        const SoH3dProcOverrideRow* row = &kSoH3dProcOverride[i];
+        if (strcmp(row->zar, zar) != 0) {
+            continue;
+        }
+        if (row->n64Limb < 0 || row->n64Limb >= limbCount) {
+            continue;
+        }
+        // BACKLOG-specified delta = (override-applied rot) - jointTable rot. jointTable[0] is the
+        // root translation, so limb i's rotation is jointTable[i+1] (matches the N64 draw walk).
+        Vec3s rot = jointTable[row->n64Limb + 1];
+        Vec3s before = rot;
+        Gfx* dummyDl = NULL;
+        Gfx* dummyGfx = NULL;
+        Vec3f pos = { 0.0f, 0.0f, 0.0f };
+        if (gSoH3dPendingOverrideKind == 0) {
+            ((SoH3dOverrideOpaFn)gSoH3dPendingOverride)(play, row->n64Limb, &dummyDl, &pos, &rot,
+                                                        gSoH3dPendingOverrideArg);
+        } else {
+            ((SoH3dOverride7Fn)gSoH3dPendingOverride)(play, row->n64Limb, &dummyDl, &pos, &rot,
+                                                      gSoH3dPendingOverrideArg, &dummyGfx);
+        }
+        s16 ddx = (s16)(rot.x - before.x), ddy = (s16)(rot.y - before.y), ddz = (s16)(rot.z - before.z);
+        if (gSoH3dWingForce >= 0) {
+            ddx = ddy = 0;
+            ddz = (s16)gSoH3dWingForce; // direction/amplitude probe (applied on the mapped Z axis)
+        }
+        f32 dx = (f32)ddx * kBinangToRad * row->sign[0];
+        f32 dy = (f32)ddy * kBinangToRad * row->sign[1];
+        f32 dz = (f32)ddz * kBinangToRad * row->sign[2];
+        if (gSoH3dAnimDebug) {
+            static int dbg = 0;
+            if ((dbg++ % 20) == 0) {
+                fprintf(stderr, "[WINGFLAP] zar=%s n64limb=%d->bone=%d live binang=(%d,%d,%d) -> rad z=%.3f\n",
+                        zar, row->n64Limb, row->oot3dBone, ddx, ddy, ddz, dz);
+                fflush(stderr);
+            }
+        }
+        SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, dx, dy, dz);
+    }
+}
 
 void SoH3D_SetCurAnim(void* animation) {
     if (gSoH3dAnimDebug) {
@@ -1362,6 +1472,10 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
                 fflush(stdout);
             }
         }
+        // Replay any procedural OverrideLimbDraw rotation (cucco wing-flap) onto the OoT3D bones
+        // BEFORE the CSAB is sampled (SoH3D_UpdateAnim reads the deltas this sets). #23.
+        SoH3D_ApplyProcOverride(play, gSoH3dPendingModel, jointTable, limbCount);
+        gSoH3dPendingOverride = NULL; // consumed; the next actor's choke point sets it afresh
         SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate, gSoH3dPendingN64CurFrame,
                              gSoH3dPendingN64AnimLength);
         // Shared multi-variant CMBs (En_Ko Kokiri kids) bake several heads on distinct mesh_ids;
@@ -3294,6 +3408,19 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             if (flip >= 0) gSoH3dFaceCullFlip = flip;
         }
         SoH3D_ReplReply(outPath, "facecull=%d flip=%d", gSoH3dFaceCull, gSoH3dFaceCullFlip);
+    } else if (strcmp(cmd, "wingflap") == 0) {
+        // #23 — procedural OverrideLimbDraw replay (cucco wing-flap). `wingflap <0|1>` toggles it;
+        // `wingflap force <binang>` forces a fixed Z delta on the mapped wing bones (direction/
+        // amplitude probe, -1 = live); `wingflap` alone reports state.
+        extern int gSoH3dProcOverride, gSoH3dWingForce;
+        char sub[32];
+        int iv;
+        if (sscanf(line, "%*s force %d", &iv) == 1) {
+            gSoH3dWingForce = iv;
+        } else if (sscanf(line, "%*s %31s", sub) == 1) {
+            gSoH3dProcOverride = (atoi(sub) != 0);
+        }
+        SoH3D_ReplReply(outPath, "wingflap=%d force=%d", gSoH3dProcOverride, gSoH3dWingForce);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

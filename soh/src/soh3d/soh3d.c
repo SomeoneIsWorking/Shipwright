@@ -101,6 +101,7 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum);
 int SoH3D_AutoModelId(const char* zarPath);
 float SoH3D_AutoModelHeight(int modelId);
 float SoH3D_AutoModelMinY(int modelId);
+int SoH3D_AutoModelExtentXZ(int modelId, float* outX, float* outZ); // local X/Z spans (size a flat plane, #2)
 void SoH3D_SetTrackPosedMinY(int modelId, int enable); // per-frame posed-feet grounding (#29b player float)
 float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model-local Y to ground the feet
 int SoH3D_AutoModelSkinned(int modelId);
@@ -1280,8 +1281,25 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
             return 1;
         }
         if (actor->id == ACTOR_BG_SPOT01_IDOMIZU) {
-            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZSPOT01 "|c_s01idomizu"), actor,
-                              SOH3D_GSCALE(9, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            // The well water (c_s01idomizu) is a FLAT plane. The shared SPOT01_WORLD_SCALE is the
+            // windmill's HEIGHT-derived scale; a flat plane has ~zero height, so that scale shrinks
+            // the water to a tiny teal diamond (#2). Size the plane instead to the scene's well
+            // WATERBOX — the actual N64 water-surface rectangle the Idomizu actor drives
+            // (waterBoxes[0]) — so its footprint fills the bore. REPL `gscale 9` still overrides.
+            int mid = SoH3D_AutoModelId(ZSPOT01 "|c_s01idomizu");
+            float wscale = SOH3D_GSCALE(9, SOH3D_SPOT01_WORLD_SCALE);
+            CollisionHeader* ch = play->colCtx.colHeader;
+            float ex = 0.0f, ez = 0.0f;
+            if (gSoH3dGScale[9] <= 0.0f && ch != NULL && ch->numWaterBoxes > 0 &&
+                ch->waterBoxes != NULL && SoH3D_AutoModelExtentXZ(mid, &ex, &ez) &&
+                ex > 1e-3f && ez > 1e-3f) {
+                WaterBox* wb = &ch->waterBoxes[0];
+                if (wb->xLength > 0 && wb->zLength > 0) {
+                    // uniform scale; the well bore is ~square so X/Z fits average cleanly
+                    wscale = 0.5f * ((float)wb->xLength / ex + (float)wb->zLength / ez);
+                }
+            }
+            SoH3D_DrawModelGL(play, mid, actor, wscale, NULL, 0.0f, NULL, NULL);
             return 1;
         }
         // Kakariko Death Mountain gate (Bg_Gate_Shutter) uses OBJECT_SPOT01_MATOYAB, which it shares

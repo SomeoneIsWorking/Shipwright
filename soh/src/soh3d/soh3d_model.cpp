@@ -1431,6 +1431,25 @@ float SoH3D_AutoModelMinY(int modelId) {
     return (mn < 1e29f) ? mn : 0.0f;
 }
 
+// Local-space XZ extents (full X span, full Z span) of a loaded model's bind-pose geometry.
+// Used to size a FLAT prop (e.g. the well-water plane, #2) to a world target rectangle: a
+// flat plane has ~zero height, so the height/diagonal auto-scale can't size it — its footprint
+// must be matched to the XZ target instead. Returns 1 with the spans, or 0 if no geometry.
+int SoH3D_AutoModelExtentXZ(int modelId, float* outX, float* outZ) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok) return 0;
+    float minx = 1e30f, maxx = -1e30f, minz = 1e30f, maxz = -1e30f;
+    for (const auto& g : lm->groups)
+        for (const auto& v : g.verts) {
+            minx = std::min(minx, v.pos[0]); maxx = std::max(maxx, v.pos[0]);
+            minz = std::min(minz, v.pos[2]); maxz = std::max(maxz, v.pos[2]);
+        }
+    if (maxx < minx || maxz < minz) return 0;
+    if (outX) *outX = maxx - minx;
+    if (outZ) *outZ = maxz - minz;
+    return 1;
+}
+
 // 1 if a loaded auto model is skinned (articulated skeleton -> the auto path leaves it to
 // N64 to avoid a frozen T-pose), else 0. Loads the model lazily; treats a load failure as
 // "skinned" (==skip) so a bad model never auto-replaces.

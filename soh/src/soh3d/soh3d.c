@@ -1404,6 +1404,25 @@ static float SoH3D_SkyCloudScrollU(int idx) {
     return -1.0f / 900.0f; // fine / cloud
 }
 
+// #28c stars: the OoT3D night sky carries a separate star dome (model/fine_star.cmb in
+// BlueSky.zar) layered over the dark gradient dome — our dome replacement is just the gradient,
+// so the night sky has been STARLESS. fine_star.cmb is an L8 (luminance) textured dome cap with
+// ADDITIVE blend (src=GL_SRC_ALPHA, dst=GL_ONE), so it adds the star points over the dome. There
+// is exactly one star dome (no per-weather variant). The "SKY:" forced-CMB key loads it like the
+// kumo band (depth-write off, pinned to the far plane via handle bit 30). Returns the model id, or
+// -1 if the index is not a night variant (stars only show at night; fade in/out WITH the night
+// dome via the same cross-fade alpha as the gradient — no fabricated star-alpha curve).
+static int SoH3D_SkyIsNight(int idx) {
+    return idx == 3 || idx == 7; // fine-night / cloud-night (sSkyboxTable order; matched in #28)
+}
+
+static int SoH3D_SkyStarModelId(int idx) {
+    if (!SoH3D_SkyIsNight(idx)) {
+        return -1;
+    }
+    return SoH3D_AutoModelId("SKY:/kankyo/BlueSky.zar|fine_star");
+}
+
 int SoH3D_TryDrawSky(PlayState* play) {
     int modelId;
     if (!gSoH3dSky || !SoH3D_Enabled()) {
@@ -1444,6 +1463,15 @@ int SoH3D_TryDrawSky(PlayState* play) {
         // composite back-to-front and none occludes the world.
         gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (1 << 30), 255, 255, 255);
         {
+            // Stars sit just above their night gradient dome and BELOW the cloud band (clouds are
+            // nearer). Drawn at the same alpha as the dome layer so they cross-fade in/out with the
+            // night dome (no separate star-alpha curve to fabricate). #28c.
+            int starId = SoH3D_SkyStarModelId(play->envCtx.skybox1Index);
+            if (starId >= 0) {
+                gSPSoH3DDraw(POLY_OPA_DISP++, starId | (1 << 30), 255, 255, 255);
+            }
+        }
+        {
             // Cloud band: drift its texcoords per the .cmab scroll rate (#28b). Wrap the per-frame
             // U offset into [0,1) (WRAP_S repeats it) and pack as 16-bit fixed (offset*65536).
             int cloudId = SoH3D_SkyCloudModelId(play->envCtx.skybox1Index);
@@ -1457,8 +1485,12 @@ int SoH3D_TryDrawSky(PlayState* play) {
         if (doBlend) {
             int dome2 = SoH3D_SkyModelId(idx2);
             int cloud2 = SoH3D_SkyCloudModelId(idx2);
+            int star2 = SoH3D_SkyStarModelId(idx2);
             if (dome2 >= 0) {
                 gSPSoH3DDrawA(POLY_OPA_DISP++, dome2 | (1 << 30), blend, 255, 255, 255);
+            }
+            if (star2 >= 0) {
+                gSPSoH3DDrawA(POLY_OPA_DISP++, star2 | (1 << 30), blend, 255, 255, 255);
             }
             if (cloud2 >= 0) {
                 float u = (float)play->gameplayFrames * SoH3D_SkyCloudScrollU(idx2);

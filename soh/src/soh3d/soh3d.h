@@ -234,6 +234,7 @@ void SoH3D_DebugDrawGs(PlayState* play);
 // crate). Needs OBJECT_KIBAKO2 loaded (a scene with large crates, e.g. Gerudo
 // Valley ENTR 0x117). Logs whether the spawn succeeded. No-op otherwise.
 void SoH3D_DebugDrawKibako(PlayState* play);
+void SoH3D_DebugDrawDrop(PlayState* play);
 
 // OoT3D collision: build a SoH CollisionHeader from the current scene's OoT3D scene-collision
 // mesh, or NULL when disabled/unavailable (caller then uses the N64 collision). Called from

@@ -2568,6 +2568,27 @@ void SoH3D_DebugDrawPot(PlayState* play) {
     }
 }
 
+void SoH3D_DebugDrawDrop(PlayState* play) {
+    // Verification for #36 (2D->3D item drops): drop one real collectible (En_Item00) beside Link
+    // (env SOH3D_SPAWNDROP=<ITEM00 id>, e.g. 0=green rupee, 3=recovery heart). With NewDrops forced
+    // on (the soh3d default), it draws the 3D model; SOH3D_NO3DDROPS=1 reverts to the 2D sprite —
+    // a true same-scene A/B. Held a few frames after spawn so the drop settles before screenshot.
+    const char* sp = getenv("SOH3D_SPAWNDROP");
+    static unsigned char spawned = 0;
+    if (sp != NULL && sp[0] != '\0' && !spawned) {
+        Player* p = GET_PLAYER(play);
+        s16 yaw = p->actor.shape.rot.y; // in front of Link (camera-facing)
+        Vec3f pos;
+        pos.x = p->actor.world.pos.x + 70.0f * Math_SinS(yaw);
+        pos.y = p->actor.world.pos.y + 20.0f;
+        pos.z = p->actor.world.pos.z + 70.0f * Math_CosS(yaw);
+        EnItem00* it = Item_DropCollectible(play, &pos, (s16)strtol(sp, NULL, 0));
+        fprintf(stderr, "[SoH3D #36] dropped id=%ld at (%.0f,%.0f,%.0f) -> %s\n",
+                strtol(sp, NULL, 0), pos.x, pos.y, pos.z, it != NULL ? "OK" : "NULL");
+        spawned = 1;
+    }
+}
+
 void SoH3D_DebugDrawGs(PlayState* play) {
     // Verification: spawn one real En_Gs (Gossip Stone) in front of Link
     // (env SOH3D_SPAWNGS=1) so the actual EnGs_Draw path runs. SOH3D=0 draws the
@@ -3669,6 +3690,25 @@ void SoH3D_ReplPoll(PlayState* play) {
     if (gSoH3dForceTime >= 0) {
         gSaveContext.dayTime = (u16)gSoH3dForceTime;
         gSaveContext.skyboxTime = (u16)gSoH3dForceTime;
+    }
+
+    // #36: 2D->3D item drops default + always on. SoH's "3D Item Drops" enhancement
+    // (CVAR_ENHANCEMENT("NewDrops"), read all over z_en_item00.c) makes rupees/hearts/jars/ammo draw
+    // as 3D models instead of flat billboard sprites; it ships OFF (default 0). The soh3d project
+    // converts ALL graphics to 3D, so force it on. Done once per process (the CVar persists for the
+    // session); SOH3D_NO3DDROPS=1 opts out. Config is loaded by the time Play runs, so this sticks.
+    {
+        static int donedrops = 0;
+        if (!donedrops) {
+            const char* off = getenv("SOH3D_NO3DDROPS");
+            int want = (off != NULL && off[0] == '1') ? 0 : 1;
+            donedrops = 1;
+            // Set explicitly in BOTH directions: the CVar persists to config across runs, so the
+            // opt-out must actively clear a previously-forced value, not merely skip forcing.
+            CVarSetInteger(CVAR_ENHANCEMENT("NewDrops"), want);
+            fprintf(stderr, "[SoH3D #36] NewDrops -> %d\n",
+                    CVarGetInteger(CVAR_ENHANCEMENT("NewDrops"), -1));
+        }
     }
 
     // RmlUi Debug-menu warp request (level select / boss fight). The menu lives in libultraship and

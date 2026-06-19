@@ -1679,6 +1679,7 @@ void Play_Draw(PlayState* play) {
         SoH3D_DebugDrawPot(play);
         SoH3D_DebugDrawGs(play);
         SoH3D_DebugDrawKibako(play);
+        SoH3D_DebugDrawDrop(play);
 
     Play_Draw_DrawOverlayElements:
         if ((HREG(80) != 10) || (HREG(89) != 0)) {

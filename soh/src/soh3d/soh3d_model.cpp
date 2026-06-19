@@ -127,6 +127,11 @@ const AssemblySpec kAssemblies[] = {
 // animation layer can load CSABs and recompute skin matrices per frame on demand.
 struct LoadedModel {
     std::vector<SoH3D::CmbDrawGroup> groups;       // interleaved verts (CmbVertex == SoH3DGlVtx layout)
+    // #5 stairs: per-group tag, parallel to `groups`. -1 = ordinary group; -2 = a generated
+    // stair patch that wears its adjacent WALL's texture (material_index already = the wall's,
+    // so makeCgroup picks the wall texture) — force REPEAT + opaque; -3 = a stair patch with no
+    // adjacent wall found, falling back to the embedded SVG stone (texIndex resolved in buildFromCmb).
+    std::vector<int> groupStairTex;
     std::vector<std::vector<uint8_t>> texRgba;     // decoded RGBA8 per CMB texture
     std::vector<SoH3DGlGroup> cGroups;             // C-API view
     std::vector<SoH3DGlTex> cTexs;                 // C-API view
@@ -298,7 +303,7 @@ static bool texNameIsKaidan(const SoH3D::Cmb& cmb, int matIndex) {
 // Solve a 3x3 linear system A x = b (Gaussian elimination, partial pivot). Returns false
 // if singular. Used to fit the ramp's affine UV(a,c) map so generated step verts inherit
 // the original texture coordinates.
-static bool solve3(double A[3][3], double b[3], double x[3]) {
+[[maybe_unused]] static bool solve3(double A[3][3], double b[3], double x[3]) {
     for (int col = 0; col < 3; col++) {
         int piv = col;
         for (int r = col + 1; r < 3; r++)
@@ -435,122 +440,167 @@ static bool stairFrameOf(const SoH3D::CmbDrawGroup& g, const std::vector<int>& t
     return true;
 }
 
-// Replace one kaidan draw group's flat-ramp triangles with stepped geometry. Each
-// connected, coplanar patch (a single ramp; one group may hold several separate
-// staircases) is rebuilt as treads+risers over its footprint.
-static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
-    size_t ntri = g.verts.size() / 3;
-    if (ntri < 2) return;
+// #5 wall-integration: a staircase patch is textured like the WALL it abuts (the user's
+// design — the kaidan painting is a fake-stairs texture that doubles on real steps; the side
+// faces should read as the same material as the connecting wall). For each patch we find the
+// nearest mostly-vertical wall draw group on its side edges and fit how that wall maps texture
+// V to world height, so the steps tile the wall's texture continuously up the flight.
+struct StairWall {
+    bool ok = false;
+    int material = -1;   // wall material_index -> wall texture (via makeCgroup) + wrap/blend
+    float sV = 0, bV = 0; // wall uv.v ~= sV*worldY + bV (its vertical texel banding)
+    float density = 1.0f / 256.0f; // |uv per world unit| for isotropic U tiling of the steps
+};
 
-    std::vector<std::array<float, 3>> nrm = stairTriNormals(g);
-    std::vector<std::vector<int>> patches = stairPatches(g, nrm);
+// Find the wall group abutting one staircase patch. Scans every OTHER draw group in the room
+// for verts that lie along the patch's two side edges (c=cmin / c=cmax) within the patch's
+// a/y span; the material contributing the most such verts wins, and we least-squares fit V(y)
+// from its near verts so the steps share the wall's vertical texture banding.
+static StairWall findPatchWall(const std::vector<SoH3D::CmbDrawGroup>& groups, size_t kaidanIdx,
+                               const StairFrame& f) {
+    const float M = 90.0f;  // a/y over-reach (verts a little past the footprint still count)
+    const float T = 120.0f; // max |c - edge| to be "on" the side edge
+    // Per material: count verts lying along the patch's two side edges within its a/y span, and
+    // accumulate sums to least-squares fit uv.v vs world Y. We deliberately do NOT pre-filter by
+    // whole-group verticality — large terrain groups (e.g. the Kakariko rock canyon kabe_03) mix
+    // wall + floor tris and split by mesh_id, so a coarse gate wrongly rejects the abutting wall.
+    // Instead the winner must have the most near verts AND a non-degenerate V(y) fit (denom test),
+    // which naturally selects a vertical wall over a flat floor (a floor's near verts share one y).
+    struct Acc { int n = 0; double sy = 0, syy = 0, sv = 0, syv = 0; };
+    std::unordered_map<int, Acc> byMat;
+    for (size_t gi = 0; gi < groups.size(); gi++) {
+        if (gi == kaidanIdx) continue;
+        const SoH3D::CmbDrawGroup& g = groups[gi];
+        Acc& acc = byMat[g.material_index];
+        for (const SoH3D::CmbVertex& v : g.verts) {
+            float a = f.aDir[0]*v.pos[0] + f.aDir[2]*v.pos[2];
+            float c = f.cDir[0]*v.pos[0] + f.cDir[2]*v.pos[2];
+            if (a < f.amin - M || a > f.amax + M) continue;
+            if (v.pos[1] < f.ymin - M || v.pos[1] > f.ymax + M) continue;
+            if (std::fabs(c - f.cmin) > T && std::fabs(c - f.cmax) > T) continue;
+            acc.n++; acc.sy += v.pos[1]; acc.syy += (double)v.pos[1]*v.pos[1];
+            acc.sv += v.uv[1]; acc.syv += (double)v.pos[1]*v.uv[1];
+        }
+    }
+    StairWall w;
+    int bestN = 24; // need a solid number of near verts to trust the wall
+    for (auto& kv : byMat) {
+        const Acc& a = kv.second;
+        if (a.n <= bestN) continue;
+        double mean = a.sy / a.n;
+        double var = a.syy / a.n - mean * mean;            // spread of the near verts in world Y
+        if (var < 30.0 * 30.0) continue;                   // ~flat (a floor, not a wall) -> reject
+        double denom = a.n * a.syy - a.sy * a.sy;
+        if (std::fabs(denom) < 1e-3) continue;
+        double slope = (a.n * a.syv - a.sy * a.sv) / denom; // uv.v per world Y
+        double inter = (a.sv - slope * a.sy) / a.n;
+        bestN = a.n; w.ok = true; w.material = kv.first;
+        w.sV = (float)slope; w.bV = (float)inter;
+        float ad = std::fabs(w.sV);
+        w.density = (ad > 1e-5f) ? ad : 1.0f / 256.0f;
+    }
+    return w;
+}
 
-    std::vector<SoH3D::CmbVertex> outv;
-    outv.reserve(g.verts.size() * 4);
+// Build one staircase patch as stepped geometry into a fresh draw group `outg`. Treads sit at
+// the MIDPOINT of each step's ramp span (yk+dy/2) so they straddle the original ramp instead of
+// sinking below it. The sides are vertical sawtooth-topped walls (not flat triangle caps) down to
+// the flight base, so they read as walls, not see-through triangles. When `wall.ok`, all faces
+// wear the wall's texture UV-mapped by WORLD position (risers/sides share the wall's vertical V
+// banding; treads tile isotropically as a rock floor); otherwise they fall back to the embedded
+// SVG stone tile (V in [0,Vnose)=tread, (Vnose,1]=riser). Returns false for a non-slope patch.
+static bool buildStairPatch(const SoH3D::CmbDrawGroup& g, const std::vector<int>& tris,
+                            const std::vector<std::array<float, 3>>& nrm, const StairWall& wall,
+                            SoH3D::CmbDrawGroup& outg) {
+    StairFrame f;
+    if (!stairFrameOf(g, tris, nrm, f)) return false;
 
     static int stairDbg = -1;
     if (stairDbg < 0) { const char* e = getenv("SOH3D_STAIRDBG"); stairDbg = (e && *e) ? atoi(e) : 0; }
-
-    for (const std::vector<int>& tris : patches) {
-        StairFrame f;
-        bool ok = stairFrameOf(g, tris, nrm, f);
-        if (stairDbg && ok) {
-            float ac = (f.amin + f.amax) * 0.5f, cc = (f.cmin + f.cmax) * 0.5f;
-            float wx = f.aDir[0] * ac + f.cDir[0] * cc, wz = f.aDir[2] * ac + f.cDir[2] * cc;
-            printf("[SoH3D] stairdbg: patch world XZ=(%.0f,%.0f) y=[%.0f,%.0f] N=%d aSpan=%.0f cSpan=%.0f "
-                   "aDir=(%.2f,%.2f) cDir=(%.2f,%.2f)\n",
-                   wx, wz, f.ymin, f.ymax, f.N, f.amax - f.amin, f.cmax - f.cmin,
-                   f.aDir[0], f.aDir[2], f.cDir[0], f.cDir[2]);
-            fflush(stdout);
-        }
-
-        // Affine UV(a,c) fit + average color over the patch (render-only; the generated step
-        // verts inherit the original ramp's texture coordinates and baked lighting).
-        double M[3][3] = {}, bu[3] = {}, bv[3] = {};
-        float col[4] = {}; int nc = 0;
-        const SoH3D::CmbVertex& src = g.verts[3 * tris[0]];
-        if (ok) {
-            for (int t : tris) {
-                for (int k = 0; k < 3; k++) {
-                    const SoH3D::CmbVertex& v = g.verts[3 * t + k];
-                    float a = f.aDir[0] * v.pos[0] + f.aDir[2] * v.pos[2];
-                    float c = f.cDir[0] * v.pos[0] + f.cDir[2] * v.pos[2];
-                    double r[3] = { a, c, 1.0 };
-                    for (int i = 0; i < 3; i++) {
-                        for (int j = 0; j < 3; j++) M[i][j] += r[i] * r[j];
-                        bu[i] += r[i] * v.uv[0];
-                        bv[i] += r[i] * v.uv[1];
-                    }
-                    for (int e = 0; e < 4; e++) col[e] += v.color[e];
-                    nc++;
-                }
-            }
-        }
-        double mu[3], mv[3];
-        if (ok) {
-            for (int e = 0; e < 4; e++) col[e] /= (float)nc;
-            double Mu[3][3], Mv[3][3];
-            std::memcpy(Mu, M, sizeof(M)); std::memcpy(Mv, M, sizeof(M));
-            ok = solve3(Mu, bu, mu) && solve3(Mv, bv, mv);
-        }
-        if (!ok) { // not a slope (or degenerate UV) -> keep the original tris verbatim
-            for (int t : tris)
-                for (int k = 0; k < 3; k++) outv.push_back(g.verts[3 * t + k]);
-            continue;
-        }
-
-        // Emit a vertex: geometry at (aGeom, y, c) with explicit UV into the CUSTOM stair
-        // texture (stairs_stone.svg). The texture is a single STEP tile: V in [0,Vnose) is
-        // the tread (top surface), V == Vnose is the lit nosing line, V in (Vnose,1] is the
-        // riser (front face). One geometry step maps to one tile in V; U tiles horizontally
-        // across the staircase width (REPEAT) at kStairTileW world-units per tile. Vertex
-        // color is forced white so the authored stone shows true (the kaidan baked color is
-        // irrelevant now that we no longer use its texture).
-        auto emit = [&](float aGeom, float y, float c, float u, float vtex, const float nrmv[3]) {
-            SoH3D::CmbVertex v = src;
-            v.pos[0] = f.aDir[0] * aGeom + f.cDir[0] * c;
-            v.pos[1] = y;
-            v.pos[2] = f.aDir[2] * aGeom + f.cDir[2] * c;
-            v.nrm[0] = nrmv[0]; v.nrm[1] = nrmv[1]; v.nrm[2] = nrmv[2];
-            v.uv[0] = u;
-            v.uv[1] = vtex;
-            v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f;
-            outv.push_back(v);
-        };
-        (void)mu; (void)mv; (void)col; // affine fit kept only as the degeneracy gate above
-        const float nUp[3] = { 0, 1, 0 };
-        const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] }; // riser faces downhill (toward the climber)
-        const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side cap at cmin faces -c
-        const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side cap at cmax faces +c
-        const float kTileW = 44.0f;   // world units per horizontal texture tile
-        const float Vnose = 0.62f;    // tread/riser split in the texture (matches the SVG)
-        const float uMin = f.cmin / kTileW, uMax = f.cmax / kTileW;
-        for (int k = 0; k < f.N; k++) {
-            float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-            // Treads sit at the step's LOWER y (yk), not the upper (yTop). This tucks the whole
-            // staircase at/under the original ramp diagonal — the riser tops touch the diagonal at
-            // the nosings, the treads dip below — so the surrounding terrain (which meets the ramp
-            // surface) occludes the step sides instead of leaving the steps poking above it with
-            // open sides (the "render gap" / see-through). The riser then climbs at the BACK of the
-            // tread (a1) up to the next tread's height.
-            float yk = f.ymin + k * f.dy, yk1 = f.ymin + (k + 1) * f.dy;
-            // Tread (top face, +Y) at yk: front edge a0 = nosing (V=Vnose) -> back a1 = V=0.
-            emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmin, uMin, 0.0f, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp);
-            emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp); emit(a0, yk, f.cmax, uMax, Vnose, nUp);
-            // Riser (front face, -aDir) at a1, yk -> yk1: top yk1 = nosing (V=Vnose), bottom yk = V=1.
-            emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
-            emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
-            // Side caps: fill the triangular sliver between this lowered tread and the original
-            // ramp's straight side diagonal (the edge the surrounding terrain meets), on BOTH c
-            // edges, so the open sides no longer show the background through them. The cap's
-            // hypotenuse (a0,yk)->(a1,yk1) traces that diagonal == the original ramp silhouette.
-            // Mapped to riser stone (U along the run, V by height) so the sides read as stone.
-            float uA0 = a0 / kTileW, uA1 = a1 / kTileW;
-            emit(a0, yk, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk1, f.cmin, uA1, Vnose, nCmin); emit(a1, yk, f.cmin, uA1, 1.0f, nCmin);
-            emit(a0, yk, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, 1.0f, nCmax); emit(a1, yk1, f.cmax, uA1, Vnose, nCmax);
-        }
+    if (stairDbg) {
+        float ac = (f.amin + f.amax) * 0.5f, cc = (f.cmin + f.cmax) * 0.5f;
+        float wx = f.aDir[0] * ac + f.cDir[0] * cc, wz = f.aDir[2] * ac + f.cDir[2] * cc;
+        printf("[SoH3D] stairdbg: patch world XZ=(%.0f,%.0f) y=[%.0f,%.0f] N=%d aSpan=%.0f cSpan=%.0f "
+               "aDir=(%.2f,%.2f) cDir=(%.2f,%.2f) wall=%d sV=%.5f\n",
+               wx, wz, f.ymin, f.ymax, f.N, f.amax - f.amin, f.cmax - f.cmin,
+               f.aDir[0], f.aDir[2], f.cDir[0], f.cDir[2], wall.material, wall.sV);
+        fflush(stdout);
     }
-    g.verts.swap(outv);
+
+    const SoH3D::CmbVertex& src = g.verts[3 * tris[0]];
+    std::vector<SoH3D::CmbVertex>& outv = outg.verts;
+    outv.reserve(tris.size() * 12);
+
+    // World-Y -> texture V matching the wall (risers/sides), and isotropic density for tiling.
+    const float dn = wall.density;
+    auto Vy = [&](float y) { return wall.ok ? wall.sV * y + wall.bV : 0.0f; };
+
+    const float Vnose = 0.62f; // SVG fallback tread/riser split
+
+    auto emit = [&](float aGeom, float y, float c, float u, float vtex, const float nrmv[3]) {
+        SoH3D::CmbVertex v = src;
+        v.pos[0] = f.aDir[0] * aGeom + f.cDir[0] * c;
+        v.pos[1] = y;
+        v.pos[2] = f.aDir[2] * aGeom + f.cDir[2] * c;
+        v.nrm[0] = nrmv[0]; v.nrm[1] = nrmv[1]; v.nrm[2] = nrmv[2];
+        v.uv[0] = u; v.uv[1] = vtex;
+        v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f;
+        outv.push_back(v);
+    };
+    const float nUp[3] = { 0, 1, 0 };
+    const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] };  // riser faces downhill (toward the climber)
+    const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side at cmin faces -c
+    const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side at cmax faces +c
+    const float kTileW = 44.0f;        // SVG fallback: world units per horizontal tile
+    const float inset = 3.0f;          // pull sides slightly inboard so they never z-fight the wall
+    const float ci = f.cmin + inset, co = f.cmax - inset;
+    const float base = f.ymin;         // side walls drop to the flight base (terrain occludes below)
+
+    for (int k = 0; k < f.N; k++) {
+        float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
+        // Tread at the midpoint of this step's ramp span -> straddles the original diagonal
+        // (front half above, back half below) instead of sinking a full riser below it.
+        float yk = f.ymin + (k + 0.5f) * f.dy;        // this tread's height
+        float yk1 = f.ymin + (k + 1.5f) * f.dy;       // next tread's height (riser top)
+        if (k == f.N - 1) yk1 = f.ymax;               // cap the last riser at the true top
+
+        // Treads/risers span the SAME inset width [ci,co] as the side walls so the tread edge
+        // meets the side wall (no open sliver); the original ramp's full-width margin to the real
+        // wall is covered by that wall. Wall mode tiles the horizontal plane isotropically (rock
+        // floor); SVG mode maps one tile across width with V in the tread band.
+        if (wall.ok) {
+            float uA0 = dn * a0, uA1 = dn * a1, vC0 = dn * ci, vC1 = dn * co;
+            emit(a0, yk, ci, uA0, vC0, nUp); emit(a1, yk, ci, uA1, vC0, nUp); emit(a1, yk, co, uA1, vC1, nUp);
+            emit(a0, yk, ci, uA0, vC0, nUp); emit(a1, yk, co, uA1, vC1, nUp); emit(a0, yk, co, uA0, vC1, nUp);
+            // Riser (front face) a1, yk->yk1: V tracks world height (continuous with the wall).
+            float uMin = dn * ci, uMax = dn * co, vlo = Vy(yk), vhi = Vy(yk1);
+            emit(a1, yk, ci, uMin, vlo, nDn); emit(a1, yk1, ci, uMin, vhi, nDn); emit(a1, yk1, co, uMax, vhi, nDn);
+            emit(a1, yk, ci, uMin, vlo, nDn); emit(a1, yk1, co, uMax, vhi, nDn); emit(a1, yk, co, uMax, vlo, nDn);
+        } else {
+            float uMin = ci / kTileW, uMax = co / kTileW;
+            emit(a0, yk, ci, uMin, Vnose, nUp); emit(a1, yk, ci, uMin, 0.0f, nUp); emit(a1, yk, co, uMax, 0.0f, nUp);
+            emit(a0, yk, ci, uMin, Vnose, nUp); emit(a1, yk, co, uMax, 0.0f, nUp); emit(a0, yk, co, uMax, Vnose, nUp);
+            emit(a1, yk, ci, uMin, 1.0f, nDn); emit(a1, yk1, ci, uMin, Vnose, nDn); emit(a1, yk1, co, uMax, Vnose, nDn);
+            emit(a1, yk, ci, uMin, 1.0f, nDn); emit(a1, yk1, co, uMax, Vnose, nDn); emit(a1, yk, co, uMax, 1.0f, nDn);
+        }
+
+        // Side faces: a vertical wall under each step, sawtooth top following the tread height,
+        // dropping to the flight base. Two quads per side per step: the rectangle under the tread
+        // [a0,a1]x[base,yk], and the riser-height sliver at a1 [yk,yk1] bridging to the next tread.
+        auto sideU = [&](float a) { return wall.ok ? dn * a : a / kTileW; };
+        auto sideV = [&](float y) { return wall.ok ? Vy(y) : (y <= yk ? 1.0f : Vnose); };
+        // cmin side (faces -c)
+        emit(a0, base, ci, sideU(a0), sideV(base), nCmin); emit(a1, base, ci, sideU(a1), sideV(base), nCmin); emit(a1, yk, ci, sideU(a1), sideV(yk), nCmin);
+        emit(a0, base, ci, sideU(a0), sideV(base), nCmin); emit(a1, yk, ci, sideU(a1), sideV(yk), nCmin); emit(a0, yk, ci, sideU(a0), sideV(yk), nCmin);
+        emit(a1, yk, ci, sideU(a1), sideV(yk), nCmin); emit(a1, yk1, ci, sideU(a1), sideV(yk1), nCmin); emit(a1, base, ci, sideU(a1), sideV(base), nCmin);
+        // cmax side (faces +c) — opposite winding
+        emit(a0, base, co, sideU(a0), sideV(base), nCmax); emit(a1, yk, co, sideU(a1), sideV(yk), nCmax); emit(a1, base, co, sideU(a1), sideV(base), nCmax);
+        emit(a0, base, co, sideU(a0), sideV(base), nCmax); emit(a0, yk, co, sideU(a0), sideV(yk), nCmax); emit(a1, yk, co, sideU(a1), sideV(yk), nCmax);
+        emit(a1, yk, co, sideU(a1), sideV(yk), nCmax); emit(a1, base, co, sideU(a1), sideV(base), nCmax); emit(a1, yk1, co, sideU(a1), sideV(yk1), nCmax);
+    }
+    outg.material_index = wall.ok ? wall.material : g.material_index;
+    outg.mesh_id = g.mesh_id;
+    return true;
 }
 
 // SOH3D_STAIRS env -> gSoH3dStairs, parsed once. Called from both the render path
@@ -564,13 +614,56 @@ static void ensureStairsEnv() {
     }
 }
 
-// Replace every kaidan ramp group in a freshly-built scene-room model with stepped
-// geometry. cGroups must be (re)built AFTER this — it mutates group vert vectors.
+// Replace every kaidan ramp group with per-PATCH stepped groups, each textured like the wall
+// it abuts (#5 wall integration). Different staircases in one room connect to different walls
+// (the Kakariko entrance to the rock canyon `kabe_03`, the village stairs to brick `kabe_01`),
+// so each patch becomes its own group carrying its wall's material. Builds out->groupStairTex
+// parallel to the final out->groups (-2 = wall-textured, -3 = SVG fallback, -1 = ordinary).
 static void generateRoomStairs(LoadedModel* out) {
     ensureStairsEnv();
+    out->groupStairTex.assign(out->groups.size(), -1);
     if (!gSoH3dStairs || !out->cmb) return;
-    for (auto& g : out->groups)
-        if (texNameIsKaidan(*out->cmb, g.material_index)) generateStairsGroup(g);
+
+    // Snapshot the original groups (findPatchWall needs to see the un-stepped walls); we rebuild
+    // out->groups from scratch, dropping kaidan groups and appending one group per stair patch.
+    std::vector<SoH3D::CmbDrawGroup> src;
+    src.swap(out->groups);
+    std::vector<size_t> keepIdx;   // indices of ordinary groups to carry over (moved out LAST)
+    std::vector<SoH3D::CmbDrawGroup> stairGroups;
+    std::vector<int> stairTags;
+    // IMPORTANT: do not std::move any src group out during this loop — findPatchWall scans the
+    // WHOLE of `src` for the wall abutting each kaidan patch, and a kaidan group can appear after
+    // its walls, so the walls must stay intact until every patch has been resolved.
+    for (size_t gi = 0; gi < src.size(); gi++) {
+        SoH3D::CmbDrawGroup& g = src[gi];
+        if (!texNameIsKaidan(*out->cmb, g.material_index) || g.verts.size() < 6) {
+            keepIdx.push_back(gi);
+            continue;
+        }
+        std::vector<std::array<float, 3>> nrm = stairTriNormals(g);
+        std::vector<std::vector<int>> patches = stairPatches(g, nrm);
+        for (const std::vector<int>& tris : patches) {
+            StairFrame f;
+            if (!stairFrameOf(g, tris, nrm, f)) { // not a slope -> keep the flat tris as an ordinary group
+                SoH3D::CmbDrawGroup flat;
+                flat.material_index = g.material_index; flat.mesh_id = g.mesh_id;
+                for (int t : tris) for (int k = 0; k < 3; k++) flat.verts.push_back(g.verts[3*t+k]);
+                stairTags.push_back(-1); stairGroups.push_back(std::move(flat));
+                continue;
+            }
+            StairWall wall = findPatchWall(src, gi, f);
+            SoH3D::CmbDrawGroup outg;
+            if (buildStairPatch(g, tris, nrm, wall, outg)) {
+                stairTags.push_back(wall.ok ? -2 : -3);
+                stairGroups.push_back(std::move(outg));
+            }
+        }
+    }
+    // Assemble: kept ordinary groups first (now safe to move), then the generated stair patches.
+    out->groups.clear();
+    out->groupStairTex.clear();
+    for (size_t idx : keepIdx) { out->groups.push_back(std::move(src[idx])); out->groupStairTex.push_back(-1); }
+    for (size_t i = 0; i < stairGroups.size(); i++) { out->groups.push_back(std::move(stairGroups[i])); out->groupStairTex.push_back(stairTags[i]); }
 }
 
 static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
@@ -582,19 +675,21 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
     }
     if (stairs) generateRoomStairs(out);
+    if ((int)out->groupStairTex.size() != (int)out->groups.size())
+        out->groupStairTex.assign(out->groups.size(), -1);
 
     std::vector<std::pair<int,int>> dims;
     appendTextures(out, cmb, &dims);
 
-    // Custom stair texture: if this room has kaidan (stair) groups, append the embedded stone
-    // texture (assets/soh3d/stairs_stone.svg) and point the generated step groups at it,
-    // REPEAT-tiled, instead of the stretched low-res kaidan texture.
-    int stairTexIdx = -1;
-    if (stairs) {
+    // SVG fallback texture: only needed for stair patches with no adjacent wall (tag -3).
+    int stairSvgIdx = -1;
+    bool needSvg = false;
+    for (int t : out->groupStairTex) if (t == -3) { needSvg = true; break; }
+    if (needSvg) {
         int tw = 0, th = 0;
         const std::vector<uint8_t>& stex = stairStoneTex(tw, th);
         if (tw > 0 && th > 0) {
-            stairTexIdx = (int)out->texRgba.size();
+            stairSvgIdx = (int)out->texRgba.size();
             out->texRgba.push_back(stex); // copy into the model's owned storage
             dims.push_back({ tw, th });
         }
@@ -605,12 +700,18 @@ static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
         out->cTexs[i] = { out->texRgba[i].data(), dims[i].first, dims[i].second };
 
     out->cGroups.reserve(out->groups.size());
-    for (const auto& g : out->groups) {
+    for (size_t i = 0; i < out->groups.size(); i++) {
+        const auto& g = out->groups[i];
         SoH3DGlGroup cg = makeCgroup(cmb, g, g.verts.data(), 0);
-        if (stairTexIdx >= 0 && texNameIsKaidan(cmb, g.material_index)) {
-            cg.texIndex = stairTexIdx;
-            cg.wrapS = cg.wrapT = 0x2901; // GL_REPEAT — tile the stone across width & length
+        int tag = out->groupStairTex[i];
+        if (tag == -2 || tag == -3) {
+            // Generated stair patch: wear the wall material's texture (tag -2; texIndex already
+            // resolved from the patch group's wall material_index) or the SVG stone (tag -3).
+            // Tile by REPEAT (UVs are world-derived) and draw opaque.
+            if (tag == -3 && stairSvgIdx >= 0) cg.texIndex = stairSvgIdx;
+            cg.wrapS = cg.wrapT = 0x2901; // GL_REPEAT
             cg.blendEnable = 0; cg.alphaTest = 0; cg.depthWrite = 1; cg.polygonOffset = 0.0f;
+            cg.faceCull = 0; // steps are viewed from many angles; keep both sides
         }
         out->cGroups.push_back(cg);
     }

@@ -3458,6 +3458,12 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         SoH3D_SetStairs((int)f1);
         SoH3D_ReplReply(outPath, "stairs=%d (applies to rooms loaded after this; use SOH3D_STAIRS env for same-scene A/B)",
                         SoH3D_GetStairs());
+    } else if (strcmp(cmd, "stairsize") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #5 — set the generated step rise (world-units/step), the same knob as the RmlUi
+        // "Stair Step Size" row. Live: drops + GL-evicts the scene-room models so loaded stairs
+        // rebuild at the new size on the next render pass.
+        SoH3D_SetStairRiserY(f1);
+        SoH3D_ReplReply(outPath, "stairsize riser=%.1f (live)", SoH3D_GetStairRiserY());
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;
@@ -3641,6 +3647,30 @@ void SoH3D_ReplPoll(PlayState* play) {
                 default:
                     break;
             }
+        }
+    }
+
+    // RmlUi Graphics-menu "Stair Step Size" cycle row. gSoH3dMenuStairSize: 0 Small / 1 Medium /
+    // 2 Large -> a generated step rise. Seed the menu from the live rise once (so it opens showing
+    // reality), then apply only user changes. The change shows live (the model layer drops + the GL
+    // layer evicts the affected scene-room models so they rebuild with the new step size).
+    {
+        extern int gSoH3dMenuStairSize; // SohRmlUi.cpp; 0 Small / 1 Medium / 2 Large
+        static const float kStairSizeRise[3] = { 8.0f, 14.0f, 22.0f };
+        static int stairSizeSeeded = 0;
+        static int lastStairSize = -1;
+        if (!stairSizeSeeded) {
+            float r = SoH3D_GetStairRiserY();
+            int idx = (r < 11.0f) ? 0 : (r < 18.0f ? 1 : 2);
+            gSoH3dMenuStairSize = idx;
+            lastStairSize = idx;
+            stairSizeSeeded = 1;
+        } else if (gSoH3dMenuStairSize != lastStairSize) {
+            lastStairSize = gSoH3dMenuStairSize;
+            int idx = gSoH3dMenuStairSize;
+            if (idx < 0) idx = 0;
+            if (idx > 2) idx = 2;
+            SoH3D_SetStairRiserY(kStairSizeRise[idx]);
         }
     }
 

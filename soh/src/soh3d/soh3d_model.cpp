@@ -253,11 +253,13 @@ static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb, std::vector<s
 // risers — covering the exact same footprint, kept on the SAME kaidan material so the
 // texture/UV/lighting/cull all match. The original flat ramp triangles are dropped.
 //
-// Step rise is derived from the asset, not chosen to "look right": the kaidan texture
-// paints ~11 steps per 128px V-tile (FFT of s01_kaidan_01), and the ramp UV maps ~86
-// world-Y per V-tile, so each painted step rises ~7.8 world-units. We make one real
-// step per painted step: N = round(rampRiseY / kStairRiserY).
-static const float kStairRiserY = 7.8f;
+// Step rise (world-units per generated step). Originally asset-derived to match the painted
+// kaidan steps (~7.8u: the texture paints ~11 steps per 128px V-tile and the ramp UV maps
+// ~86 world-Y per V-tile). Now that the steps wear our own tiled stone texture (not the
+// painted kaidan ramp), the rise is no longer pinned to the asset — it's a runtime tunable
+// (RmlUi "Stair Step Size" / SoH3D_SetStairRiserY), so the player can pick larger/smaller
+// steps. N = round(rampRiseY / gSoH3dStairRiserY). Default is chunkier than the old 7.8.
+float gSoH3dStairRiserY = 14.0f;
 int gSoH3dStairs = 1; // env SOH3D_STAIRS / REPL `stairs` gate (default on)
 
 // Decode the embedded custom stair texture (PNG -> RGBA8) once. Returns the cached pixel
@@ -420,7 +422,7 @@ static bool stairFrameOf(const SoH3D::CmbDrawGroup& g, const std::vector<int>& t
     }
     if (f.amax - f.amin < 1.0f || f.cmax - f.cmin < 1.0f || f.ymax - f.ymin < 1.0f) return false;
 
-    f.N = (int)std::lround((f.ymax - f.ymin) / kStairRiserY);
+    f.N = (int)std::lround((f.ymax - f.ymin) / (gSoH3dStairRiserY > 0.5f ? gSoH3dStairRiserY : 0.5f));
     if (f.N < 1) f.N = 1;
     if (f.N > 200) f.N = 200;
     f.da = (f.amax - f.amin) / f.N;
@@ -1206,6 +1208,22 @@ void SoH3D_SetStairs(int on) {
     }
 }
 int SoH3D_GetStairs(void) { return gSoH3dStairs; }
+
+// #5 — set the generated step rise (world-units/step). Larger = bigger steps. Drops the cached
+// scene-room CPU models so the provider rebuilds their stair geometry with the new rise, and asks
+// the GL layer to evict the matching uploads so the change shows live (next render pass). Collision
+// keeps the previous rise until the next scene load (render is what the user is tuning here).
+void SoH3D_SetStairRiserY(float v) {
+    if (v < 1.0f) v = 1.0f;
+    if (v == gSoH3dStairRiserY) return;
+    gSoH3dStairRiserY = v;
+    for (auto it = g_loaded.begin(); it != g_loaded.end();) {
+        if (it->first >= kSceneModelBase && it->first < kAutoModelBase) it = g_loaded.erase(it);
+        else ++it;
+    }
+    SoH3D_GL_RequestEvictRange(kSceneModelBase, kAutoModelBase);
+}
+float SoH3D_GetStairRiserY(void) { return gSoH3dStairRiserY; }
 
 // Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR
 // path (e.g. "/actor/zelda_box.zar"). The geometry loads lazily on first draw via the

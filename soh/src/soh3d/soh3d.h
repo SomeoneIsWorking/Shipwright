@@ -148,6 +148,17 @@ const void* SoH3D_DigitTex(int glyph, int* w, int* h);
 // so the grayscale disc tints to each button's PRIM colour exactly like the N64 32x32 IA8 original.
 const void* SoH3D_ButtonBgTex(int* w, int* h);
 
+// #31 — crisp HUD counter icons. `kind` 0=rupee gem, 1=small key, 2=clock. Returns a persistent
+// RGBA32 (grayscale, a=coverage) + dims, or NULL. The rupee/key draw MODULATEIA_PRIM (PRIM tints
+// the facet shading); the clock draws MODULATERGBA_PRIM with PRIM white (grayscale shown directly).
+// Substituted by pointer in Gfx_TextureIA8 for the N64 16x16 IA8 gRupee/SmallKey/Clock icons.
+enum {
+    SOH3D_CICON_RUPEE = 0,
+    SOH3D_CICON_SMALLKEY,
+    SOH3D_CICON_CLOCK,
+};
+const void* SoH3D_CounterIconTex(int kind, int* w, int* h);
+
 // #2 — press-to-skip: on a Start/Space press, force-end any active onepoint cutscene camera
 // (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
 // before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.

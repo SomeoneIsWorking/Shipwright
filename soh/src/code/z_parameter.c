@@ -1397,6 +1397,35 @@ Gfx* Gfx_TextureIA8(Gfx* displayListHead, void* texture, s16 textureWidth, s16 t
         }
     }
 
+    // #31 — substitute the crisp higher-res counter icons (rupee gem / small key / clock) for the
+    // blocky N64 16x16 IA8 originals. Each is a FULL-LOAD single draw (no shared-tile reuse like
+    // gButtonBackgroundTex), so just load the grayscale RGBA32 and rescale dsdx/dtdy to the rect.
+    if (SoH3D_HudTexEnabled()) {
+        int cKind = -1;
+        if (texture == (void*)gRupeeCounterIconTex) {
+            cKind = SOH3D_CICON_RUPEE;
+        } else if (texture == (void*)gSmallKeyCounterIconTex) {
+            cKind = SOH3D_CICON_SMALLKEY;
+        } else if (texture == (void*)gClockIconTex) {
+            cKind = SOH3D_CICON_CLOCK;
+        }
+        if (cKind >= 0) {
+            int gw = 0, gh = 0;
+            const void* gt = SoH3D_CounterIconTex(cKind, &gw, &gh);
+            if (gt != NULL && gw > 0 && gh > 0 && rectWidth > 0 && rectHeight > 0) {
+                gDPLoadTextureBlock(displayListHead++, gt, G_IM_FMT_RGBA, G_IM_SIZ_32b, gw, gh, 0,
+                                    G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK,
+                                    G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+                u16 gdsdx = (u16)(((u32)gw << 10) / (u32)rectWidth);
+                u16 gdtdy = (u16)(((u32)gh << 10) / (u32)rectHeight);
+                gSPWideTextureRectangle(displayListHead++, rectLeft << 2, rectTop << 2,
+                                        (rectLeft + rectWidth) << 2, (rectTop + rectHeight) << 2,
+                                        G_TX_RENDERTILE, 0, 0, gdsdx, gdtdy);
+                return displayListHead;
+            }
+        }
+    }
+
     gDPLoadTextureBlock(displayListHead++, texture, G_IM_FMT_IA, G_IM_SIZ_8b, textureWidth, textureHeight, 0,
                         G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD,
                         G_TX_NOLOD);

@@ -22,6 +22,7 @@
 #include "heart_tex_png.h"    // embedded PNGs of the crisp HUD heart textures (#31, gen_hud_tex.sh)
 #include "digit_tex_png.h"    // embedded PNGs of the crisp HUD counter font (#31, gen_digit_tex.sh)
 #include "button_tex_png.h"   // embedded PNG of the crisp HUD button-background disc (#31, gen_button_tex.sh)
+#include "counter_icon_png.h" // embedded PNGs of the crisp HUD counter icons (#31, gen_counter_icons.sh)
 
 #include <algorithm>
 #include <array>
@@ -1326,6 +1327,38 @@ const void* SoH3D_ButtonBgTex(int* w, int* h) {
     if (w) *w = bw;
     if (h) *h = bh;
     return rgba.data();
+}
+
+// #31 — crisp HUD counter icons (0=rupee gem, 1=small key, 2=clock). Decode the embedded PNGs once
+// into persistent RGBA32 (grayscale, a=coverage). Returns the buffer + dims, or NULL on failure.
+// Rupee/key draw MODULATEIA_PRIM (PRIM tints the grayscale facet shading); the clock draws
+// MODULATERGBA_PRIM with PRIM white (grayscale shown directly). All three are 16x16 IA8 in N64.
+const void* SoH3D_CounterIconTex(int kind, int* w, int* h) {
+    struct Tex { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
+    static Tex t[3];
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        const unsigned char* png[3] = { kRupeeIconPng, kSmallKeyIconPng, kClockIconPng };
+        unsigned int len[3] = { kRupeeIconPngLen, kSmallKeyIconPngLen, kClockIconPngLen };
+        for (int i = 0; i < 3; i++) {
+            int sw = 0, sh = 0, n = 0;
+            stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
+            if (px) {
+                t[i].rgba.assign(px, px + (size_t)sw * sh * 4);
+                t[i].w = sw; t[i].hh = sh;
+                stbi_image_free(px);
+            } else {
+                fprintf(stderr, "[SoH3D] counter icon %d: PNG decode failed\n", i);
+            }
+        }
+    }
+    if (kind < 0 || kind >= 3 || t[kind].rgba.empty()) {
+        if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    if (w) *w = t[kind].w;
+    if (h) *h = t[kind].hh;
+    return t[kind].rgba.data();
 }
 
 // #31 — crisp HUD counter font (0..9 = digit, 10 = ':'). Decode the embedded PNGs once into

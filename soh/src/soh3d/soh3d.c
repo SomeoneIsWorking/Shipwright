@@ -351,6 +351,18 @@ int SoH3D_XboxBtnEnabled(void) {
     return gSoH3dXboxBtn;
 }
 
+// #31 — substitute crisp higher-res HUD textures (hearts) for the blocky 16x16 N64 ones.
+// -1 = uninit (read SOH3D_HUDTEX env, default on). z_lifemeter.c reads this and swaps the heart
+// texture/load size/texcoords; see SoH3D_HeartTex.
+int gSoH3dHudTex = -1;
+int SoH3D_HudTexEnabled(void) {
+    if (gSoH3dHudTex < 0) {
+        const char* v = getenv("SOH3D_HUDTEX");
+        gSoH3dHudTex = (v != NULL && v[0] == '0') ? 0 : 1;
+    }
+    return gSoH3dHudTex;
+}
+
 // #2 — press-to-skip for sequences that take camera control but are NOT scripted cutscenes
 // (scripted CS already skip on Start via z_demo.c csSkipButton). Onepoint cutscene cameras
 // (door reveals, Z-target attention pans, treasure/switch framing) grab the camera away from
@@ -3561,6 +3573,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // gSoH3dXboxBtn every frame). 1 = Xbox A/B/X/Y glyphs, 0 = the N64 colored circles.
         gSoH3dXboxBtn = (f1 != 0.0f) ? 1 : 0;
         SoH3D_ReplReply(outPath, "xboxui=%d", gSoH3dXboxBtn);
+    } else if (strcmp(cmd, "hudtex") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #31 — toggle crisp higher-res HUD textures (hearts) live; z_lifemeter.c reads
+        // gSoH3dHudTex every frame. 1 = crisp 64x64 hearts, 0 = the blocky N64 16x16 hearts.
+        gSoH3dHudTex = (f1 != 0.0f) ? 1 : 0;
+        SoH3D_ReplReply(outPath, "hudtex=%d", gSoH3dHudTex);
     } else if (strcmp(cmd, "skip") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         // #2 — toggle press-to-skip for onepoint cutscene cameras (Start/Space force-ends them).
         gSoH3dSkip = (f1 != 0.0f) ? 1 : 0;

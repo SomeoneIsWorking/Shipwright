@@ -4,6 +4,23 @@
 #include "soh/OTRGlobals.h"
 #include "soh/Enhancements/cosmetics/cosmeticsTypes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh3d/soh3d.h" // #31 — crisp higher-res HUD heart textures (SoH3D_HudTexEnabled / SoH3D_HeartTex)
+
+// #31 — map an N64 heart texture symbol to a SOH3D_HEART_* kind, or -1 if it isn't a heart we
+// replace. The DD (double-defense) variants reuse the same crisp shapes (tint differs via PRIM/ENV).
+static int SoH3D_HeartKind(void* tex) {
+    if (tex == (void*)gHeartFullTex || tex == (void*)gDefenseHeartFullTex)
+        return SOH3D_HEART_FULL;
+    if (tex == (void*)gHeartThreeQuarterTex || tex == (void*)gDefenseHeartThreeQuarterTex)
+        return SOH3D_HEART_THREEQUARTER;
+    if (tex == (void*)gHeartHalfTex || tex == (void*)gDefenseHeartHalfTex)
+        return SOH3D_HEART_HALF;
+    if (tex == (void*)gHeartQuarterTex || tex == (void*)gDefenseHeartQuarterTex)
+        return SOH3D_HEART_QUARTER;
+    if (tex == (void*)gHeartEmptyTex || tex == (void*)gDefenseHeartEmptyTex)
+        return SOH3D_HEART_EMPTY;
+    return -1;
+}
 
 s16 Top_LM_Margin = 0;
 s16 Left_LM_Margin = 0;
@@ -414,6 +431,21 @@ void HealthMeter_Draw(PlayState* play) {
         fullHeartCount--;
     }
 
+    // #31 — when crisp HUD hearts are enabled, the replacement textures are higher-res (e.g. 64x64
+    // RGBA) instead of the N64 16x16 IA8. The shared heart quad's texcoords are baked to span 16
+    // texels (tc 0..512 == 16.0 in s10.5); rescale the far tc to the replacement's real size so the
+    // FULL texture maps onto the quad (same fix as the #32 A-button quad). Probe the FULL heart once;
+    // if it decodes we use the crisp set, else fall back to the byte-identical N64 path.
+    int s3HeartW = 0, s3HeartH = 0;
+    const void* s3HeartProbe = SoH3D_HudTexEnabled() ? SoH3D_HeartTex(SOH3D_HEART_FULL, &s3HeartW, &s3HeartH) : NULL;
+    s32 useSoh3dHearts = (s3HeartProbe != NULL);
+    {
+        s16 farTcX = useSoh3dHearts ? (s16)(s3HeartW << 5) : 512;
+        s16 farTcY = useSoh3dHearts ? (s16)(s3HeartH << 5) : 512;
+        sp154[1].v.tc[0] = sp154[3].v.tc[0] = farTcX; // far-x in vtx1 & vtx3
+        sp154[2].v.tc[1] = sp154[3].v.tc[1] = farTcY; // far-y in vtx2 & vtx3
+    }
+
     curColorSet = -1;
     /*
         s16 X_Margins;
@@ -544,9 +576,25 @@ void HealthMeter_Draw(PlayState* play) {
 
         if (curBgImgLoaded != heartBgImg) {
             curBgImgLoaded = heartBgImg;
-            gDPLoadTextureBlock(OVERLAY_DISP++, heartBgImg, G_IM_FMT_IA, G_IM_SIZ_8b, 16, 16, 0,
-                                G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
-                                G_TX_NOLOD, G_TX_NOLOD);
+            // #31 — swap in the crisp higher-res heart (raw RGBA32 pointer) when enabled; the combine
+            // reads TEXEL0.rgb as the PRIM<->ENV lerp so the grayscale heart tints exactly as IA8 did.
+            int s3w = 0, s3h = 0;
+            const void* s3 = NULL;
+            if (useSoh3dHearts) {
+                int kind = SoH3D_HeartKind(heartBgImg);
+                if (kind >= 0) {
+                    s3 = SoH3D_HeartTex(kind, &s3w, &s3h);
+                }
+            }
+            if (s3 != NULL) {
+                gDPLoadTextureBlock(OVERLAY_DISP++, s3, G_IM_FMT_RGBA, G_IM_SIZ_32b, s3w, s3h, 0,
+                                    G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                    G_TX_NOLOD, G_TX_NOLOD);
+            } else {
+                gDPLoadTextureBlock(OVERLAY_DISP++, heartBgImg, G_IM_FMT_IA, G_IM_SIZ_8b, 16, 16, 0,
+                                    G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK,
+                                    G_TX_NOLOD, G_TX_NOLOD);
+            }
         }
 
         if (i != fullHeartCount) {

@@ -121,6 +121,22 @@ const void* SoH3D_XboxGlyphTex(char which, int* w, int* h);
 extern int gSoH3dXboxBtn;       // env SOH3D_XBOXUI / REPL `xboxui` gate (-1=uninit, 0/1)
 int SoH3D_XboxBtnEnabled(void); // lazily resolves the env on first call; HUD draws gate on this
 
+// #31 — crisp higher-res HUD textures (hearts first). Returns a persistent RGBA8888
+// (G_IM_FMT_RGBA/32b) buffer for a heart kind + its dims, or NULL on failure. The buffer is
+// grayscale (rgb=intensity, a=silhouette) so the N64 heart combine ((PRIM-ENV)*TEXEL0+ENV) tints
+// it exactly like the original IA8 heart — just at a much higher resolution. The Fast3D HUD draws
+// this raw pointer in place of gHeart{Full,ThreeQuarter,Half,Quarter,Empty}Tex when gSoH3dHudTex.
+enum {
+    SOH3D_HEART_FULL = 0,
+    SOH3D_HEART_THREEQUARTER,
+    SOH3D_HEART_HALF,
+    SOH3D_HEART_QUARTER,
+    SOH3D_HEART_EMPTY,
+};
+const void* SoH3D_HeartTex(int kind, int* w, int* h);
+extern int gSoH3dHudTex;       // env SOH3D_HUDTEX / REPL `hudtex` gate (-1=uninit, 0/1)
+int SoH3D_HudTexEnabled(void); // lazily resolves the env on first call; HUD draws gate on this
+
 // #2 — press-to-skip: on a Start/Space press, force-end any active onepoint cutscene camera
 // (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
 // before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.

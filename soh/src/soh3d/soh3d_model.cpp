@@ -19,6 +19,7 @@
 #include <stb_image.h>
 #include "stairs_stone_png.h" // embedded PNG of assets/soh3d/stairs_stone.svg (custom stair texture)
 #include "xbox_glyphs_png.h"  // embedded PNGs of assets/soh3d/xbox_{a,b,x,y}.svg (HUD button glyphs, #32)
+#include "heart_tex_png.h"    // embedded PNGs of the crisp HUD heart textures (#31, gen_hud_tex.sh)
 
 #include <algorithm>
 #include <array>
@@ -1263,6 +1264,40 @@ const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
     if (w) *w = g[idx].w;
     if (h) *h = g[idx].hh;
     return g[idx].rgba.data();
+}
+
+// #31 — crisp higher-res HUD heart textures. Decode the embedded PNGs once into persistent RGBA32
+// (grayscale: rgb=intensity, a=silhouette). `kind` is SOH3D_HEART_* (0..4). Returns the buffer +
+// dims, or NULL on failure. The N64 heart combine reads TEXEL0.rgb as the PRIM<->ENV lerp factor,
+// so a grayscale heart tints identically to the original IA8 one (see z_lifemeter.c).
+const void* SoH3D_HeartTex(int kind, int* w, int* h) {
+    struct Tex { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
+    static Tex t[5];
+    static int tried = 0;
+    if (!tried) {
+        tried = 1;
+        const unsigned char* png[5] = { kHeartFullPng, kHeartThreeQuarterPng, kHeartHalfPng,
+                                        kHeartQuarterPng, kHeartEmptyPng };
+        unsigned int len[5] = { kHeartFullPngLen, kHeartThreeQuarterPngLen, kHeartHalfPngLen,
+                                kHeartQuarterPngLen, kHeartEmptyPngLen };
+        for (int i = 0; i < 5; i++) {
+            int sw = 0, sh = 0, n = 0;
+            stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
+            if (px) {
+                t[i].rgba.assign(px, px + (size_t)sw * sh * 4);
+                t[i].w = sw; t[i].hh = sh;
+                stbi_image_free(px);
+            } else {
+                fprintf(stderr, "[SoH3D] heart tex %d: PNG decode failed\n", i);
+            }
+        }
+    }
+    if (kind < 0 || kind >= 5 || t[kind].rgba.empty()) {
+        if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    if (w) *w = t[kind].w;
+    if (h) *h = t[kind].hh;
+    return t[kind].rgba.data();
 }
 
 // Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR

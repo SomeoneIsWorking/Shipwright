@@ -99,6 +99,11 @@ float SoH3D_ActorRenderYOffset(PlayState* play, Actor* actor);
 // on a floor hit, else 0. For verifying the warp aligned the drawn ground to N64.
 int SoH3D_RoomMeshFloorAt(int modelId, float x, float z, float* outY);
 
+// #5 — real stepped-polygon stairs: replace OoT3D fake-flat "kaidan" ramps with actual
+// treads+risers. SetStairs evicts cached scene-room models so the scene rebuilds (live A/B).
+void SoH3D_SetStairs(int on);
+int SoH3D_GetStairs(void);
+
 // World scale for the OoT3D pot (OoT3D model units -> N64 world units). Tuned by
 // matching the rendered height of the OoT3D pot to the N64 pot at the same spot
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands

@@ -18,8 +18,10 @@
 #include "fast/soh3d_gl.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <set>
 #include <functional>
 #include <cstdio>
@@ -237,14 +239,232 @@ static int appendTextures(LoadedModel* out, const SoH3D::Cmb& cmb, std::vector<s
     return base;
 }
 
+// ============================================================================
+// #5 — Real stepped-polygon stairs from the OoT3D fake-flat "kaidan" ramps.
+//
+// OoT3D (like the N64 original) renders staircases as a single FLAT textured ramp:
+// the slope is one planar quad and the step lines are painted into its texture. The
+// texture is the game's own label for stairs — its name contains "kaidan" (Japanese
+// 階段, "staircase"; e.g. spot01's `s01_kaidan_01`). We use that name as the detection
+// signal (grounded in the asset, not a per-scene magic region): every kaidan ramp in
+// every scene is replaced by ACTUAL 3D step geometry — horizontal treads + vertical
+// risers — covering the exact same footprint, kept on the SAME kaidan material so the
+// texture/UV/lighting/cull all match. The original flat ramp triangles are dropped.
+//
+// Step rise is derived from the asset, not chosen to "look right": the kaidan texture
+// paints ~11 steps per 128px V-tile (FFT of s01_kaidan_01), and the ramp UV maps ~86
+// world-Y per V-tile, so each painted step rises ~7.8 world-units. We make one real
+// step per painted step: N = round(rampRiseY / kStairRiserY).
+static const float kStairRiserY = 7.8f;
+int gSoH3dStairs = 1; // env SOH3D_STAIRS / REPL `stairs` gate (default on)
+
+static bool texNameIsKaidan(const SoH3D::Cmb& cmb, int matIndex) {
+    if (matIndex < 0 || matIndex >= (int)cmb.materials().size()) return false;
+    int ti = cmb.materials()[matIndex].tex0_idx;
+    if (ti < 0 || ti >= (int)cmb.textures().size()) return false;
+    return cmb.textures()[ti].name.find("kaidan") != std::string::npos;
+}
+
+// Solve a 3x3 linear system A x = b (Gaussian elimination, partial pivot). Returns false
+// if singular. Used to fit the ramp's affine UV(a,c) map so generated step verts inherit
+// the original texture coordinates.
+static bool solve3(double A[3][3], double b[3], double x[3]) {
+    for (int col = 0; col < 3; col++) {
+        int piv = col;
+        for (int r = col + 1; r < 3; r++)
+            if (std::fabs(A[r][col]) > std::fabs(A[piv][col])) piv = r;
+        if (std::fabs(A[piv][col]) < 1e-12) return false;
+        if (piv != col) {
+            for (int k = 0; k < 3; k++) std::swap(A[piv][k], A[col][k]);
+            std::swap(b[piv], b[col]);
+        }
+        for (int r = col + 1; r < 3; r++) {
+            double f = A[r][col] / A[col][col];
+            for (int k = col; k < 3; k++) A[r][k] -= f * A[col][k];
+            b[r] -= f * b[col];
+        }
+    }
+    for (int r = 2; r >= 0; r--) {
+        double s = b[r];
+        for (int k = r + 1; k < 3; k++) s -= A[r][k] * x[k];
+        x[r] = s / A[r][r];
+    }
+    return true;
+}
+
+// Replace one kaidan draw group's flat-ramp triangles with stepped geometry. Each
+// connected, coplanar patch (a single ramp; one group may hold several separate
+// staircases) is rebuilt as treads+risers over its footprint.
+static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
+    size_t ntri = g.verts.size() / 3;
+    if (ntri < 2) return;
+
+    // Per-triangle outward normal (CCW winding -> outward, matches the CMB convention).
+    auto triNormal = [&](size_t t, float n[3]) {
+        const float* p0 = g.verts[3 * t + 0].pos;
+        const float* p1 = g.verts[3 * t + 1].pos;
+        const float* p2 = g.verts[3 * t + 2].pos;
+        float e1[3] = { p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2] };
+        float e2[3] = { p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2] };
+        n[0] = e1[1] * e2[2] - e1[2] * e2[1];
+        n[1] = e1[2] * e2[0] - e1[0] * e2[2];
+        n[2] = e1[0] * e2[1] - e1[1] * e2[0];
+        float l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (l > 1e-9f) { n[0] /= l; n[1] /= l; n[2] /= l; }
+    };
+    std::vector<std::array<float, 3>> nrm(ntri);
+    for (size_t t = 0; t < ntri; t++) triNormal(t, nrm[t].data());
+
+    // Union-find: connect triangles that SHARE a vertex AND are ~coplanar (normal dot
+    // > 0.98). Separate staircases (no shared verts) and touching ramps of different
+    // orientation stay distinct patches.
+    std::vector<int> parent(ntri);
+    for (size_t i = 0; i < ntri; i++) parent[i] = (int)i;
+    std::function<int(int)> find = [&](int a) {
+        while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+        return a;
+    };
+    auto coplanar = [&](size_t a, size_t b) {
+        return nrm[a][0] * nrm[b][0] + nrm[a][1] * nrm[b][1] + nrm[a][2] * nrm[b][2] > 0.98f;
+    };
+    std::unordered_map<uint64_t, int> vmap; // quantized vertex -> a triangle that touches it
+    auto vkey = [](const float* p) -> uint64_t {
+        auto q = [](float v) -> uint64_t { return (uint64_t)(int64_t)std::llround(v / 2.0f) & 0x1FFFFF; };
+        return (q(p[0]) << 42) | (q(p[1]) << 21) | q(p[2]);
+    };
+    for (size_t t = 0; t < ntri; t++) {
+        for (int k = 0; k < 3; k++) {
+            uint64_t key = vkey(g.verts[3 * t + k].pos);
+            auto it = vmap.find(key);
+            if (it != vmap.end() && coplanar(t, (size_t)it->second)) {
+                parent[find((int)t)] = find(it->second);
+            }
+            vmap[key] = (int)t; // last writer; union above stitches the chain
+        }
+    }
+    std::unordered_map<int, std::vector<int>> patches;
+    for (size_t t = 0; t < ntri; t++) patches[find((int)t)].push_back((int)t);
+
+    std::vector<SoH3D::CmbVertex> outv;
+    outv.reserve(g.verts.size() * 4);
+
+    for (auto& kv : patches) {
+        const std::vector<int>& tris = kv.second;
+        // Patch average normal.
+        float n[3] = { 0, 0, 0 };
+        for (int t : tris) { n[0] += nrm[t][0]; n[1] += nrm[t][1]; n[2] += nrm[t][2]; }
+        float nl = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (nl < 1e-6f) continue;
+        n[0] /= nl; n[1] /= nl; n[2] /= nl;
+
+        // Only stair-able FLOORS: upward-facing and actually sloped (a flat floor or a
+        // near-vertical wall is not a ramp). Otherwise keep the original tris verbatim.
+        bool slope = n[1] > 0.5f && (n[0] * n[0] + n[2] * n[2]) > 0.02f;
+        if (!slope) {
+            for (int t : tris)
+                for (int k = 0; k < 3; k++) outv.push_back(g.verts[3 * t + k]);
+            continue;
+        }
+
+        // Horizontal ascend direction = uphill gradient = normalize(-nx, 0, -nz).
+        float ah = std::sqrt(n[0] * n[0] + n[2] * n[2]);
+        float aDir[3] = { -n[0] / ah, 0.0f, -n[2] / ah };
+        float cDir[3] = { aDir[2], 0.0f, -aDir[0] }; // perpendicular (across), in XZ
+        auto aOf = [&](const float* p) { return aDir[0] * p[0] + aDir[2] * p[2]; };
+        auto cOf = [&](const float* p) { return cDir[0] * p[0] + cDir[2] * p[2]; };
+
+        // Footprint (a,c) bbox and Y range; affine UV(a,c) fit (least squares).
+        float amin = 1e30f, amax = -1e30f, cmin = 1e30f, cmax = -1e30f, ymin = 1e30f, ymax = -1e30f;
+        double M[3][3] = {}, bu[3] = {}, bv[3] = {};
+        float col[4] = {}; int nc = 0;
+        const SoH3D::CmbVertex& src = g.verts[3 * tris[0]];
+        for (int t : tris) {
+            for (int k = 0; k < 3; k++) {
+                const SoH3D::CmbVertex& v = g.verts[3 * t + k];
+                float a = aOf(v.pos), c = cOf(v.pos), y = v.pos[1];
+                amin = std::min(amin, a); amax = std::max(amax, a);
+                cmin = std::min(cmin, c); cmax = std::max(cmax, c);
+                ymin = std::min(ymin, y); ymax = std::max(ymax, y);
+                double r[3] = { a, c, 1.0 };
+                for (int i = 0; i < 3; i++) {
+                    for (int j = 0; j < 3; j++) M[i][j] += r[i] * r[j];
+                    bu[i] += r[i] * v.uv[0];
+                    bv[i] += r[i] * v.uv[1];
+                }
+                for (int e = 0; e < 4; e++) col[e] += v.color[e];
+                nc++;
+            }
+        }
+        for (int e = 0; e < 4; e++) col[e] /= (float)nc;
+
+        double mu[3], mv[3];
+        double Mu[3][3], Mv[3][3];
+        std::memcpy(Mu, M, sizeof(M)); std::memcpy(Mv, M, sizeof(M));
+        bool uvOk = solve3(Mu, bu, mu) && solve3(Mv, bv, mv);
+        if (amax - amin < 1.0f || cmax - cmin < 1.0f || ymax - ymin < 1.0f || !uvOk) {
+            for (int t : tris)
+                for (int k = 0; k < 3; k++) outv.push_back(g.verts[3 * t + k]);
+            continue;
+        }
+
+        int N = (int)std::lround((ymax - ymin) / kStairRiserY);
+        if (N < 1) N = 1;
+        if (N > 200) N = 200;
+        float da = (amax - amin) / N, dy = (ymax - ymin) / N;
+
+        // Emit a vertex at surface coords (a, y, c) with affine-mapped UV, patch color,
+        // and the source vertex's bone binding (rigid weight=1 on the room's bone).
+        auto emit = [&](float a, float y, float c, const float nrmv[3]) {
+            SoH3D::CmbVertex v = src;
+            v.pos[0] = aDir[0] * a + cDir[0] * c;
+            v.pos[1] = y;
+            v.pos[2] = aDir[2] * a + cDir[2] * c;
+            v.nrm[0] = nrmv[0]; v.nrm[1] = nrmv[1]; v.nrm[2] = nrmv[2];
+            v.uv[0] = (float)(mu[0] * a + mu[1] * c + mu[2]);
+            v.uv[1] = (float)(mv[0] * a + mv[1] * c + mv[2]);
+            for (int e = 0; e < 4; e++) v.color[e] = col[e];
+            outv.push_back(v);
+        };
+        const float nUp[3] = { 0, 1, 0 };
+        const float nDn[3] = { -aDir[0], 0, -aDir[2] }; // riser faces downhill
+        for (int k = 0; k < N; k++) {
+            float a0 = amin + k * da, a1 = amin + (k + 1) * da;
+            float yTop = ymin + (k + 1) * dy, yBot = ymin + k * dy;
+            // Tread (top face, +Y): (a0,cmin)(a1,cmin)(a1,cmax) + (a0,cmin)(a1,cmax)(a0,cmax)
+            emit(a0, yTop, cmin, nUp); emit(a1, yTop, cmin, nUp); emit(a1, yTop, cmax, nUp);
+            emit(a0, yTop, cmin, nUp); emit(a1, yTop, cmax, nUp); emit(a0, yTop, cmax, nUp);
+            // Riser (front face, -aDir): (a0,cmin,yBot)(a0,cmin,yTop)(a0,cmax,yTop) +
+            //                            (a0,cmin,yBot)(a0,cmax,yTop)(a0,cmax,yBot)
+            emit(a0, yBot, cmin, nDn); emit(a0, yTop, cmin, nDn); emit(a0, yTop, cmax, nDn);
+            emit(a0, yBot, cmin, nDn); emit(a0, yTop, cmax, nDn); emit(a0, yBot, cmax, nDn);
+        }
+    }
+    g.verts.swap(outv);
+}
+
+// Replace every kaidan ramp group in a freshly-built scene-room model with stepped
+// geometry. cGroups must be (re)built AFTER this — it mutates group vert vectors.
+static void generateRoomStairs(LoadedModel* out) {
+    static int envChecked = 0;
+    if (!envChecked) {
+        envChecked = 1;
+        const char* e = getenv("SOH3D_STAIRS");
+        if (e && *e) gSoH3dStairs = atoi(e);
+    }
+    if (!gSoH3dStairs || !out->cmb) return;
+    for (auto& g : out->groups)
+        if (texNameIsKaidan(*out->cmb, g.material_index)) generateStairsGroup(g);
+}
+
 static void buildFromCmb(LoadedModel* out, bool bakedVertexColor,
-                         const std::vector<uint8_t>& skipMesh = {}) {
+                         const std::vector<uint8_t>& skipMesh = {}, bool stairs = false) {
     SoH3D::Cmb& cmb = *out->cmb;
     out->groups = cmb.buildDrawGroups(skipMesh);
     if (!bakedVertexColor) {
         for (auto& g : out->groups)
             for (auto& v : g.verts) { v.color[0] = v.color[1] = v.color[2] = v.color[3] = 1.0f; }
     }
+    if (stairs) generateRoomStairs(out);
 
     std::vector<std::pair<int,int>> dims;
     appendTextures(out, cmb, &dims);
@@ -306,7 +526,8 @@ static void loadSceneRoom(int modelId, LoadedModel* out) {
     if (!zsi.hasGeometry()) { fprintf(stderr, "[SoH3D] no room geometry in %s\n", path.c_str()); return; }
     out->cmb = std::make_unique<SoH3D::Cmb>(zsi.cmbBytes());
     if (!out->cmb->ok()) { fprintf(stderr, "[SoH3D] Cmb %s: %s\n", path.c_str(), out->cmb->error().c_str()); return; }
-    buildFromCmb(out, /*bakedVertexColor=*/true); // scene rooms carry OoT3D baked vertex lighting
+    // scene rooms carry OoT3D baked vertex lighting; #5 turns fake-flat kaidan ramps into real steps
+    buildFromCmb(out, /*bakedVertexColor=*/true, /*skipMesh=*/{}, /*stairs=*/true);
     printf("[SoH3D] loaded scene-room model %d (%s): %zu groups, %zu textures\n", modelId, path.c_str(),
            out->cGroups.size(), out->cTexs.size());
 }
@@ -841,6 +1062,17 @@ int SoH3D_RoomModelId(const char* sceneName, int roomNum) {
     g_sceneRoomIds[path] = id;
     return id;
 }
+
+// #5 — toggle real stepped stairs. Sets the gate and evicts every cached scene-room
+// model so the next draw rebuilds (with or without generated steps), for live A/B.
+void SoH3D_SetStairs(int on) {
+    gSoH3dStairs = on ? 1 : 0;
+    for (auto it = g_loaded.begin(); it != g_loaded.end();) {
+        if (it->first >= kSceneModelBase && it->first < kAutoModelBase) it = g_loaded.erase(it);
+        else ++it;
+    }
+}
+int SoH3D_GetStairs(void) { return gSoH3dStairs; }
 
 // Get-or-allocate a stable model id for an auto-replaced actor model, keyed by its ZAR
 // path (e.g. "/actor/zelda_box.zar"). The geometry loads lazily on first draw via the

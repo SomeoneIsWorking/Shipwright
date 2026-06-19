@@ -3147,6 +3147,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         SoH3D_ReplReply(outPath, "sky=%d scale=%.2f skyboxId=%d idx1=%d idx2=%d blend=%d", gSoH3dSky,
                         gSoH3dSkyScale, play->skyboxId, play->envCtx.skybox1Index, play->envCtx.skybox2Index,
                         play->envCtx.skyboxBlend);
+    } else if (strcmp(cmd, "stairs") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #5 — toggle real stepped-polygon stairs (kaidan ramps -> treads+risers). Evicts the
+        // cached CPU scene-room models, but the GL backend caches the uploaded geometry per
+        // model id and won't re-fetch for an already-loaded room — so this applies to rooms
+        // loaded AFTER this (a different scene). For a clean same-scene A/B baseline, relaunch
+        // with env SOH3D_STAIRS=0 vs =1.
+        SoH3D_SetStairs((int)f1);
+        SoH3D_ReplReply(outPath, "stairs=%d (applies to rooms loaded after this; use SOH3D_STAIRS env for same-scene A/B)",
+                        SoH3D_GetStairs());
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;

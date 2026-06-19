@@ -2714,6 +2714,8 @@ void SoH3D_DebugDrawKibako(PlayState* play) {
 //   animrate <f>       free-running frames/draw (scrub mode)  animframe <f>  set frame
 //   spawn <name>       spawn that actor in front of Link (front-right, clears Link)
 //   actorscan <id>     list world pos + dist of every live actor with id (dec or 0xHEX)
+//   floaters [thr]     list every live actor whose Y sits >thr (def 100) above the N64
+//                      floor under it — finds mid-air/half-buried actors (per-actor-Y bugs)
 //   dump <path.ppm>    capture the current frame to <path> (no exit)
 //   state              report all tunables + the current computed tint
 // ===========================================================================
@@ -3261,6 +3263,43 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             }
         }
         SoH3D_ReplReply(outPath, "actorsnear: %d listed, %d with no object->ZAR (always N64)", n, nN64);
+    } else if (strcmp(cmd, "floaters") == 0) {
+        // Find mid-air / half-buried actors (the per-actor-Y bug family, e.g. an NPC walking
+        // above a roof or a boulder sunk underground). For every live actor, raycast the N64
+        // floor at its XZ and report those whose world.pos.y sits more than <thr> (default 100)
+        // ABOVE that floor — i.e. visibly off the ground. dy>0 = airborne/floating; sorted-ish
+        // by category. Tooling-first: replaces blind scene-wandering to locate the offender.
+        // dy   = world.pos.y - N64 floor (actor's ACTUAL position off the ground)
+        // rofs = SoH3D_ActorRenderYOffset (the lift we ADD to the render onto the OoT3D mesh);
+        //        a large +rofs draws the actor in mid-air (e.g. RoomOoT3DFloorAt picking a roof),
+        //        a large -rofs buries it. Either |signal| > thr is flagged.
+        float thr = 100.0f;
+        (void)sscanf(line, "%*s %f", &thr);
+        Player* pl = GET_PLAYER(play);
+        s32 cat, n = 0;
+        sWarpPlay = play; // SoH3D_N64FloorCb needs the PlayState/colCtx
+        SoH3D_ReplReply(outPath, "floaters thr=%.0f (dy=Y-above-floor, rofs=render lift):", thr);
+        for (cat = 0; cat < ACTORCAT_MAX; cat++) {
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL && n < 60; a = a->next) {
+                float floor, dy, rofs, dx, dz, dist;
+                if (a->id == ACTOR_PLAYER) continue;
+                rofs = SoH3D_ActorRenderYOffset(play, a);
+                sWarpPlay = play; // ActorRenderYOffset reset it; restore for our raycast
+                floor = SoH3D_N64FloorCb(a->world.pos.x, a->world.pos.z);
+                dy = (floor <= -31000.0f) ? 0.0f : a->world.pos.y - floor;
+                if (dy <= thr && fabsf(rofs) <= thr) continue;
+                dx = a->world.pos.x - pl->actor.world.pos.x;
+                dz = a->world.pos.z - pl->actor.world.pos.z;
+                dist = sqrtf(dx * dx + dz * dz);
+                SoH3D_ReplReply(outPath,
+                                "  id=0x%-4X p=0x%04X cat=%d pos=(%.0f,%.0f,%.0f) floor=%.0f dy=%.0f rofs=%.0f dist=%.0f drawn=%d",
+                                a->id, (u16)a->params, cat, a->world.pos.x, a->world.pos.y,
+                                a->world.pos.z, floor, dy, rofs, dist, a->isDrawn);
+                n++;
+            }
+        }
+        SoH3D_ReplReply(outPath, "floaters: %d flagged (dy or rofs >%.0f)", n, thr);
     } else if (strcmp(cmd, "meshfloor") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Height of the OoT3D render mesh's floor at (x,z) for the room Link is in. After
         // the terrain warp this should match `floorat` (N64) on walkable ground.

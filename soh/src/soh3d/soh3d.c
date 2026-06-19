@@ -148,9 +148,51 @@ typedef struct {
 // in soh3d_model.cpp.
 void SoH3D_UpdateAnimN64Corr(int modelId, const s16* jointRots, int rotCount, const SoH3dBoneCorr* corr,
                              int corrCount);
-// childlink_v2 per-bone retarget correction (kLinkChildBoneCorr). Generated; legs/neck stay on pure
-// replace (no regression), divergent spine/upper-arms get a fitted constant C.
+// childlink_v2 per-bone retarget correction (kLinkChildBoneCorr). Legs/neck stay on pure replace
+// (no regression); the divergent spine/upper-arms are HAND-WOVEN (#7/#31) — a constant fitted C
+// provably can't reconcile the re-authored OoT3D arm motion, so the arm corrections are tuned by
+// hand against the OoT3D CSAB ground truth (linksrc 3ds), NOT auto-fit.
 #include "soh3d_link_bonecorr.inc"
+
+// HAND-WEAVE live-tune scaffold (#7 long arm). A mutable runtime copy of the table that the player
+// path actually passes, so each upper-body bone's correction can be adjusted LIVE over the REPL
+// (`linkcorr`) and seen in-game against the 3ds ground truth, instead of rebuild-per-guess. The
+// final hand-tuned values get baked back into soh3d_link_bonecorr.inc (`linkcorr bake <path>`).
+static SoH3dBoneCorr gLinkBoneCorr[25];
+static int gLinkBoneCorrInit = 0;
+// Pose-freeze for hand-weaving: latch the live player jointTable so the idle pose holds still and the
+// only variable while tuning `linkcorr` is the correction itself (REPL `linkfreeze 1|0`).
+static Vec3s gLinkFrozenJoints[40];
+static int gLinkFrozenCount = 0; // >0 = pose frozen at this limbCount
+static int gLinkFreezeReq = 0;   // 1 = latch the live pose on the next player draw
+static void SoH3D_LinkBoneCorrEnsure(void) {
+    if (gLinkBoneCorrInit) return;
+    memcpy(gLinkBoneCorr, kLinkChildBoneCorr, sizeof(gLinkBoneCorr));
+    gLinkBoneCorrInit = 1;
+}
+// Build a row-major 3x3 rotation C = Rz(cz)·Ry(cy)·Rx(cx) (the live/csab ZYX convention) from
+// Euler degrees, written into out[9]. Identity when all zero.
+static void SoH3D_EulerToMat3(float cxDeg, float cyDeg, float czDeg, float* out) {
+    float rx = cxDeg * (3.14159265358979f / 180.0f);
+    float ry = cyDeg * (3.14159265358979f / 180.0f);
+    float rz = czDeg * (3.14159265358979f / 180.0f);
+    float cx = cosf(rx), sx = sinf(rx), cy = cosf(ry), sy = sinf(ry), cz = cosf(rz), sz = sinf(rz);
+    // Rz*Ry*Rx, row-major.
+    out[0] = cz * cy;                 out[1] = cz * sy * sx - sz * cx;  out[2] = cz * sy * cx + sz * sx;
+    out[3] = sz * cy;                 out[4] = sz * sy * sx + cz * cx;  out[5] = sz * sy * cx - cz * sx;
+    out[6] = -sy;                     out[7] = cy * sx;                 out[8] = cy * cx;
+}
+// Inverse: recover (cx,cy,cz) degrees from a row-major 3x3 such that M = Rz·Ry·Rx. For display.
+static void SoH3D_Mat3ToEuler(const float* m, float* outDeg) {
+    float sy = -m[6];
+    if (sy > 1.0f) sy = 1.0f; else if (sy < -1.0f) sy = -1.0f;
+    float ry = asinf(sy), rx, rz;
+    if (fabsf(m[6]) < 0.99999f) { rx = atan2f(m[7], m[8]); rz = atan2f(m[3], m[0]); }
+    else { rx = atan2f(-m[5], m[4]); rz = 0.0f; }
+    outDeg[0] = rx * (180.0f / 3.14159265358979f);
+    outDeg[1] = ry * (180.0f / 3.14159265358979f);
+    outDeg[2] = rz * (180.0f / 3.14159265358979f);
+}
 
 // Find the precomputed bone map for a ZAR path, or NULL if none (-> identity retarget + runtime
 // rest-pose scale).
@@ -2640,9 +2682,18 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
                 fflush(stdout);
             }
         }
-        SoH3D_UpdateAnimN64Corr(modelId, (const s16*)&player->skelAnime.jointTable[1],
-                                player->skelAnime.limbCount, kLinkChildBoneCorr,
-                                (int)ARRAY_COUNT(kLinkChildBoneCorr));
+        SoH3D_LinkBoneCorrEnsure();
+        // Hand-weave pose-freeze: latch the live idle jointTable on request, then feed the frozen copy
+        // so tuning `linkcorr` is the only variable (the idle fidget otherwise moves the pose).
+        const s16* jrots = (const s16*)&player->skelAnime.jointTable[1];
+        int jcount = player->skelAnime.limbCount;
+        if (gLinkFreezeReq && jcount > 0 && jcount < 39) {
+            for (int i = 0; i <= jcount; i++) gLinkFrozenJoints[i] = player->skelAnime.jointTable[i];
+            gLinkFrozenCount = jcount;
+            gLinkFreezeReq = 0;
+        }
+        if (gLinkFrozenCount > 0) { jrots = (const s16*)&gLinkFrozenJoints[1]; jcount = gLinkFrozenCount; }
+        SoH3D_UpdateAnimN64Corr(modelId, jrots, jcount, gLinkBoneCorr, (int)ARRAY_COUNT(gLinkBoneCorr));
     } else {
         // 3DS OWN-CSAB: pick the link CSAB matching Link's named anim, phase-locked to curFrame/animLength.
         // Unmapped -> idle so it never freezes in bind pose. NOTE (#29b): the documented "slide" (idle
@@ -3485,6 +3536,81 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "linkloco gain=%.3f (CSAB frames/draw per speed unit); link speedXZ=%.2f",
                         gSoH3dLinkLocoGain, GET_PLAYER(play)->actor.speedXZ);
+    } else if (strcmp(cmd, "linkfreeze") == 0) {
+        // #7 hand-weave: freeze Link's live idle pose so `linkcorr` tweaks are the only variable.
+        if (sscanf(line, "%*s %i", &iv) == 1) {
+            if (iv) { gLinkFreezeReq = 1; gLinkFrozenCount = 0; }
+            else { gLinkFrozenCount = 0; gLinkFreezeReq = 0; }
+        }
+        SoH3D_ReplReply(outPath, "linkfreeze=%d (frozenLimbs=%d, req=%d)",
+                        gLinkFrozenCount > 0 ? 1 : 0, gLinkFrozenCount, gLinkFreezeReq);
+    } else if (strcmp(cmd, "linkcorr") == 0) {
+        // #7 HAND-WEAVE the per-bone arm/upper-body retarget correction LIVE (linksrc n64).
+        //   linkcorr                         -> show upper-body bones (b9..b20): mode + C euler (zyx deg)
+        //   linkcorr set <bid> <mode> <cx> <cy> <cz> [<c2x> <c2y> <c2z>]
+        //                                    -> set bone bid (mode 1=replace 2=C·R 3=R·C 4=C·R·C2)
+        //   linkcorr reset                   -> restore the generated table
+        //   linkcorr bake <path>             -> write the live table as a 25-row .inc for committing
+        char sub[64] = "";
+        SoH3D_LinkBoneCorrEnsure();
+        int n = sscanf(line, "%*s %63s", sub);
+        if (n == 1 && strcmp(sub, "reset") == 0) {
+            memcpy(gLinkBoneCorr, kLinkChildBoneCorr, sizeof(gLinkBoneCorr));
+            SoH3D_ReplReply(outPath, "linkcorr reset to generated table");
+        } else if (n == 1 && strcmp(sub, "set") == 0) {
+            int bid = -1, mode = 0; float c[3] = { 0, 0, 0 }, c2[3] = { 0, 0, 0 };
+            int got = sscanf(line, "%*s %*s %i %i %f %f %f %f %f %f", &bid, &mode, &c[0], &c[1], &c[2],
+                             &c2[0], &c2[1], &c2[2]);
+            if (got >= 5 && bid >= 0 && bid < 25) {
+                gLinkBoneCorr[bid].mode = (unsigned char)mode;
+                SoH3D_EulerToMat3(c[0], c[1], c[2], gLinkBoneCorr[bid].C);
+                SoH3D_EulerToMat3(c2[0], c2[1], c2[2], gLinkBoneCorr[bid].C2);
+                SoH3D_ReplReply(outPath, "linkcorr b%d limb=%d mode=%d C=(%.1f,%.1f,%.1f) C2=(%.1f,%.1f,%.1f)",
+                                bid, gLinkBoneCorr[bid].limb, mode, c[0], c[1], c[2], c2[0], c2[1], c2[2]);
+            } else {
+                SoH3D_ReplReply(outPath, "usage: linkcorr set <bid> <mode> <cx> <cy> <cz> [c2x c2y c2z]");
+            }
+        } else if (n == 1 && strcmp(sub, "bake") == 0) {
+            char path[1024] = "";
+            if (sscanf(line, "%*s %*s %1023s", path) == 1) {
+                FILE* f = fopen(path, "w");
+                if (!f) { SoH3D_ReplReply(outPath, "linkcorr bake: cannot open %s", path); }
+                else {
+                    fprintf(f, "// HAND-WOVEN by REPL `linkcorr` (#7 long-arm) — arms/upper body tuned by\n");
+                    fprintf(f, "// hand vs the OoT3D CSAB ground truth; legs/neck on pure replace. NOT auto-fit.\n");
+                    fprintf(f, "// Per OoT3D childlink_v2 bone: { n64Limb, mode, C[9], C2[9] }. mode 0=rest,\n");
+                    fprintf(f, "// 1=replace, 2=left C·R, 3=right R·C, 4=two-sided C·R·C2.\n");
+                    fprintf(f, "static const SoH3dBoneCorr kLinkChildBoneCorr[25] = {\n");
+                    for (int b = 0; b < 25; b++) {
+                        const SoH3dBoneCorr* bc = &gLinkBoneCorr[b];
+                        fprintf(f, "    { %3d, %d, {", bc->limb, bc->mode);
+                        for (int k = 0; k < 9; k++) fprintf(f, "%s%.6ff", k ? "," : "", bc->C[k]);
+                        fprintf(f, " }, {");
+                        for (int k = 0; k < 9; k++) fprintf(f, "%s%.6ff", k ? "," : "", bc->C2[k]);
+                        fprintf(f, " } }, // b%d\n", b);
+                    }
+                    fprintf(f, "};\n");
+                    fclose(f);
+                    SoH3D_ReplReply(outPath, "linkcorr baked -> %s", path);
+                }
+            } else {
+                SoH3D_ReplReply(outPath, "usage: linkcorr bake <path>");
+            }
+        } else {
+            // show: dump upper-body bones with their C (and C2) decomposed to zyx euler degrees.
+            char buf[1024]; int off = 0;
+            off += snprintf(buf + off, sizeof(buf) - off, "linkcorr (upper body):");
+            for (int b = 9; b <= 20 && off < (int)sizeof(buf) - 80; b++) {
+                float e[3], e2[3];
+                SoH3D_Mat3ToEuler(gLinkBoneCorr[b].C, e);
+                SoH3D_Mat3ToEuler(gLinkBoneCorr[b].C2, e2);
+                off += snprintf(buf + off, sizeof(buf) - off, " b%d:l%d m%d C(%.0f,%.0f,%.0f)", b,
+                                gLinkBoneCorr[b].limb, gLinkBoneCorr[b].mode, e[0], e[1], e[2]);
+                if (gLinkBoneCorr[b].mode == 4)
+                    off += snprintf(buf + off, sizeof(buf) - off, "/C2(%.0f,%.0f,%.0f)", e2[0], e2[1], e2[2]);
+            }
+            SoH3D_ReplReply(outPath, "%s", buf);
+        }
     } else if (strcmp(cmd, "linkrot") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         extern float gSoH3dLinkRotX, gSoH3dLinkRotY, gSoH3dLinkRotZ;
         gSoH3dLinkRotX = f1;

@@ -540,14 +540,22 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
             // Riser (front face, -aDir) at a1, yk -> yk1: top yk1 = nosing (V=Vnose), bottom yk = V=1.
             emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
             emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
-            // Side caps: fill the triangular sliver between this lowered tread and the original
-            // ramp's straight side diagonal (the edge the surrounding terrain meets), on BOTH c
-            // edges, so the open sides no longer show the background through them. The cap's
-            // hypotenuse (a0,yk)->(a1,yk1) traces that diagonal == the original ramp silhouette.
-            // Mapped to riser stone (U along the run, V by height) so the sides read as stone.
+            // Side stringers (#5, user 2026-06-19: "sides of stairs are still triangles"): the old
+            // side caps filled the sliver up to the original ramp's straight diagonal, so the SIDE
+            // read as a smooth diagonal. Instead emit a SOLID stepped wall from the staircase base
+            // (ymin) up to this step's tread height (yk), on BOTH c edges. The wall tops step up with
+            // each tread and the vertical jump to the next tread's wall reads as the riser -> the side
+            // now shows real steps. Closed solid (no see-through); where the flight is embedded in a
+            // hillside the lower wall sits below/behind the terrain and is occluded. Stone UV: U along
+            // the run, V by height (tiles via WRAP). Winding mirrors the tread/riser faces above.
             float uA0 = a0 / kTileW, uA1 = a1 / kTileW;
-            emit(a0, yk, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk1, f.cmin, uA1, Vnose, nCmin); emit(a1, yk, f.cmin, uA1, 1.0f, nCmin);
-            emit(a0, yk, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, 1.0f, nCmax); emit(a1, yk1, f.cmax, uA1, Vnose, nCmax);
+            float vTop = (f.ymax - yk) / kTileW, vBot = (f.ymax - f.ymin) / kTileW;
+            // cmin wall (faces -c): (a0,ymin)->(a1,ymin)->(a1,yk)->(a0,yk)
+            emit(a0, f.ymin, f.cmin, uA0, vBot, nCmin); emit(a1, f.ymin, f.cmin, uA1, vBot, nCmin); emit(a1, yk, f.cmin, uA1, vTop, nCmin);
+            emit(a0, f.ymin, f.cmin, uA0, vBot, nCmin); emit(a1, yk, f.cmin, uA1, vTop, nCmin); emit(a0, yk, f.cmin, uA0, vTop, nCmin);
+            // cmax wall (faces +c): opposite winding
+            emit(a0, f.ymin, f.cmax, uA0, vBot, nCmax); emit(a1, yk, f.cmax, uA1, vTop, nCmax); emit(a1, f.ymin, f.cmax, uA1, vBot, nCmax);
+            emit(a0, f.ymin, f.cmax, uA0, vBot, nCmax); emit(a0, yk, f.cmax, uA0, vTop, nCmax); emit(a1, yk, f.cmax, uA1, vTop, nCmax);
         }
     }
     g.verts.swap(outv);

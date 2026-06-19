@@ -12,6 +12,7 @@
 #include "vt.h"
 #include "soh/ResourceManagerHelpers.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
+#include "soh3d/soh3d.h" // SoH3D: keep replaced Kokiri kids opaque past the N64 distance fade (#3)
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_FRIENDLY | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
@@ -1107,9 +1108,16 @@ void func_80A98DB4(EnKo* this, PlayState* play) {
         dist = this->actor.xzDistToPlayer;
     }
 
-    Math_SmoothStepToF(&this->modelAlpha,
-                       GameInteractor_Should(VB_FADE_KOKIRI, this->appearDist < dist, this) ? 0.0f : 255.0f, 0.3f,
-                       40.0f, 1.0f);
+    s32 shouldFade = GameInteractor_Should(VB_FADE_KOKIRI, this->appearDist < dist, this);
+    // SoH3D #3: the OoT3D Kokiri-kid replacement is emitted from inside EnKo_Draw's SkelAnime call,
+    // which EnKo_Draw skips entirely once modelAlpha reaches 0. The vanilla distance-fade therefore
+    // makes the replaced kid pop out at range (the user wants effectively infinite draw distance).
+    // Forcing shouldDraw/shouldUpdate alone wasn't enough — the actor's own Draw still self-gated on
+    // alpha. Keep replaced kids fully opaque so the SkelAnime choke point keeps emitting them.
+    if (SoH3D_ActorHasReplacement(play, &this->actor)) {
+        shouldFade = false;
+    }
+    Math_SmoothStepToF(&this->modelAlpha, shouldFade ? 0.0f : 255.0f, 0.3f, 40.0f, 1.0f);
     if (this->modelAlpha < 10.0f) {
         this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
     } else {

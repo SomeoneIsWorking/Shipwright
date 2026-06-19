@@ -10,6 +10,7 @@
 #include "vt.h"
 #include "soh/frame_interpolation.h"
 #include "soh/ResourceManagerHelpers.h"
+#include "soh3d/soh3d.h" // #5 cucco-flap diagnostic (gSoH3dForceCuccoAgitate)
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_THROW_ONLY)
 
@@ -973,6 +974,16 @@ void EnNiw_Update(Actor* thisx, PlayState* play) {
     thisx->shape.rot = thisx->world.rot;
     thisx->shape.shadowScale = 15.0f;
     this->actionFunc(this, play);
+    // #5 diagnostic: force-hold the agitated wing-spread pose so the spread flap can be A/B'd
+    // headless. Runs AFTER actionFunc so it overrides whatever wing targets the idle action set.
+    if (gSoH3dForceCuccoAgitate) {
+        func_80AB5BF8(this, play, 2);
+        // Freeze position + lock yaw to face +Z so every A/B shot is an identical right-side
+        // profile (camera framed from +X) — the wandering cucco otherwise changes orientation.
+        this->actor.speedXZ = 0.0f;
+        this->actor.velocity.x = this->actor.velocity.z = 0.0f;
+        this->actor.world.rot.y = this->actor.shape.rot.y = 0;
+    }
     Actor_SetFocus(&this->actor, this->unk_304);
     Actor_MoveXZGravity(&this->actor);
 

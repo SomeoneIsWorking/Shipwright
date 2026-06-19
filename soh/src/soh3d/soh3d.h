@@ -43,6 +43,12 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime);
 // NULL override clears it. Consumed once per retarget. #23.
 void SoH3D_SetLimbOverride(void* overrideFn, void* arg, int kind);
 
+// #5 cucco-flap diagnostic: when set, EnNiw_Update holds every cucco in its agitated wing-spread
+// pose (func_80AB5BF8 arg 2) each frame, so the spread flap can be A/B'd deterministically headless
+// (N64 model via `enable 0` vs OoT3D replay) to derive/verify the multi-axis wing mapping. REPL
+// `cuccopose <0|1>`. The agitated flap drives the wing bones on local X+Y+Z, not just Z like idle.
+extern int gSoH3dForceCuccoAgitate;
+
 // Raw variant of the N64-anim hook for draw choke points that don't have a SkelAnime* on hand
 // (SkelAnime_DrawFlexOpa / SkelAnime_DrawOpa, called directly by many actors). Same effect as
 // SoH3D_SkelAnimeDraw; derives limbCount from the skeleton tree. Returns 1 if it drew the OoT3D

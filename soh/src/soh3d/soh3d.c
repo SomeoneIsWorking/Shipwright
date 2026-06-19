@@ -243,20 +243,29 @@ typedef s32 (*SoH3dOverrideOpaFn)(PlayState*, s32, Gfx**, Vec3f*, Vec3s*, void*)
 typedef s32 (*SoH3dOverride7Fn)(PlayState*, s32, Gfx**, Vec3f*, Vec3s*, void*, Gfx**);
 
 // One row per (N64 limb -> OoT3D bone) procedural-rotation correspondence, keyed by actor ZAR.
-// sign[axis] (0 = ignore that axis) multiplies the N64 binang delta on that axis before it is
-// added to the SAME-named OoT3D bone-local axis. For the cucco both rigs flap on local Z (verified:
-// chicken.cmb wing bones 3 & 5 rest rZ ~ -159deg, nw_wait swings rZ; N64 limbs 7/11 add to local z),
-// so only Z is mapped. Derived from chicken.cmb bone dump + nw_wait.csab track analysis + z_en_niw.c.
+// The N64 limb-local rotation delta and the OoT3D bone-local frame differ by a constant rest-frame
+// rotation, which (for these rigs) is a signed AXIS PERMUTATION. For each OoT3D bone axis o in
+// {x,y,z}, srcAxis[o] picks which N64 limb axis feeds it (0=x,1=y,2=z; -1 = leave 0) and srcSign[o]
+// is its multiplier. This generalises the old same-axis-only sign[] so a flap whose N64 input is on
+// one axis can drive a DIFFERENT OoT3D bone axis.
+//
+// Cucco (En_Niw) wing bones 3 & 5: derived as the unique PROPER rotation (det=+1) consistent with
+// (a) idle flap N64-z -> OoT3D-z, +1 (pre-#23, verified visually) and (b) the agitated wing-LIFT,
+// which N64 drives on its limb-local y (unk_26C[5]/[7]=25000) and which on the OoT3D bone is the
+// local -x (probed: -x lifts the wing up; +x folds it down). That forces y->x(-1), x->y(+1),
+// z->z(+1): a 90deg roll about the shared wing-Z axis. Verified live A/B (cuccopose) vs the N64
+// model: idle Z-flap unchanged, agitated wing now lifts+fans like N64 instead of spreading flat.
 typedef struct {
     const char* zar;
     s8 n64Limb;
     s8 oot3dBone;
-    f32 sign[3]; // x,y,z multiplier on the N64 binang delta (0 = drop that axis)
+    s8 srcAxis[3];  // OoT3D bone axis [x,y,z] <- this N64 limb axis (0=x,1=y,2=z; -1 = none)
+    f32 srcSign[3]; // multiplier applied to that N64 axis' binang delta
 } SoH3dProcOverrideRow;
 static const SoH3dProcOverrideRow kSoH3dProcOverride[] = {
-    // cucco (En_Niw): wing-tip limbs 7 (+z) & 11 (-z) -> wing bones 3 & 5, local-Z flap only.
-    { "/actor/zelda_nw.zar", 7, 3, { 0.0f, 0.0f, 1.0f } },
-    { "/actor/zelda_nw.zar", 11, 5, { 0.0f, 0.0f, 1.0f } },
+    // cucco: wing limbs 7 & 11 -> bones 3 & 5. oot_x<- -n64_y (lift), oot_y<- +n64_x, oot_z<- +n64_z.
+    { "/actor/zelda_nw.zar", 7, 3, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
+    { "/actor/zelda_nw.zar", 11, 5, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
 };
 
 // Verification gate (env SOH3D_PROCOVERRIDE, default ON; REPL `wingflap <0|1>`): when 0 the
@@ -265,6 +274,12 @@ static const SoH3dProcOverrideRow kSoH3dProcOverride[] = {
 // `wingflap force <binang>`) to confirm the flap DIRECTION/amplitude visually.
 int gSoH3dProcOverride = -1;
 int gSoH3dWingForce = -1;
+int gSoH3dForceCuccoAgitate = 0; // #5 diagnostic: hold cuccos in the agitated wing-spread pose
+// #5 derivation probe: when active, force a fixed rotation (binang) DIRECTLY on the OoT3D wing
+// bones' local x/y/z, bypassing the N64->bone sign map — to discover which OoT3D bone axis is the
+// "lift"/"fan" so the multi-axis agitated mapping can be derived. REPL `wingprobe <x> <y> <z>`.
+int gSoH3dWingProbeActive = 0;
+int gSoH3dWingProbe[3] = { 0, 0, 0 };
 
 // Probe the captured override callback for each mapped limb of the current auto actor and push the
 // resulting per-bone local-rotation delta (binang -> radians) onto the OoT3D model. No-op when no
@@ -305,19 +320,30 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
             ((SoH3dOverride7Fn)gSoH3dPendingOverride)(play, row->n64Limb, &dummyDl, &pos, &rot,
                                                       gSoH3dPendingOverrideArg, &dummyGfx);
         }
-        s16 ddx = (s16)(rot.x - before.x), ddy = (s16)(rot.y - before.y), ddz = (s16)(rot.z - before.z);
+        s16 dd[3] = { (s16)(rot.x - before.x), (s16)(rot.y - before.y), (s16)(rot.z - before.z) };
         if (gSoH3dWingForce >= 0) {
-            ddx = ddy = 0;
-            ddz = (s16)gSoH3dWingForce; // direction/amplitude probe (applied on the mapped Z axis)
+            dd[0] = dd[1] = 0;
+            dd[2] = (s16)gSoH3dWingForce; // direction/amplitude probe (applied on the mapped Z axis)
         }
-        f32 dx = (f32)ddx * kBinangToRad * row->sign[0];
-        f32 dy = (f32)ddy * kBinangToRad * row->sign[1];
-        f32 dz = (f32)ddz * kBinangToRad * row->sign[2];
+        // Route each N64 limb axis to its OoT3D bone axis via the signed permutation (rest-frame diff).
+        f32 out[3] = { 0.0f, 0.0f, 0.0f };
+        for (s32 o = 0; o < 3; o++) {
+            if (row->srcAxis[o] >= 0) {
+                out[o] = (f32)dd[row->srcAxis[o]] * kBinangToRad * row->srcSign[o];
+            }
+        }
+        f32 dx = out[0], dy = out[1], dz = out[2];
+        if (gSoH3dWingProbeActive) {
+            // direct OoT3D-bone-local probe (derivation only): same delta on both wing bones
+            dx = (f32)gSoH3dWingProbe[0] * kBinangToRad;
+            dy = (f32)gSoH3dWingProbe[1] * kBinangToRad;
+            dz = (f32)gSoH3dWingProbe[2] * kBinangToRad;
+        }
         if (gSoH3dAnimDebug) {
             static int dbg = 0;
             if ((dbg++ % 20) == 0) {
-                fprintf(stderr, "[WINGFLAP] zar=%s n64limb=%d->bone=%d live binang=(%d,%d,%d) -> rad z=%.3f\n",
-                        zar, row->n64Limb, row->oot3dBone, ddx, ddy, ddz, dz);
+                fprintf(stderr, "[WINGFLAP] zar=%s n64limb=%d->bone=%d n64binang=(%d,%d,%d) -> oot rad=(%.3f,%.3f,%.3f)\n",
+                        zar, row->n64Limb, row->oot3dBone, dd[0], dd[1], dd[2], dx, dy, dz);
                 fflush(stderr);
             }
         }
@@ -3597,6 +3623,30 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dProcOverride = (atoi(sub) != 0);
         }
         SoH3D_ReplReply(outPath, "wingflap=%d force=%d", gSoH3dProcOverride, gSoH3dWingForce);
+    } else if (strcmp(cmd, "cuccopose") == 0) {
+        // #5 — hold every cucco in its agitated wing-spread pose (EnNiw_Update -> func_80AB5BF8 2)
+        // for deterministic A/B of the spread flap (N64 via `enable 0` vs OoT3D replay). `cuccopose
+        // <0|1>`; alone reports state.
+        int iv;
+        if (sscanf(line, "%*s %d", &iv) == 1) {
+            gSoH3dForceCuccoAgitate = (iv != 0);
+        }
+        SoH3D_ReplReply(outPath, "cuccopose=%d", gSoH3dForceCuccoAgitate);
+    } else if (strcmp(cmd, "wingprobe") == 0) {
+        // #5 derivation: `wingprobe <x> <y> <z>` forces that binang DIRECTLY on the OoT3D wing
+        // bones' local axes (bypassing the N64->bone sign map); `wingprobe off` disables.
+        extern int gSoH3dWingProbeActive, gSoH3dWingProbe[3];
+        int px, py, pz;
+        if (sscanf(line, "%*s %d %d %d", &px, &py, &pz) == 3) {
+            gSoH3dWingProbe[0] = px;
+            gSoH3dWingProbe[1] = py;
+            gSoH3dWingProbe[2] = pz;
+            gSoH3dWingProbeActive = 1;
+        } else {
+            gSoH3dWingProbeActive = 0;
+        }
+        SoH3D_ReplReply(outPath, "wingprobe active=%d xyz=(%d,%d,%d)", gSoH3dWingProbeActive,
+                        gSoH3dWingProbe[0], gSoH3dWingProbe[1], gSoH3dWingProbe[2]);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

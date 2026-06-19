@@ -347,6 +347,43 @@ int SoH3D_XboxBtnEnabled(void) {
     return gSoH3dXboxBtn;
 }
 
+// #2 — press-to-skip for sequences that take camera control but are NOT scripted cutscenes
+// (scripted CS already skip on Start via z_demo.c csSkipButton). Onepoint cutscene cameras
+// (door reveals, Z-target attention pans, treasure/switch framing) grab the camera away from
+// the player; on a Start/Space press we force each active onepoint subcamera to end via the
+// game's own OnePointCutscene_EndCutscene (the same path the timer expiry uses, so it lands in
+// the proper post-cam state). -1 = uninit (read SOH3D_SKIP env, default on). REPL `skip <0|1>`.
+int gSoH3dSkip = -1;
+int SoH3D_SkipEnabled(void) {
+    if (gSoH3dSkip < 0) {
+        const char* v = getenv("SOH3D_SKIP");
+        gSoH3dSkip = (v != NULL && v[0] == '0') ? 0 : 1;
+    }
+    return gSoH3dSkip;
+}
+
+void SoH3D_SkipControlTakers(PlayState* play) {
+    if (play == NULL || !SoH3D_Enabled() || !SoH3D_SkipEnabled()) {
+        return;
+    }
+    // The title-screen demo (fileNum 0xFEDC) runs its own skip flow; don't interfere.
+    if (gSaveContext.fileNum == 0xFEDC) {
+        return;
+    }
+    if (!CHECK_BTN_ALL(play->state.input[0].press.button, BTN_START)) {
+        return;
+    }
+    // End any active onepoint cutscene camera (a subcamera carrying a csId). EndCutscene sets
+    // the cam timer to 0 (or 5 for the attention csId 5010) so it returns to the main camera
+    // next frame. timer > 1 guards against re-ending one already on its last frame.
+    for (s32 i = SUBCAM_FIRST; i < NUM_CAMS; i++) {
+        Camera* cam = play->cameraPtrs[i];
+        if (cam != NULL && cam->csId != 0 && cam->timer > 1) {
+            OnePointCutscene_EndCutscene(play, i);
+        }
+    }
+}
+
 // --- Terrain warp: re-level the OoT3D room render ground to the N64 collision floor
 // (so Link, who walks on N64 collision, stands on the visible ground). The mesh re-level
 // runs in soh3d_model.cpp (SoH3D_WarpRoomToN64); this side supplies the N64 floor probe
@@ -2639,7 +2676,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     char arg[64];
     char path[1024];
     float f1, f2, f3;
-    int iv;
+    int iv, iv2;
     while (*line == ' ' || *line == '\t' || *line == '\r') {
         line++;
     }
@@ -3481,6 +3518,30 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // gSoH3dXboxBtn every frame). 1 = Xbox A/B/X/Y glyphs, 0 = the N64 colored circles.
         gSoH3dXboxBtn = (f1 != 0.0f) ? 1 : 0;
         SoH3D_ReplReply(outPath, "xboxui=%d", gSoH3dXboxBtn);
+    } else if (strcmp(cmd, "skip") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #2 — toggle press-to-skip for onepoint cutscene cameras (Start/Space force-ends them).
+        gSoH3dSkip = (f1 != 0.0f) ? 1 : 0;
+        SoH3D_ReplReply(outPath, "skip=%d", gSoH3dSkip);
+    } else if (strcmp(cmd, "cscams") == 0) {
+        // #2 verify — list the active subcameras (idx/csId/timer). A non-zero csId == an active
+        // onepoint cutscene camera holding the view.
+        char rep[512];
+        int off = 0;
+        off += snprintf(rep + off, sizeof(rep) - off, "active=%d", play->activeCamera);
+        for (s32 i = SUBCAM_FIRST; i < NUM_CAMS; i++) {
+            Camera* cam = play->cameraPtrs[i];
+            if (cam != NULL) {
+                off += snprintf(rep + off, sizeof(rep) - off, " | cam%d csId=%d timer=%d", i, cam->csId,
+                                cam->timer);
+            }
+        }
+        SoH3D_ReplReply(outPath, "%s", rep);
+    } else if (strcmp(cmd, "skiptest") == 0 && sscanf(line, "%*s %i %i", &iv, &iv2) == 2) {
+        // #2 verify — start a onepoint cutscene camera (csId=iv, timer=iv2 frames) anchored on
+        // Link, to confirm press-to-skip ends it. Returns the created subcam index.
+        Player* p = GET_PLAYER(play);
+        s16 idx = OnePointCutscene_Init(play, (s16)iv, (s16)iv2, &p->actor, MAIN_CAM);
+        SoH3D_ReplReply(outPath, "skiptest csId=%d timer=%d -> subcam %d", iv, iv2, idx);
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;

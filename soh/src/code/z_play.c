@@ -1312,6 +1312,11 @@ skip:
     if (!isPaused || gDbgCamEnabled) {
         s32 i;
 
+        // SoH3D #2: press Start/Space to skip onepoint cutscene cameras (door/attention/treasure
+        // pans) that take camera control. Runs before the camera update so the forced timer=0
+        // takes effect this frame.
+        SoH3D_SkipControlTakers(play);
+
         play->nextCamera = play->activeCamera;
 
         PLAY_LOG(3806);

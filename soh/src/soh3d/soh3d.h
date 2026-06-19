@@ -121,6 +121,13 @@ const void* SoH3D_XboxGlyphTex(char which, int* w, int* h);
 extern int gSoH3dXboxBtn;       // env SOH3D_XBOXUI / REPL `xboxui` gate (-1=uninit, 0/1)
 int SoH3D_XboxBtnEnabled(void); // lazily resolves the env on first call; HUD draws gate on this
 
+// #2 — press-to-skip: on a Start/Space press, force-end any active onepoint cutscene camera
+// (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
+// before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.
+extern int gSoH3dSkip;
+int SoH3D_SkipEnabled(void);
+void SoH3D_SkipControlTakers(PlayState* play);
+
 // World scale for the OoT3D pot (OoT3D model units -> N64 world units). Tuned by
 // matching the rendered height of the OoT3D pot to the N64 pot at the same spot
 // (spawn comparison, Deku Tree). The OoT3D model is ~162 units tall; ~0.12 lands

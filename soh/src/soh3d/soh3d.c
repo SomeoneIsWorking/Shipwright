@@ -1387,6 +1387,23 @@ static int SoH3D_SkyCloudModelId(int idx) {
     return SoH3D_AutoModelId(key);
 }
 
+// #28b cloud drift: OoT3D scrolls the kumo cloud band's texcoords via a small .cmab in BlueSky.zar
+// (misc/<group>_kumo_a.cmab). Each is a single linear texcoord-U translation looping over the cmab
+// `duration`; the channel-0 (base layer) rate per skybox group, DERIVED FROM THE ASSET via
+// tools/cmab.py (do NOT fabricate — re-run `python3 tools/cmab.py` to reproduce these):
+//   fine  (idx 0..3): dU = -1.0 / 900 per frame   (fine_kumo_a.cmab, duration 900)
+//   cloud (idx 4..7): dU = -1.0 / 900 per frame   (cloud_kumo_a.cmab channel 0; ch1 -4/900 is a
+//                                                   2nd multitex layer our single-texcoord path omits)
+//   holy  (idx 8):    dU = -1.0 / 600 per frame   (holy_kumo_a.cmab, duration 600)
+// All scroll in U only (dV = 0). The offset is wrapped into [0,1) (texture WRAP_S repeats it) and
+// driven by the game's own logic-frame clock (play->gameplayFrames) so it advances at OoT3D's rate.
+static float SoH3D_SkyCloudScrollU(int idx) {
+    if (idx >= 8) {
+        return -1.0f / 600.0f; // holy
+    }
+    return -1.0f / 900.0f; // fine / cloud
+}
+
 int SoH3D_TryDrawSky(PlayState* play) {
     int modelId;
     if (!gSoH3dSky || !SoH3D_Enabled()) {
@@ -1427,9 +1444,14 @@ int SoH3D_TryDrawSky(PlayState* play) {
         // composite back-to-front and none occludes the world.
         gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (1 << 30), 255, 255, 255);
         {
+            // Cloud band: drift its texcoords per the .cmab scroll rate (#28b). Wrap the per-frame
+            // U offset into [0,1) (WRAP_S repeats it) and pack as 16-bit fixed (offset*65536).
             int cloudId = SoH3D_SkyCloudModelId(play->envCtx.skybox1Index);
             if (cloudId >= 0) {
-                gSPSoH3DDraw(POLY_OPA_DISP++, cloudId | (1 << 30), 255, 255, 255);
+                float u = (float)play->gameplayFrames * SoH3D_SkyCloudScrollU(play->envCtx.skybox1Index);
+                u -= floorf(u);
+                int uFx = (int)(u * 65536.0f) & 0xFFFF;
+                gSPSoH3DDrawUV(POLY_OPA_DISP++, cloudId | (1 << 30), 255, uFx, 0, 255, 255, 255);
             }
         }
         if (doBlend) {
@@ -1439,7 +1461,10 @@ int SoH3D_TryDrawSky(PlayState* play) {
                 gSPSoH3DDrawA(POLY_OPA_DISP++, dome2 | (1 << 30), blend, 255, 255, 255);
             }
             if (cloud2 >= 0) {
-                gSPSoH3DDrawA(POLY_OPA_DISP++, cloud2 | (1 << 30), blend, 255, 255, 255);
+                float u = (float)play->gameplayFrames * SoH3D_SkyCloudScrollU(idx2);
+                u -= floorf(u);
+                int uFx = (int)(u * 65536.0f) & 0xFFFF;
+                gSPSoH3DDrawUV(POLY_OPA_DISP++, cloud2 | (1 << 30), blend, uFx, 0, 255, 255, 255);
             }
         }
         CLOSE_DISPS(play->state.gfxCtx);

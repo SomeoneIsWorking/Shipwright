@@ -1405,6 +1405,13 @@ int SoH3D_TryDrawSky(PlayState* play) {
         return 0;
     }
     {
+        // Dawn/dusk the game cross-fades two sky variants: skybox2Index drawn over skybox1Index at
+        // alpha = skyboxBlend (0..255). Mirror that with our domes instead of snapping to the
+        // dominant one, so the OoT3D sky transitions through the intermediate colour the way the
+        // N64 skybox did (e.g. blue day -> red sunset).
+        int idx2 = play->envCtx.skybox2Index;
+        int blend = play->envCtx.skyboxBlend; // alpha of the upper (skybox2) variant
+        int doBlend = (blend > 0 && idx2 >= 0 && idx2 <= 8 && idx2 != play->envCtx.skybox1Index);
         OPEN_DISPS(play->state.gfxCtx);
         SoH3D_EnsureModelProvider();
         Gfx_SetupDL_25Opa(play->state.gfxCtx);
@@ -1415,13 +1422,24 @@ int SoH3D_TryDrawSky(PlayState* play) {
         Matrix_Scale(gSoH3dSkyScale, gSoH3dSkyScale, gSoH3dSkyScale, MTXMODE_APPLY);
         gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
         // Bit 30 of the handle = sky flag (far-plane depth, no shadow/AO; see the draw opcode handler).
-        // Dome first (opaque gradient), then the cloud band (alpha-blended) over it — both pinned to
-        // the far plane, so the clouds composite onto the dome and neither occludes the world.
+        // Lower layer first (opaque dome gradient + its cloud band), then — at dawn/dusk — the upper
+        // variant's dome + clouds over it at alpha=skyboxBlend. All four pin to the far plane, so they
+        // composite back-to-front and none occludes the world.
         gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (1 << 30), 255, 255, 255);
         {
             int cloudId = SoH3D_SkyCloudModelId(play->envCtx.skybox1Index);
             if (cloudId >= 0) {
                 gSPSoH3DDraw(POLY_OPA_DISP++, cloudId | (1 << 30), 255, 255, 255);
+            }
+        }
+        if (doBlend) {
+            int dome2 = SoH3D_SkyModelId(idx2);
+            int cloud2 = SoH3D_SkyCloudModelId(idx2);
+            if (dome2 >= 0) {
+                gSPSoH3DDrawA(POLY_OPA_DISP++, dome2 | (1 << 30), blend, 255, 255, 255);
+            }
+            if (cloud2 >= 0) {
+                gSPSoH3DDrawA(POLY_OPA_DISP++, cloud2 | (1 << 30), blend, 255, 255, 255);
             }
         }
         CLOSE_DISPS(play->state.gfxCtx);
@@ -2919,10 +2937,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         char sub[32];
         if (sscanf(line, "%*s scale %f", &f1) == 1) {
             gSoH3dSkyScale = f1;
-        } else if (sscanf(line, "%*s %31s", sub) == 1) {
+        } else if (sscanf(line, "%*s %31s", sub) == 1 && strcmp(sub, "info") != 0) {
             gSoH3dSky = (atoi(sub) != 0);
         }
-        SoH3D_ReplReply(outPath, "sky=%d scale=%.2f", gSoH3dSky, gSoH3dSkyScale);
+        // Also surface the live skybox state so a dawn/dusk two-dome cross-fade (#28a) can be
+        // verified: skybox1Index/skybox2Index (0..8) and skyboxBlend (0..255 = alpha of variant 2).
+        SoH3D_ReplReply(outPath, "sky=%d scale=%.2f skyboxId=%d idx1=%d idx2=%d blend=%d", gSoH3dSky,
+                        gSoH3dSkyScale, play->skyboxId, play->envCtx.skybox1Index, play->envCtx.skybox2Index,
+                        play->envCtx.skyboxBlend);
     } else if (strcmp(cmd, "sceneoff") == 0 && sscanf(line, "%*s %f %f %f", &f1, &f2, &f3) == 3) {
         gSoH3dSceneOffX = f1;
         gSoH3dSceneOffY = f2;

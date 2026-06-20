@@ -321,7 +321,12 @@ int gSoH3dChickAxis = 1;       // OoT3D bone-local axis to flap on (1 = Y)
 int gSoH3dChickCenter = -4000; // baseline offset (binang): slight raise from the spread rest
 int gSoH3dChickAmp = 14000;    // peak flap amplitude (binang) at full agitation
 float gSoH3dChickFreq = 0.9f;  // oscillation phase advance per draw (rad); frantic flap
-int gSoH3dChickBone2Sign = 1;  // bone 6 sign relative to bone 4 (both y- = up -> +1, symmetric)
+int gSoH3dChickBone2Sign = -1; // #5: the 3DS rig's wing bones 4 & 6 have MIRRORED local frames, so
+                               // the same signed local-Y angle rotates them in the SAME world sense
+                               // (parallel, not mirrored) -> asymmetric flap. Negate bone 6 so its
+                               // local rotation is the world-space mirror of bone 4. (The old +1
+                               // "both y- = up" assumption was never L/R-verified in a held run;
+                               // playtest 2026-06-20 showed asymmetry.)
 int gSoH3dFrameCtr = 0;        // ++ once per rendered frame (SoH3D_EmitRenderPass); flap phase clock
 
 // Probe the captured override callback for each mapped limb of the current auto actor and push the

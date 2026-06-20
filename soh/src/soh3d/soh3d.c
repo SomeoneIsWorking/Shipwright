@@ -723,6 +723,67 @@ static int SoH3D_N64FloorData0(CollisionHeader* n64, float x, float y, float z, 
     return 1;
 }
 
+// #25 climb fix: find the N64 WALL poly matching an OoT3D wall triangle and return its SurfaceType
+// data[0]. Mirrors SoH3D_N64FloorData0, but for vertical surfaces: the wall-climb property (data0
+// bits 21..25 → func_80041D94 → climb flags) is GAMEPLAY data and must come from the authoritative
+// N64 collision, NOT the OoT3D mesh — whose per-triangle SurfaceType is unreliable (e.g. Kokiri well
+// wall: N64 has both quad triangles climbable, OoT3D leaves the UPPER triangle wallProp=0, so Link
+// loses wall contact and drops at the diagonal seam ~halfway up — every climbable). Match: same
+// horizontal normal (dot > 0.85), the OoT3D centroid projects INTO the N64 wall triangle (in the
+// wall's dominant vertical plane, so tessellation offsets don't matter), nearest perpendicular plane.
+static int SoH3D_N64WallData0(CollisionHeader* n64, float cx, float cy, float cz, float onx, float onz,
+                              u32* outData0) {
+    int i, best = -1;
+    float bestPlane = 1e9f;
+    if (n64 == NULL || n64->polyList == NULL || n64->vtxList == NULL ||
+        n64->surfaceTypeList == NULL) {
+        return 0;
+    }
+    for (i = 0; i < n64->numPolygons; i++) {
+        CollisionPoly* p = &n64->polyList[i];
+        float nx = COLPOLY_GET_NORMAL(p->normal.x);
+        float ny = COLPOLY_GET_NORMAL(p->normal.y);
+        float nz = COLPOLY_GET_NORMAL(p->normal.z);
+        Vec3s *a, *b, *c;
+        float au, av, bu, bv, cu, cv, pu, pv, d1, d2, d3, planeDist;
+        int useX;
+        if (ny > 0.5f || ny < -0.5f) {
+            continue; // walls only
+        }
+        if ((nx * onx + nz * onz) < 0.85f) {
+            continue; // must face the same horizontal direction
+        }
+        a = &n64->vtxList[p->flags_vIA & 0x1FFF];
+        b = &n64->vtxList[p->flags_vIB & 0x1FFF];
+        c = &n64->vtxList[p->vIC & 0x1FFF];
+        // Project to the wall's dominant vertical plane: (X,Y) for a ±Z wall, (Z,Y) for a ±X wall.
+        useX = (nz * nz >= nx * nx);
+        au = useX ? a->x : a->z; av = a->y;
+        bu = useX ? b->x : b->z; bv = b->y;
+        cu = useX ? c->x : c->z; cv = c->y;
+        pu = useX ? cx : cz;     pv = cy;
+        d1 = (pu - bu) * (av - bv) - (au - bu) * (pv - bv);
+        d2 = (pu - cu) * (bv - cv) - (bu - cu) * (pv - cv);
+        d3 = (pu - au) * (cv - av) - (cu - au) * (pv - av);
+        if (((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0))) {
+            continue; // centroid not inside this wall triangle's vertical profile
+        }
+        planeDist = nx * cx + ny * cy + nz * cz + (float)p->dist;
+        if (planeDist < 0.0f) {
+            planeDist = -planeDist;
+        }
+        if (planeDist < bestPlane) {
+            bestPlane = planeDist;
+            best = i;
+        }
+    }
+    if (best < 0 || bestPlane > 50.0f) {
+        return 0;
+    }
+    *outData0 = n64->surfaceTypeList[n64->polyList[best].type].data[0];
+    return 1;
+}
+
 // #5 — find the freshly-built OoT3D base floor poly under world (x,z) with plane Y closest to y
 // (mirrors SoH3D_N64FloorData0 but over the in-build vtx/poly arrays). Returns the poly index
 // (== its own SurfaceType slot, since each poly indexes type=i) or -1. Used to give a generated
@@ -910,6 +971,22 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
                 d0 = (d0 & ~0x1FFFu) | (n0 & 0x1FFFu);
             } else {
                 d0 = d0 & ~0x1F00u; // no N64 floor here -> no exit
+            }
+        } else if (ny <= 0.5f && ny >= -0.5f) {
+            // Wall: re-source the wall-climb property (bits 21..25) from the authoritative N64 wall
+            // at this triangle. OoT3D's per-triangle wall property is unreliable (#25: it splits a
+            // climbable quad into a climbable + a non-climbable triangle, dropping Link mid-climb).
+            Vec3s* va = &vtx[poly[i].flags_vIA];
+            Vec3s* vb = &vtx[poly[i].flags_vIB];
+            Vec3s* vc = &vtx[poly[i].vIC];
+            float cx = (va->x + vb->x + vc->x) / 3.0f;
+            float cy = (va->y + vb->y + vc->y) / 3.0f;
+            float cz = (va->z + vb->z + vc->z) / 3.0f;
+            float onx = COLPOLY_GET_NORMAL(poly[i].normal.x);
+            float onz = COLPOLY_GET_NORMAL(poly[i].normal.z);
+            u32 n0;
+            if (SoH3D_N64WallData0(n64, cx, cy, cz, onx, onz, &n0)) {
+                d0 = (d0 & ~0x03E00000u) | (n0 & 0x03E00000u);
             }
         }
         sSurfaceTypes[i].data[0] = d0;
@@ -3200,6 +3277,30 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)",
                         play->sceneNum, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z,
                         p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z);
+    } else if (strcmp(cmd, "climbinfo") == 0) {
+        // #25 climb-drop diagnostic: dump Link's per-frame wall-climb decision state so we can see
+        // WHY he won't grab a climbable (facing/flags) and, once climbing, WHY he detaches partway
+        // (a spurious ledge floor → yDistToLedge collapses). Poll this while driving Link into a
+        // climbable (walkhold) or stepping the climb. All fields read live off the Player/Actor.
+        Player* p = GET_PLAYER(play);
+        CollisionPoly* wp = p->actor.wallPoly;
+        s16 yawDiff = (s16)(p->actor.shape.rot.y - p->actor.wallYaw);
+        if (wp != NULL) {
+            s16 climbFlags = func_80041DB8(&play->colCtx, wp, p->actor.wallBgId);
+            SoH3D_ReplReply(outPath,
+                "climbinfo bgF=0x%x st1=0x%x st2=0x%x pos=(%.0f,%.0f,%.0f) | wall n=(%.3f,%.3f,%.3f) |ny|raw=%d climbFlags=%d wallYaw=%d shapeYaw=%d yawDiff=%d distWall=%.1f yDistLedge=%.1f ledgeType=%d",
+                p->actor.bgCheckFlags, p->stateFlags1, p->stateFlags2, p->actor.world.pos.x,
+                p->actor.world.pos.y, p->actor.world.pos.z, COLPOLY_GET_NORMAL(wp->normal.x),
+                COLPOLY_GET_NORMAL(wp->normal.y), COLPOLY_GET_NORMAL(wp->normal.z),
+                (int)ABS(wp->normal.y), (int)climbFlags, p->actor.wallYaw, p->actor.shape.rot.y,
+                (int)yawDiff, p->distToInteractWall, p->yDistToLedge, p->ledgeClimbType);
+        } else {
+            SoH3D_ReplReply(outPath,
+                "climbinfo bgF=0x%x st1=0x%x st2=0x%x pos=(%.0f,%.0f,%.0f) | NO wallPoly (not touching a wall) shapeYaw=%d yDistLedge=%.1f ledgeType=%d",
+                p->actor.bgCheckFlags, p->stateFlags1, p->stateFlags2, p->actor.world.pos.x,
+                p->actor.world.pos.y, p->actor.world.pos.z, p->actor.shape.rot.y, p->yDistToLedge,
+                p->ledgeClimbType);
+        }
     } else if (strcmp(cmd, "actors") == 0) {
         // List actors (id + object id + world pos + distance from Link), so an NPC can be
         // located and framed (cam/tp) without hunting. Default: NPC category only; "actors all"
@@ -3262,6 +3363,35 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             COLPOLY_GET_NORMAL(poly->normal.y));
         } else {
             SoH3D_ReplReply(outPath, "floorat (%.0f,%.0f) NO FLOOR", f1, f2);
+        }
+    } else if (strcmp(cmd, "floorcol") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) >= 2) {
+        // #25 climb-drop diagnostic: enumerate EVERY floor poly stacked in the column at world (x,z),
+        // top to bottom (floorat only returns the topmost). The climb-out / ledge logic raycasts a
+        // floor just behind the wall each frame (z_player.c:11397); a SPURIOUS OoT3D floor poly
+        // partway up a climbable face makes yDistToLedge collapse → Link "reaches a ledge" and
+        // detaches HALFWAY. Run at the back-of-wall XZ under `collision 1` (OoT3D) and `collision 0`
+        // (N64) and diff: an extra mid-height floor in the OoT3D set is the dismount poly.
+        // Optional 3rd arg = start Y (default 10000).
+        f32 ystart = 10000.0f;
+        sscanf(line, "%*s %*f %*f %f", &ystart);
+        {
+            int n = 0;
+            f32 yc = ystart;
+            while (n < 32 && yc > -3000.0f) {
+                Vec3f pos = { f1, yc, f2 };
+                CollisionPoly* poly = NULL;
+                f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &pos);
+                if (poly == NULL || y <= BGCHECK_Y_MIN) {
+                    break;
+                }
+                SoH3D_ReplReply(outPath, "floorcol[%d] (%.0f,%.0f) y=%.2f ny=%.4f type=%d", n, f1, f2, y,
+                                COLPOLY_GET_NORMAL(poly->normal.y), poly->type);
+                yc = y - 1.0f; // step just below this floor to find the next one down
+                n++;
+            }
+            if (n == 0) {
+                SoH3D_ReplReply(outPath, "floorcol (%.0f,%.0f) NO FLOOR", f1, f2);
+            }
         }
     } else if (strcmp(cmd, "exitat") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Report the floor poly's SurfaceType gameplay data at (x,z): scene exit index, camera

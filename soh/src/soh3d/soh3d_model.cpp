@@ -1400,6 +1400,68 @@ const void* SoH3D_DigitTex(int glyph, int* w, int* h) {
                 fprintf(stderr, "[SoH3D] digit tex %d: PNG decode failed\n", i);
             }
         }
+        // #18 — prefer the OoT3D texture pack's HD counter font. Atlas hash FABD759BB95C1C6A
+        // (2048x1024 full-res, an 8x upscale of the 256x128 source). The pack has two number fonts:
+        // a 7-segment row (carries a "1/2" fraction) and a SERIF row that includes a ':' — the serif
+        // row is the HD redraw of N64's gCounterDigit/gCounterColon (the colon is the giveaway), so we
+        // use it. Each glyph's tight bbox (measured from the atlas alpha) is copied, CENTERED and
+        // BASELINE-aligned, into a fixed CWxCH cell whose aspect matches the on-screen digit rect — the
+        // HUD stretches the whole texture onto a fixed ~8x16 (0.5-aspect) rect, so a 0.5-aspect cell
+        // renders the serif glyph at natural proportions instead of squished. The counter combine is
+        // colour=PRIMITIVE / alpha=TEXEL0, so only the glyph alpha (coverage) matters — it tints to PRIM
+        // exactly like the embedded SVG. Runtime-loaded from the gitignored pack (never embedded — game
+        // asset); falls back to the SVG above when the pack is absent. (Pack RGBA32, top-down, flip=0.)
+        std::vector<uint8_t> atlas;
+        int aw = 0, ah = 0;
+        if (SoH3D::TexPackLookup(0xFABD759BB95C1C6AULL, aw, ah, atlas) && aw >= 1000 && ah >= 605) {
+            // src bboxes (x0,y0,x1,y1) of the white serif "0..9:" glyphs in the full-res atlas.
+            static const int kSrc[11][4] = {
+                {  27, 523,  81, 601 }, // 0
+                { 132, 522, 158, 600 }, // 1
+                { 219, 523, 272, 600 }, // 2
+                { 315, 523, 369, 601 }, // 3
+                { 408, 523, 466, 602 }, // 4
+                { 505, 526, 556, 602 }, // 5
+                { 602, 524, 652, 603 }, // 6
+                { 693, 524, 747, 601 }, // 7
+                { 791, 522, 846, 604 }, // 8
+                { 887, 519, 941, 604 }, // 9
+                { 982, 542, 998, 600 }, // ':' (two dots, combined bbox)
+            };
+            const int CW = 64, CH = 128, BASELINE = 112; // cell + baseline row (digit bottoms land here)
+            for (int i = 0; i < 11; i++) {
+                const int sx = kSrc[i][0], sy = kSrc[i][1];
+                const int sw = kSrc[i][2] - kSrc[i][0] + 1, sh = kSrc[i][3] - kSrc[i][1] + 1;
+                std::vector<uint8_t> cell((size_t)CW * CH * 4, 0);
+                const int dx = (CW - sw) / 2;
+                const int dy = (i == 10) ? (CH - sh) / 2 : (BASELINE - sh); // colon centered; digits baseline-aligned
+                if (dx < 0 || dy < 0 || dx + sw > CW || dy + sh > CH) continue;
+                for (int row = 0; row < sh; row++) {
+                    const uint8_t* s = &atlas[(size_t)((sy + row) * aw + sx) * 4];
+                    uint8_t* d = &cell[(size_t)((dy + row) * CW + dx) * 4];
+                    memcpy(d, s, (size_t)sw * 4);
+                }
+                // The HUD texrect path has no mipmaps; a 64x128 glyph minified to the small on-screen
+                // digit rect aliases its thin serifs into broken fragments. Box-downsample 2x to 32x64
+                // (the size the embedded SVG used, which renders cleanly) so the GPU only mildly scales.
+                const int OW = CW / 2, OH = CH / 2;
+                std::vector<uint8_t> out((size_t)OW * OH * 4);
+                for (int oy = 0; oy < OH; oy++) {
+                    for (int ox = 0; ox < OW; ox++) {
+                        for (int c = 0; c < 4; c++) {
+                            int acc = 0;
+                            acc += cell[(size_t)((oy * 2) * CW + ox * 2) * 4 + c];
+                            acc += cell[(size_t)((oy * 2) * CW + ox * 2 + 1) * 4 + c];
+                            acc += cell[(size_t)((oy * 2 + 1) * CW + ox * 2) * 4 + c];
+                            acc += cell[(size_t)((oy * 2 + 1) * CW + ox * 2 + 1) * 4 + c];
+                            out[(size_t)(oy * OW + ox) * 4 + c] = (uint8_t)(acc / 4);
+                        }
+                    }
+                }
+                t[i].rgba.swap(out);
+                t[i].w = OW; t[i].hh = OH;
+            }
+        }
     }
     if (glyph < 0 || glyph >= 11 || t[glyph].rgba.empty()) {
         if (w) *w = 0; if (h) *h = 0; return nullptr;

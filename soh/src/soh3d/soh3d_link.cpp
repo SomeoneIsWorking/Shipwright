@@ -64,6 +64,10 @@ float gSoH3dLinkRotY = 0.0f;
 float gSoH3dLinkRotZ = 0.0f;
 char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link (verify idle/walk/run
                                    // deterministically without real movement input); empty = live-resolve
+int gSoH3dClimbGroundFix = 0; // #79: freeze feet-grounding during climb poses (REPL `climbgroundfix`).
+                              // DEFAULT OFF: root cause confirmed (grounding swings wildly on climb
+                              // poses) but the freeze DIRECTION is not yet live-verified on a real
+                              // sustained climb (repro blocked — see #79). Off = current behavior.
 int gSoH3dHeldAttach = 1;          // #6 attach a carried actor (held cucco) to 3DS Link's posed hands
                                    // (A/B toggle for before/after evidence; REPL `linkheldfix <0|1>`)
 // #7: CSAB frames advanced per draw per unit of Link's ground speed, when speed-driving the
@@ -264,7 +268,7 @@ static unsigned long long SoH3D_LinkComputeMidMask(Player* player) {
 
 extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     const char* zar;
-    const char* csab;
+    const char* csab = NULL; // set only in the own-CSAB (linksrc 3ds) branch; NULL in N64-retarget
     Player* player;
     int modelId;
     u8 tint[3];
@@ -406,10 +410,27 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     // nothing). groundOff (model-local, applied innermost/pre-scale like the auto path's
     // groundOffset) lands the posed feet on the actor's world pos.y — fixes the #29b float.
     float groundOff = SoH3D_PosedGroundOffset(modelId, midMask);
+    // #79 fix: feet-grounding measures the LOWEST visible vertex, which is a planted foot only while
+    // grounded. The CLIMB poses (ladder/vine/forced-climb) raise a foot/knee/whole-body, so the
+    // lowest vertex (hence groundOff) swings by thousands of model-local units between frames
+    // (idle -1263 vs climb_up/upL/upR -1694/-2644/-4193, climb_startB -8443) and the whole body
+    // teleports vertically while climbing. N64 draws the climb pose at actor.world.pos.y with no
+    // grounding; reproduce that continuity by FREEZING groundOff to the last value measured on a
+    // non-climb pose (self-calibrating, no jump at climb entry). Gate on the climb CSAB name (the
+    // actual cause is the pose): "climb" also matches "Fclimb"; "hang" covers the ledge-hang holds.
+    // The N64-retarget path (linksrc 1, csab==NULL) is untouched (that's #8, a separate issue).
+    static float sLinkLastGroundedOff = 0.0f;
+    s32 climbPose = gSoH3dClimbGroundFix && csab != NULL &&
+                    (strstr(csab, "climb") != NULL || strstr(csab, "hang") != NULL);
+    if (climbPose) {
+        groundOff = sLinkLastGroundedOff;
+    } else {
+        sLinkLastGroundedOff = groundOff;
+    }
     if (gSoH3dAnimDebug) {
         static int dbg = 0;
         if ((dbg++ % 30) == 0) {
-            printf("SOH3D LINK groundOff=%.1f (model-local)\n", groundOff);
+            printf("SOH3D LINK groundOff=%.1f (model-local)%s\n", groundOff, climbPose ? " [climb:frozen]" : "");
             fflush(stdout);
         }
     }
@@ -680,6 +701,11 @@ extern "C" int SoH3D_LinkRepl(PlayState* play, const char* cmd, const char* line
             gSoH3dLinkForceCsab[0] = '\0';
             SoH3D_ReplReply(outPath, "linkanim OFF (live anim resolution restored)");
         }
+    } else if (strcmp(cmd, "climbgroundfix") == 0) {
+        // #79 A/B toggle: freeze feet-grounding during climb poses (default ON). `climbgroundfix 0`
+        // reverts to per-pose lowest-vertex grounding so the climb teleport reproduces for before/after.
+        if (sscanf(line, "%*s %i", &iv) == 1) gSoH3dClimbGroundFix = (iv != 0);
+        SoH3D_ReplReply(outPath, "climbgroundfix=%d (freeze groundOff during climb poses)", gSoH3dClimbGroundFix);
     } else if (strcmp(cmd, "linkheldfix") == 0) {
         // #6 A/B toggle: attach the carried actor (held cucco) to 3DS Link's posed hands. Default on;
         // `linkheldfix 0` reverts to the engine's stale pickup-spot pos for before/after evidence.

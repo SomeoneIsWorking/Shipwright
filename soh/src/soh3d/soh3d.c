@@ -320,6 +320,7 @@ int gSoH3dForceCuccoAgitate = 0; // #5 diagnostic: hold cuccos in the agitated w
 int gSoH3dCuccoState = -1;        // #5 force func_80AB5BF8 arg (-1 = live AI); see soh3d.h
 int gSoH3dCuccoDbgPhase = -1;     // #5 last cucco's flap phase (unk_29C)
 short gSoH3dCuccoDbgWing[6] = { 0, 0, 0, 0, 0, 0 }; // #5 limb7 xyz, limb11 xyz applied this frame
+int gSoH3dCuccoHeld = 0;          // #5 force the held-by-Link carried state (func_80AB6BF8)
 
 // Generic actor-control debug surface (any actor). gSoH3dSelActor is driven each frame by
 // SoH3D_ActorPostUpdate; see soh3d.h for the REPL surface (asel/afreeze/apos/arot/aparams/acam).
@@ -340,7 +341,11 @@ void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor) {
     actor->velocity.x = actor->velocity.y = actor->velocity.z = 0.0f;
     actor->speedXZ = 0.0f;
     actor->world.pos = sSoH3dActorPinPos;
-    actor->shape.rot = actor->world.rot = sSoH3dActorPinRot;
+    // mode 1 = pin position AND rotation; mode 2 = pin position only (leave rotation free, e.g. so a
+    // held cucco's body shake stays visible while the actor stays framed).
+    if (gSoH3dActorFreeze != 2) {
+        actor->shape.rot = actor->world.rot = sSoH3dActorPinRot;
+    }
 }
 // #5 derivation probe: when active, force a fixed rotation (binang) DIRECTLY on the OoT3D wing
 // bones' local x/y/z, bypassing the N64->bone sign map — to discover which OoT3D bone axis is the
@@ -365,12 +370,25 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
         return;
     }
     const float kBinangToRad = 3.14159265358979f / 32768.0f;
+    // Sample ONCE PER CALL (not per row) so the per-row prints below don't alias with the row order
+    // (2 rows/frame in fixed order + a shared %N counter would only ever show row 0). When sampled,
+    // every row in this call prints — so both wing bones are visible each sampled frame.
+    int sampleThisCall = 0;
+    if (gSoH3dAnimDebug) {
+        static int callCtr = 0;
+        sampleThisCall = ((callCtr++ % 20) == 0);
+    }
     for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dProcOverride); i++) {
         const SoH3dProcOverrideRow* row = &kSoH3dProcOverride[i];
         if (strcmp(row->zar, zar) != 0) {
             continue;
         }
         if (row->n64Limb < 0 || row->n64Limb >= limbCount) {
+            if (sampleThisCall) {
+                fprintf(stderr, "[WINGFLAP-SKIP] zar=%s n64limb=%d->bone=%d SKIPPED (limbCount=%d)\n",
+                        zar, row->n64Limb, row->oot3dBone, limbCount);
+                fflush(stderr);
+            }
             continue;
         }
         // BACKLOG-specified delta = (override-applied rot) - jointTable rot. jointTable[0] is the
@@ -406,13 +424,10 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
             dy = (f32)gSoH3dWingProbe[1] * kBinangToRad;
             dz = (f32)gSoH3dWingProbe[2] * kBinangToRad;
         }
-        if (gSoH3dAnimDebug) {
-            static int dbg = 0;
-            if ((dbg++ % 20) == 0) {
-                fprintf(stderr, "[WINGFLAP] zar=%s n64limb=%d->bone=%d n64binang=(%d,%d,%d) -> oot rad=(%.3f,%.3f,%.3f)\n",
-                        zar, row->n64Limb, row->oot3dBone, dd[0], dd[1], dd[2], dx, dy, dz);
-                fflush(stderr);
-            }
+        if (sampleThisCall) {
+            fprintf(stderr, "[WINGFLAP] zar=%s n64limb=%d->bone=%d n64binang=(%d,%d,%d) -> oot rad=(%.3f,%.3f,%.3f)\n",
+                    zar, row->n64Limb, row->oot3dBone, dd[0], dd[1], dd[2], dx, dy, dz);
+            fflush(stderr);
         }
         SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, dx, dy, dz);
     }
@@ -3880,6 +3895,14 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dCuccoState = (strcmp(sub, "off") == 0) ? -1 : atoi(sub);
         }
         SoH3D_ReplReply(outPath, "cuccostate=%d (-1=live AI)", gSoH3dCuccoState);
+    } else if (strcmp(cmd, "cuccoheld") == 0) {
+        // #5 — force every cucco into the HELD-BY-LINK carried state (func_80AB6BF8): body shake
+        // (shape.rot ±5000/frame) + feather bursts + wing flap, without Link actually grabbing it.
+        // Pair with `afreeze 2` (position-only) so the body still jitters while the cucco stays framed.
+        if (sscanf(line, "%*s %d", &iv) == 1) {
+            gSoH3dCuccoHeld = (iv != 0);
+        }
+        SoH3D_ReplReply(outPath, "cuccoheld=%d (pair with afreeze 2)", gSoH3dCuccoHeld);
     } else if (strcmp(cmd, "flapinfo") == 0) {
         // #5 — read-back of the last cucco drawn this frame: flap phase + the wing binang actually
         // applied. Capture two frames; differing phase/wing = the wing is animating (real flap).
@@ -4069,15 +4092,16 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             sel->world.rot.y, sel->params, m);
         }
     } else if (strcmp(cmd, "afreeze") == 0) {
-        // GENERIC: pin the selected actor's transform every frame (no wander/hop/flee/AI drift).
+        // GENERIC: pin the selected actor's transform every frame. 0=off, 1=pin pos+rot,
+        // 2=pin position only (rotation free — e.g. so a held cucco's body shake stays visible).
         if (sscanf(line, "%*s %i", &iv) == 1) {
-            gSoH3dActorFreeze = iv ? 1 : 0;
+            gSoH3dActorFreeze = (iv < 0 || iv > 2) ? (iv ? 1 : 0) : iv;
             if (gSoH3dActorFreeze && gSoH3dSelActor != NULL) {
                 sSoH3dActorPinPos = gSoH3dSelActor->world.pos;
                 sSoH3dActorPinRot = gSoH3dSelActor->world.rot;
             }
         }
-        SoH3D_ReplReply(outPath, "afreeze=%d sel=%s", gSoH3dActorFreeze,
+        SoH3D_ReplReply(outPath, "afreeze=%d (1=pos+rot,2=pos only) sel=%s", gSoH3dActorFreeze,
                         gSoH3dSelActor ? "set" : "NONE (asel first)");
     } else if (strcmp(cmd, "apos") == 0) {
         // GENERIC: set + pin the selected actor's world position.

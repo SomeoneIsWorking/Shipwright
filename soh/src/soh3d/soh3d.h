@@ -61,6 +61,12 @@ extern int gSoH3dForceCuccoAgitate;
 extern int gSoH3dCuccoState;
 extern int gSoH3dCuccoDbgPhase;
 extern short gSoH3dCuccoDbgWing[6];
+// gSoH3dCuccoHeld : 1 = force every cucco into the HELD-BY-LINK carried action (func_80AB6BF8) —
+//   the frantic body shake (shape.rot ±5000/frame) + feather bursts + wing flap — without needing
+//   Link to actually grab it (#9/#6 pickup is broken). REPL `cuccoheld <0|1>`. Pair with `afreeze 2`
+//   (position-only freeze) so the body still jitters while the cucco stays framed; `afreeze 1` would
+//   pin the rotation and kill the shake.
+extern int gSoH3dCuccoHeld;
 
 // Generic actor-control debug surface (works on ANY actor, not just cuccos). One selected actor is
 // driven each frame from SoH3D_ActorPostUpdate (called per-actor at the end of Actor_UpdateAll).

@@ -973,6 +973,14 @@ void EnNiw_Update(Actor* thisx, PlayState* play) {
     }
     thisx->shape.rot = thisx->world.rot;
     thisx->shape.shadowScale = 15.0f;
+    // #5 force the HELD-BY-LINK state: func_80AB6BF8 is the carried-cucco action — it randomizes
+    // shape.rot ±5000 each frame (the frantic body SHAKE that reads as "held"), bursts feathers, and
+    // runs the wing flap. Reproduce it WITHOUT needing Link to actually grab the cucco (#9/#6 pickup
+    // is broken). Forced before actionFunc so the real held code runs this frame. Pair with a
+    // position-only freeze (`afreeze 2`) so the body can still jitter while the cucco stays framed.
+    if (gSoH3dCuccoHeld) {
+        this->actionFunc = func_80AB6BF8;
+    }
     this->actionFunc(this, play);
     // #5 cucco wing STATE machine (the one genuinely cucco-specific control — there is no generic
     // equivalent). `cuccostate <n>` drives func_80AB5BF8 directly, independent of AI, so any flap

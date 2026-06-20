@@ -105,6 +105,7 @@ float SoH3D_AutoModelMinY(int modelId);
 int SoH3D_AutoModelExtentXZ(int modelId, float* outX, float* outZ); // local X/Z spans (size a flat plane, #2)
 void SoH3D_SetTrackPosedMinY(int modelId, int enable); // per-frame posed-feet grounding (#29b player float)
 float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model-local Y to ground the feet
+int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelPos); // posed bone origin (model-local) for held-actor attach (#6)
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
 const char* SoH3D_AutoModelZar(int modelId); // ZAR path the model was allocated from (stable id)
@@ -326,6 +327,7 @@ int gSoH3dCuccoState = -1;        // #5 force func_80AB5BF8 arg (-1 = live AI); 
 int gSoH3dCuccoDbgPhase = -1;     // #5 last cucco's flap phase (unk_29C)
 short gSoH3dCuccoDbgWing[6] = { 0, 0, 0, 0, 0, 0 }; // #5 limb7 xyz, limb11 xyz applied this frame
 int gSoH3dCuccoHeld = 0;          // #5 force the held-by-Link carried state (func_80AB6BF8)
+int gSoH3dHeldAttach = 1;         // #6 attach carried actor to 3DS Link's hands (A/B toggle; REPL linkheldfix)
 
 // Generic actor-control debug surface (any actor). gSoH3dSelActor is driven each frame by
 // SoH3D_ActorPostUpdate; see soh3d.h for the REPL surface (asel/afreeze/apos/arot/aparams/acam).
@@ -3023,6 +3025,25 @@ int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (groundOff != 0.0f) Matrix_Translate(0.0f, groundOff, 0.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    // #6: attach a carried actor (e.g. held cucco) to the 3DS Link's hands. Normally the held
+    // actor's world.pos is set by Player_PostLimbDrawGameplay (the post-limb hook of Link's N64
+    // SkelAnime draw, z_player_lib.c) as midpoint(R_HAND, L_HAND) — but that hook is part of
+    // Player_DrawGameplay, which z_player.c SKIPS when this replacement draws, so the held actor
+    // would stay at its pickup spot. Reproduce that anchor on the posed 3DS rig: childlink_v2 left
+    // hand = bone 16, right hand = bone 20 (see kLinkChildBoneCorr limb map; limb 15/18 = L/R_HAND).
+    // The bone positions are model-local; the matrix stack top is the player world transform M just
+    // built above, so Matrix_MultVec3f lifts the midpoint to world space. Faithful to N64: position
+    // only (carry rotation stays the actor's own), gated on carrying & not item-in-hand/hookshot.
+    if (gSoH3dHeldAttach && player->heldActor != NULL && !Player_HoldsHookshot(player) &&
+        (player->stateFlags1 & PLAYER_STATE1_ITEM_IN_HAND) == 0) {
+        float lh[3], rh[3];
+        if (SoH3D_PosedBoneWorldPos(modelId, 16, lh) && SoH3D_PosedBoneWorldPos(modelId, 20, rh)) {
+            Vec3f midLocal = { (lh[0] + rh[0]) * 0.5f, (lh[1] + rh[1]) * 0.5f, (lh[2] + rh[2]) * 0.5f };
+            Vec3f midWorld;
+            Matrix_MultVec3f(&midLocal, &midWorld);
+            Math_Vec3f_Copy(&player->heldActor->world.pos, &midWorld);
+        }
+    }
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);
@@ -4214,6 +4235,42 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dCuccoHeld = (iv != 0);
         }
         SoH3D_ReplReply(outPath, "cuccoheld=%d (pair with afreeze 2)", gSoH3dCuccoHeld);
+    } else if (strcmp(cmd, "linkcarry") == 0) {
+        // #6 verification tooling: force Link to CARRY the asel-selected actor (wires the held/carry
+        // links the way Player_InitExplosiveIA does), without an in-game pickup — so the carried-
+        // actor draw-position path is reachable headless. `linkcarry 1` attaches the selected actor
+        // to Link (heldActor + child/parent + CARRYING_ACTOR); `linkcarry 0` detaches. Pair with
+        // `asel <id>` first. Do NOT afreeze the carried actor — that pins its transform and would
+        // hide the per-frame world.pos write this is meant to verify.
+        if (sscanf(line, "%*s %d", &iv) == 1) {
+            Player* pl = GET_PLAYER(play);
+            if (iv != 0) {
+                if (gSoH3dSelActor == NULL) {
+                    SoH3D_ReplReply(outPath, "linkcarry: no actor selected (asel first)");
+                } else {
+                    pl->heldActor = gSoH3dSelActor;
+                    pl->interactRangeActor = gSoH3dSelActor;
+                    pl->actor.child = gSoH3dSelActor;
+                    gSoH3dSelActor->parent = &pl->actor;
+                    pl->stateFlags1 |= PLAYER_STATE1_CARRYING_ACTOR;
+                    SoH3D_ReplReply(outPath, "linkcarry=1 heldActor id=0x%X", gSoH3dSelActor->id);
+                }
+            } else {
+                if (pl->heldActor != NULL) pl->heldActor->parent = NULL;
+                pl->heldActor = NULL;
+                pl->interactRangeActor = NULL;
+                pl->actor.child = NULL;
+                pl->stateFlags1 &= ~PLAYER_STATE1_CARRYING_ACTOR;
+                SoH3D_ReplReply(outPath, "linkcarry=0 (detached)");
+            }
+        } else {
+            SoH3D_ReplReply(outPath, "usage: linkcarry <0|1> (asel an actor first)");
+        }
+    } else if (strcmp(cmd, "linkheldfix") == 0) {
+        // #6 A/B toggle: 1 = attach carried actor to the 3DS Link's posed hand (the fix), 0 = leave
+        // it at its stale world.pos (reproduces the bug) — for before/after evidence.
+        if (sscanf(line, "%*s %d", &iv) == 1) gSoH3dHeldAttach = (iv != 0);
+        SoH3D_ReplReply(outPath, "linkheldfix=%d", gSoH3dHeldAttach);
     } else if (strcmp(cmd, "flapinfo") == 0) {
         // #5 — read-back of the last cucco drawn this frame: flap phase + the wing binang actually
         // applied. Capture two frames; differing phase/wing = the wing is animating (real flap).

@@ -1956,29 +1956,6 @@ extern "C" float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask
     return (mn < 1e29f) ? -mn : 0.0f;
 }
 
-// Posed bone-world position (#6): the model-local translation of bone `boneId` after this frame's
-// pose, recovered from the cached skin matrices (skin[b]*bind[b] == the posed bone-world transform
-// aw[b]; its translation is the bone's posed origin). outModelPos is in the SAME model-local space
-// as the dlist verts, so the caller transforms it through the player world matrix. Used by the
-// player draw path to attach a held actor (carried cucco) to the 3DS Link's hand bone, since the
-// N64 Player_PostLimbDrawGameplay hook that sets heldActor->world.pos is skipped when the 3DS Link
-// replacement draws. Needs tracking enabled (SoH3D_SetTrackPosedMinY) so lastSkin() is populated;
-// the player path always enables it. Returns 0 if no pose is cached or boneId is out of range.
-extern "C" int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelPos) {
-    LoadedModel* lm = loadModel(modelId);
-    if (!lm || !lm->ok || !lm->cmb) return 0;
-    auto it = lastSkin().find(modelId);
-    if (it == lastSkin().end() || it->second.empty()) return 0;
-    const auto& sm = it->second;
-    const auto& bind = lm->cmb->boneMatrices();
-    if (boneId < 0 || (size_t)boneId >= sm.size() || (size_t)boneId >= bind.size()) return 0;
-    SoH3D::Mat4 aw = SoH3D::matMul(sm[boneId], bind[boneId]);
-    outModelPos[0] = aw[3];
-    outModelPos[1] = aw[7];
-    outModelPos[2] = aw[11];
-    return 1;
-}
-
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);

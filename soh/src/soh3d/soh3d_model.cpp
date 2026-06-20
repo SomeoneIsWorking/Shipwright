@@ -527,29 +527,38 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
         const float kTileW = 44.0f;   // world units per horizontal texture tile
         const float Vnose = 0.62f;    // tread/riser split in the texture (matches the SVG)
         const float uMin = f.cmin / kTileW, uMax = f.cmax / kTileW;
+        // #1: raise the whole staircase by HALF a step so the treads CENTER on (average) the original
+        // ramp surface, instead of the ramp touching only the step nosings (which left the treads a
+        // half-step low — the whole flight read as sitting below the surface you walk on). yr is added
+        // to every tread/riser; the side caps still reach DOWN to the original ramp diagonal so the
+        // surrounding terrain keeps occluding the sides (see the side-cap note below).
+        const float yr = f.dy * 0.5f;
         for (int k = 0; k < f.N; k++) {
             float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-            // Treads sit at the step's LOWER y (yk), not the upper (yTop). This tucks the whole
-            // staircase at/under the original ramp diagonal — the riser tops touch the diagonal at
-            // the nosings, the treads dip below — so the surrounding terrain (which meets the ramp
-            // surface) occludes the step sides instead of leaving the steps poking above it with
-            // open sides (the "render gap" / see-through). The riser then climbs at the BACK of the
-            // tread (a1) up to the next tread's height.
-            float yk = f.ymin + k * f.dy, yk1 = f.ymin + (k + 1) * f.dy;
+            // yd0/yd1 = the ORIGINAL ramp diagonal at a0/a1 (the line the surrounding terrain meets).
+            // yk/yk1 = the treads/risers, raised yr above that diagonal. The riser climbs at the BACK
+            // of the tread (a1) up to the next tread's height.
+            float yd0 = f.ymin + k * f.dy, yd1 = f.ymin + (k + 1) * f.dy;
+            float yk = yd0 + yr, yk1 = yd1 + yr;
             // Tread (top face, +Y) at yk: front edge a0 = nosing (V=Vnose) -> back a1 = V=0.
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmin, uMin, 0.0f, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp);
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp); emit(a0, yk, f.cmax, uMax, Vnose, nUp);
             // Riser (front face, -aDir) at a1, yk -> yk1: top yk1 = nosing (V=Vnose), bottom yk = V=1.
             emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
             emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
-            // Side caps: fill the triangular sliver between this lowered tread and the original
-            // ramp's straight side diagonal (the edge the surrounding terrain meets), on BOTH c
-            // edges, so the open sides no longer show the background through them. The cap's
-            // hypotenuse (a0,yk)->(a1,yk1) traces that diagonal == the original ramp silhouette.
+            // Side caps: a quad on each c edge from the ORIGINAL ramp diagonal (yd0,yd1 — where the
+            // terrain meets the ramp side) UP to the raised step silhouette (yk,yk1). This traces the
+            // original ramp side profile (so terrain still meets it seamlessly) AND fills the half-step
+            // skirt the raise opened, so the open sides never show through. Below yd the terrain
+            // occludes; above it this cap covers everything up to the top of the steps.
             // Mapped to riser stone (U along the run, V by height) so the sides read as stone.
             float uA0 = a0 / kTileW, uA1 = a1 / kTileW;
-            emit(a0, yk, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk1, f.cmin, uA1, Vnose, nCmin); emit(a1, yk, f.cmin, uA1, 1.0f, nCmin);
-            emit(a0, yk, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, 1.0f, nCmax); emit(a1, yk1, f.cmax, uA1, Vnose, nCmax);
+            // cmin (faces -c): corners TL(a0,yk) TR(a1,yk1) BR(a1,yd1) BL(a0,yd0).
+            emit(a0, yk, f.cmin, uA0, Vnose, nCmin); emit(a1, yk1, f.cmin, uA1, Vnose, nCmin); emit(a1, yd1, f.cmin, uA1, 1.0f, nCmin);
+            emit(a0, yk, f.cmin, uA0, Vnose, nCmin); emit(a1, yd1, f.cmin, uA1, 1.0f, nCmin); emit(a0, yd0, f.cmin, uA0, 1.0f, nCmin);
+            // cmax (faces +c): reverse winding.
+            emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a1, yd1, f.cmax, uA1, 1.0f, nCmax); emit(a1, yk1, f.cmax, uA1, Vnose, nCmax);
+            emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a0, yd0, f.cmax, uA0, 1.0f, nCmax); emit(a1, yd1, f.cmax, uA1, 1.0f, nCmax);
         }
     }
     g.verts.swap(outv);
@@ -2273,9 +2282,10 @@ extern "C" int SoH3D_CollectSceneStairTreads(const char* sceneName,
             for (const std::vector<int>& pt : patches) {
                 StairFrame f;
                 if (!stairFrameOf(g, pt, nrm, f)) continue;
+                const float yr = f.dy * 0.5f; // #1: same half-step raise as the render side
                 for (int k = 0; k < f.N; k++) {
                     float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-                    float yk = f.ymin + k * f.dy; // tread at the step's LOWER y, matching the render
+                    float yk = f.ymin + k * f.dy + yr; // tread raised to center on the ramp, matching render
                     // Tread quad corners (world XZ from a,c; y at the lowered tread), CCW from above.
                     const float cc[4][2] = { { a0, f.cmin }, { a1, f.cmin }, { a1, f.cmax }, { a0, f.cmax } };
                     int base = (int)(verts.size() / 3);

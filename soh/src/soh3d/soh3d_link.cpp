@@ -447,6 +447,33 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     return 1;
 }
 
+// #79 diagnostic: report the feet-grounding offset SoH3D_PosedGroundOffset computes for Link's
+// CURRENT cached pose (the most recent draw — so it reflects whatever CSAB is live, including a
+// `linkanim`-forced climb clip), plus the resolved CSAB name. groundOff = -(lowest visible posed
+// vertex Y); the draw lands that lowest vertex on actor.world.pos.y. If a climb pose's lowest point
+// is NOT the feet (knees/tucked foot), groundOff differs from idle and the WHOLE body is shoved
+// up/down for the same actor.y — the suspected "teleports upward while climbing" mechanism. Uses the
+// real per-frame mid-mask so it matches the live draw. Returns groundOff; writes the CSAB to outCsab.
+extern "C" float SoH3D_LinkGroundDiag(PlayState* play, const char** outCsab) {
+    Player* player = GET_PLAYER(play);
+    const char* zar = (LINK_AGE_IN_YEARS == YEARS_CHILD) ? "/actor/zelda_link_child_new.zar"
+                                                         : "/actor/zelda_link_boy_new.zar";
+    int modelId = SoH3D_AutoModelId(zar);
+    if (modelId < 0) {
+        if (outCsab) *outCsab = "(no model)";
+        return 0.0f;
+    }
+    if (outCsab) {
+        if (gSoH3dLinkForceCsab[0] != '\0') {
+            *outCsab = gSoH3dLinkForceCsab;
+        } else {
+            const char* c = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
+            *outCsab = c ? c : SOH3D_LINK_IDLE_CSAB " (fallback)";
+        }
+    }
+    return SoH3D_PosedGroundOffset(modelId, SoH3D_LinkComputeMidMask(player));
+}
+
 // #8 hand-weave: pin Link's world pos + facing yaw each frame, so the side-profile view is identical
 // across `linkcorr` tweaks. Extracted from SoH3D_ActorPostUpdate; called from that same call site.
 extern "C" void SoH3D_LinkApplyPin(PlayState* play, Actor* actor) {

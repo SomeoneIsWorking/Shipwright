@@ -3028,6 +3028,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         r == 1 ? "GRABBED" : r == 0 ? "declined (yDistToLedge<79 / no wall geom)"
                                                     : "NO wallPoly (walk Link flush into a climbable first)",
                         p->stateFlags1, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z);
+    } else if (strcmp(cmd, "tpf") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
+        // #79 repro: reliable teleport. Plain `tp` leaves velocity/action intact so Link slides off
+        // slopes / void-falls (observed 200+ unit drift). `tpf x z [yawDeg]` snaps him to the floor,
+        // zeroes velocity, and forces standing idle so he stays put. Optional 3rd arg aims his yaw.
+        Player* p = GET_PLAYER(play);
+        float yawDeg;
+        s32 setYaw = (sscanf(line, "%*s %*f %*f %f", &yawDeg) == 1);
+        s16 yaw = setYaw ? (s16)(yawDeg / 360.0f * 65536.0f) : 0;
+        f32 y = SoH3D_PlayerForceTeleport(p, play, f1, f2, yaw, setYaw);
+        SoH3D_ReplReply(outPath, "tpf -> (%.0f,%.1f,%.0f) yaw=%d%s", f1, y, f2,
+                        p->actor.shape.rot.y, setYaw ? " (aimed)" : "");
+    } else if (strcmp(cmd, "linkground") == 0) {
+        // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
+        // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big
+        // groundOff delta = the climb pose's lowest vertex isn't the feet -> body shoved up = the bug.
+        const char* csab = "(?)";
+        float go = SoH3D_LinkGroundDiag(play, &csab);
+        SoH3D_ReplReply(outPath, "linkground csab=%s groundOff=%.2f (model-local; grounds lowest vertex to actorY)",
+                        csab, go);
     } else if (strcmp(cmd, "actors") == 0) {
         // List actors (id + object id + world pos + distance from Link), so an NPC can be
         // located and framed (cam/tp) without hunting. Default: NPC category only; "actors all"

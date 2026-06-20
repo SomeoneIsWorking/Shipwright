@@ -7617,6 +7617,34 @@ s32 SoH3D_PlayerForceClimb(Player* this, PlayState* play) {
     return func_8083EC18(this, play, sTouchedWallFlags | 0x08) ? 1 : 0;
 }
 
+// SoH3D reliable-teleport (#79 repro): plain `tp` only writes world.pos, leaving Link's prior
+// velocity/speed and action intact — so on a slope or with leftover momentum he immediately slides
+// away (observed: a tp lands 200+ units off) or void-falls. This snaps Link to the raycast floor at
+// (x,z), zeroes ALL velocity, and forces the standing-idle action (func_80839E88) so the next
+// Play_Update can't re-accelerate him. Optional yaw aims him (e.g. into a climbable). Returns the
+// floor Y used (or the prior Y if no floor was found). Generic, reusable for any deterministic pose.
+f32 SoH3D_PlayerForceTeleport(Player* this, PlayState* play, f32 x, f32 z, s16 yaw, s32 setYaw) {
+    Vec3f probe = { x, 10000.0f, z };
+    CollisionPoly* poly = NULL;
+    f32 y = BgCheck_EntityRaycastFloor1(&play->colCtx, &poly, &probe);
+    if (poly == NULL) {
+        y = this->actor.world.pos.y; // no floor below (x,z): keep current height rather than void
+    }
+    this->actor.world.pos.x = x;
+    this->actor.world.pos.y = y;
+    this->actor.world.pos.z = z;
+    this->actor.prevPos = this->actor.world.pos;
+    this->actor.velocity.x = this->actor.velocity.y = this->actor.velocity.z = 0.0f;
+    this->actor.speedXZ = 0.0f;
+    this->linearVelocity = 0.0f;
+    this->actor.bgCheckFlags |= 1; // mark grounded so the idle action doesn't treat him as airborne
+    if (setYaw) {
+        this->actor.shape.rot.y = this->actor.world.rot.y = this->yaw = yaw;
+    }
+    func_80839E88(this, play); // standing idle: clears any roll/slide/climb action carried in
+    return y;
+}
+
 void func_8083F070(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_8084C5F8, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));

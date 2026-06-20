@@ -349,9 +349,19 @@ void SoH3D_WalkInject(PlayState* play);
 // -1 if not touching a wall. REPL `forceclimb`.
 s32 SoH3D_PlayerForceClimb(Player* player, PlayState* play);
 
+// Reliable teleport (#79 repro): snap Link to the raycast floor at (x,z), zero all velocity, and
+// force the standing-idle action so he can't slide/void away after a plain `tp`. setYaw!=0 aims him.
+// Returns the floor Y used. REPL `tpf x z [yawDeg]`. Lives in z_player.c (needs the idle setup fn).
+f32 SoH3D_PlayerForceTeleport(Player* player, PlayState* play, f32 x, f32 z, s16 yaw, s32 setYaw);
+
 // Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
 // day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.
 void SoH3D_ApplyForceTime(void);
+
+// #79 diagnostic (DEFINED in soh3d_link.cpp): groundOff for Link's current cached pose + the resolved
+// CSAB name. Compare idle vs a `linkanim`-forced climb clip to see if the climb pose's lowest vertex
+// shifts groundOff (the suspected upward-teleport-while-climbing cause). REPL `linkground`.
+float SoH3D_LinkGroundDiag(PlayState* play, const char** outCsab);
 
 // --- Shared internals exposed for soh3d_link.cpp (the Link policy split out of soh3d.c) ----------
 // These were file-static in soh3d.c; un-static'd + declared here so soh3d_link.cpp can call/reference

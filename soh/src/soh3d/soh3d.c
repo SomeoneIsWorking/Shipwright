@@ -732,6 +732,73 @@ static int SoH3D_N64WallData0(CollisionHeader* n64, float cx, float cy, float cz
     return 1;
 }
 
+// #74 climb-bit propagation across a tessellated quad. The N64 re-source above matches per-triangle,
+// but OoT3D splits a climbable wall quad into two triangles and the centroid-inside test can match
+// one while its sibling's centroid lands just outside the N64 triangle profile near the shared
+// diagonal -> one triangle climbable, the other not, so Link's wall-contact raycast hits the dead
+// triangle and he dismounts mid-climb (Hyrule Castle ladder: idx 162 flags=8, idx 163 flags=0;
+// #74/#25/#79). Heal it: a wall triangle that shares an EDGE (two vertex indices) with a climbable,
+// CO-PLANAR wall triangle is the same physical surface, so it inherits the climb bits (data0 bits
+// 21..25). Edge-sharing + same plane keeps this from leaking a climb bit onto an unrelated wall.
+static int SoH3D_WallSharesEdge(CollisionPoly* a, CollisionPoly* b) {
+    s16 av[3] = { (s16)(a->flags_vIA & 0x1FFF), (s16)(a->flags_vIB & 0x1FFF), (s16)a->vIC };
+    s16 bv[3] = { (s16)(b->flags_vIA & 0x1FFF), (s16)(b->flags_vIB & 0x1FFF), (s16)b->vIC };
+    int i, j, shared = 0;
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+            if (av[i] == bv[j]) {
+                shared++;
+                break;
+            }
+        }
+    }
+    return shared >= 2;
+}
+
+static void SoH3D_PropagateWallClimbBits(CollisionPoly* poly, int numPolys, SurfaceType* types) {
+    const u32 kClimb = 0x03E00000u; // wall-climb property, data0 bits 21..25
+    int i, j, changed = 1, pass = 0;
+    // Iterate to flow the bit across a chain of triangles (a tall ladder is several stacked quads).
+    while (changed && pass < 8) {
+        changed = 0;
+        pass++;
+        for (i = 0; i < numPolys; i++) {
+            float niy = COLPOLY_GET_NORMAL(poly[i].normal.y);
+            if (niy > 0.5f || niy < -0.5f) {
+                continue; // walls only
+            }
+            if ((types[poly[i].type].data[0] & kClimb) != 0) {
+                continue; // already climbable
+            }
+            for (j = 0; j < numPolys; j++) {
+                if (j == i) {
+                    continue;
+                }
+                if ((types[poly[j].type].data[0] & kClimb) == 0) {
+                    continue; // source must be climbable
+                }
+                // Same plane: same normal direction (dot ~1) and same signed plane offset.
+                if (COLPOLY_GET_NORMAL(poly[i].normal.x) * COLPOLY_GET_NORMAL(poly[j].normal.x) +
+                        COLPOLY_GET_NORMAL(poly[i].normal.y) * COLPOLY_GET_NORMAL(poly[j].normal.y) +
+                        COLPOLY_GET_NORMAL(poly[i].normal.z) * COLPOLY_GET_NORMAL(poly[j].normal.z) <
+                    0.985f) {
+                    continue;
+                }
+                if (abs((int)poly[i].dist - (int)poly[j].dist) > 8) {
+                    continue;
+                }
+                if (!SoH3D_WallSharesEdge(&poly[i], &poly[j])) {
+                    continue;
+                }
+                types[poly[i].type].data[0] =
+                    (types[poly[i].type].data[0] & ~kClimb) | (types[poly[j].type].data[0] & kClimb);
+                changed = 1;
+                break;
+            }
+        }
+    }
+}
+
 // #5 — find the freshly-built OoT3D base floor poly under world (x,z) with plane Y closest to y
 // (mirrors SoH3D_N64FloorData0 but over the in-build vtx/poly arrays). Returns the poly index
 // (== its own SurfaceType slot, since each poly indexes type=i) or -1. Used to give a generated
@@ -994,6 +1061,11 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         sSurfaceTypes[i].data[0] = d0;
         sSurfaceTypes[i].data[1] = d1;
     }
+
+    // #74 — heal tessellated climbable walls: flow the climb bit from a climbable wall triangle to
+    // its edge-sharing co-planar siblings, so an OoT3D quad split into climbable + non-climbable
+    // triangles becomes uniformly climbable and Link doesn't dismount at the diagonal seam.
+    SoH3D_PropagateWallClimbBits(poly, raw.numPolys, sSurfaceTypes);
 
     // #5 — append the generated stair treads as horizontal floor polys. They sit on/above the
     // OoT3D ramp (left intact below), so BgCheck returns the tread as Link's floor and he stands

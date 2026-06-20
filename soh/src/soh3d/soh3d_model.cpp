@@ -1856,6 +1856,43 @@ extern "C" void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float r
     v[boneId * 3 + 2] = rz;
 }
 
+// #5 debug: dump per-bone vert influence + spatial extent so the wing bones can be identified by
+// geometry (the parsed CMB has no bone names). Prints, per bone: id, parent, #verts weighted to it,
+// and the mean local position of those verts (a wing bone's verts sit far out on one side in Z/X).
+extern "C" void SoH3D_DumpBoneStats(int modelId) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb) {
+        fprintf(stderr, "[BONESTATS] model %d not loaded\n", modelId);
+        return;
+    }
+    const auto& bones = lm->cmb->bones();
+    int n = (int)lm->cmb->boneMatrices().size();
+    std::vector<int> vc(n, 0);
+    std::vector<double> mx(n, 0), my(n, 0), mz(n, 0);
+    for (const auto& g : lm->groups) {
+        for (const auto& v : g.verts) {
+            for (int k = 0; k < 4; k++) {
+                if (v.weights[k] <= 0.0f) continue;
+                int b = (int)(v.boneIds[k] + 0.5f);
+                if (b < 0 || b >= n) continue;
+                vc[b]++;
+                mx[b] += v.pos[0]; my[b] += v.pos[1]; mz[b] += v.pos[2];
+            }
+        }
+    }
+    fprintf(stderr, "[BONESTATS] model %d bones=%d\n", modelId, n);
+    for (const auto& bn : bones) {
+        int id = bn.id;
+        if (id < 0 || id >= n) continue;
+        int c = vc[id];
+        fprintf(stderr, "[BONESTATS]  bone %2d parent %2d verts %5d meanPos(%.1f,%.1f,%.1f) trans(%.1f,%.1f,%.1f)\n",
+                id, bn.parent, c,
+                c ? mx[id] / c : 0.0, c ? my[id] / c : 0.0, c ? mz[id] / c : 0.0,
+                bn.trans[0], bn.trans[1], bn.trans[2]);
+    }
+    fflush(stderr);
+}
+
 // --- Posed-feet grounding for the player path (#29b "Link floats") ---------------------------
 // The OoT3D Link CSABs carry absolute hip (bone 1) TRANSLATION tracks authored for the BOY rig;
 // applied to ANY Link rig they lift the whole skeleton off the floor (the child floats ~930 local

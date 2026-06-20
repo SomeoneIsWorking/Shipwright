@@ -305,9 +305,13 @@ typedef struct {
     f32 srcSign[3]; // multiplier applied to that N64 axis' binang delta
 } SoH3dProcOverrideRow;
 static const SoH3dProcOverrideRow kSoH3dProcOverride[] = {
-    // cucco: wing limbs 7 & 11 -> bones 3 & 5. oot_x<- -n64_y (lift), oot_y<- +n64_x, oot_z<- +n64_z.
-    { "/actor/zelda_nw.zar", 7, 3, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
-    { "/actor/zelda_nw.zar", 11, 5, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
+    // cucco: N64 wing limbs 7 & 11 -> OoT3D WING bones 4 & 6. (Bones 3 & 5 are the FEET — low,
+    // trans.y=-640, 38 verts; the wings are bones 4 & 6 — high on the sides, meanPos y~901, 65 verts.
+    // #5: the flap was previously mis-mapped onto the feet, so the rendered wing never moved despite
+    // a correct time-varying delta. Verified by `bonestats`/`bonerot` sweep — bone 4/6 fold the wing
+    // fan, 3/5 only twitch a foot.) Axis permutation re-derived for the wing bones' local frame.
+    { "/actor/zelda_nw.zar", 7, 4, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
+    { "/actor/zelda_nw.zar", 11, 6, { 1, 0, 2 }, { -1.0f, 1.0f, 1.0f } },
 };
 
 // Verification gate (env SOH3D_PROCOVERRIDE, default ON; REPL `wingflap <0|1>`): when 0 the
@@ -352,6 +356,12 @@ void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor) {
 // "lift"/"fan" so the multi-axis agitated mapping can be derived. REPL `wingprobe <x> <y> <z>`.
 int gSoH3dWingProbeActive = 0;
 int gSoH3dWingProbe[3] = { 0, 0, 0 };
+// #5 wing-bone identification: persistently rotate ONE arbitrary CMB bone of the drawn auto model
+// (binang), surviving the per-frame ClearBoneRotDeltas, so each bone can be swept to find which one
+// actually moves the wing geometry. REPL `bonerot <id> <rx> <ry> <rz>` (id<0 = off).
+int gSoH3dDbgBone = -1;
+int gSoH3dDbgBoneRot[3] = { 0, 0, 0 };
+void SoH3D_DumpBoneStats(int modelId);
 
 // Probe the captured override callback for each mapped limb of the current auto actor and push the
 // resulting per-bone local-rotation delta (binang -> radians) onto the OoT3D model. No-op when no
@@ -430,6 +440,13 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
             fflush(stderr);
         }
         SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, dx, dy, dz);
+    }
+    // #5 wing-bone sweep: persistently rotate one arbitrary bone (survives the clear above) to find
+    // which CMB bone actually drives the wing geometry.
+    if (gSoH3dDbgBone >= 0) {
+        SoH3D_SetBoneRotDelta(modelId, gSoH3dDbgBone, (f32)gSoH3dDbgBoneRot[0] * kBinangToRad,
+                              (f32)gSoH3dDbgBoneRot[1] * kBinangToRad,
+                              (f32)gSoH3dDbgBoneRot[2] * kBinangToRad);
     }
 }
 
@@ -3925,6 +3942,29 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "wingprobe active=%d xyz=(%d,%d,%d)", gSoH3dWingProbeActive,
                         gSoH3dWingProbe[0], gSoH3dWingProbe[1], gSoH3dWingProbe[2]);
+    } else if (strcmp(cmd, "bonerot") == 0) {
+        // #5 wing-bone sweep: persistently rotate ONE CMB bone of the drawn auto model (binang),
+        // surviving the per-frame clear, to find which bone moves the wing. `bonerot <id> <rx> <ry>
+        // <rz>`; `bonerot off` or id<0 disables. Set `cuccostate 0` first so the flap deltas are ~0.
+        char sub[16];
+        int bid, rx, ry, rz;
+        if (sscanf(line, "%*s %15s", sub) == 1 && strcmp(sub, "off") == 0) {
+            gSoH3dDbgBone = -1;
+        } else if (sscanf(line, "%*s %d %d %d %d", &bid, &rx, &ry, &rz) == 4) {
+            gSoH3dDbgBone = bid;
+            gSoH3dDbgBoneRot[0] = rx;
+            gSoH3dDbgBoneRot[1] = ry;
+            gSoH3dDbgBoneRot[2] = rz;
+        }
+        SoH3D_ReplReply(outPath, "bonerot bone=%d xyz=(%d,%d,%d)", gSoH3dDbgBone, gSoH3dDbgBoneRot[0],
+                        gSoH3dDbgBoneRot[1], gSoH3dDbgBoneRot[2]);
+    } else if (strcmp(cmd, "bonestats") == 0) {
+        // #5 — dump per-bone vert count + mean local pos for the last-drawn auto model (or model N),
+        // so the wing bones can be identified by geometry. Output goes to the run log (stderr).
+        int mid = gSoH3dLastAutoModel;
+        (void)sscanf(line, "%*s %d", &mid);
+        SoH3D_DumpBoneStats(mid);
+        SoH3D_ReplReply(outPath, "bonestats model=%d -> run.log", mid);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

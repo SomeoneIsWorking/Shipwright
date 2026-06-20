@@ -1242,7 +1242,14 @@ static void SoH3D_EmitModelDraw(PlayState* play, int modelId, Actor* actor, floa
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     Matrix_Translate(actor->world.pos.x, actor->world.pos.y, actor->world.pos.z, MTXMODE_NEW);
+    // Replicate the engine's standard actor transform (Matrix_SetTranslateRotateYXZ, z_actor.c):
+    // the FULL YXZ shape.rot, not just yaw. Upright props/characters carry shape.rot.x=z=0 so this
+    // is a no-op for them, but actors that bake an orientation into shape.rot need all three — e.g.
+    // #80 En_Goroiwa stores its rolling spin in shape.rot.x/y/z (Matrix_MtxFToYXZRotS), so a
+    // yaw-only transform made the boulder SLIDE instead of roll.
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
+    Matrix_RotateX(BINANG_TO_RAD(actor->shape.rot.x), MTXMODE_APPLY);
+    Matrix_RotateZ(BINANG_TO_RAD(actor->shape.rot.z), MTXMODE_APPLY);
     Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
     if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);

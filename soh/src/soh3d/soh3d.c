@@ -362,6 +362,11 @@ int gSoH3dWingProbe[3] = { 0, 0, 0 };
 int gSoH3dDbgBone = -1;
 int gSoH3dDbgBoneRot[3] = { 0, 0, 0 };
 void SoH3D_DumpBoneStats(int modelId);
+// #5 LIVE proc-override axis-map override (REPL `wingmap`), so the N64-limb->OoT3D-bone signed
+// permutation can be searched headless without a rebuild. src[0]<0 = inactive (use table rows).
+// src[o] = which N64 axis (0=x,1=y,2=z, -1=none) feeds OoT3D bone axis o; sign[o] = its multiplier.
+int gSoH3dWingMapSrc[3] = { -1, -1, -1 };
+int gSoH3dWingMapSign[3] = { 1, 1, 1 };
 
 // Probe the captured override callback for each mapped limb of the current auto actor and push the
 // resulting per-bone local-rotation delta (binang -> radians) onto the OoT3D model. No-op when no
@@ -421,10 +426,15 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
             dd[2] = (s16)gSoH3dWingForce; // direction/amplitude probe (applied on the mapped Z axis)
         }
         // Route each N64 limb axis to its OoT3D bone axis via the signed permutation (rest-frame diff).
+        // A LIVE override (REPL `wingmap`) replaces the table's srcAxis/srcSign for fast headless
+        // derivation without a rebuild; -1 (default) = use the table row.
+        extern int gSoH3dWingMapSrc[3], gSoH3dWingMapSign[3];
         f32 out[3] = { 0.0f, 0.0f, 0.0f };
         for (s32 o = 0; o < 3; o++) {
-            if (row->srcAxis[o] >= 0) {
-                out[o] = (f32)dd[row->srcAxis[o]] * kBinangToRad * row->srcSign[o];
+            int src = (gSoH3dWingMapSrc[0] >= 0) ? gSoH3dWingMapSrc[o] : row->srcAxis[o];
+            f32 sign = (gSoH3dWingMapSrc[0] >= 0) ? (f32)gSoH3dWingMapSign[o] : row->srcSign[o];
+            if (src >= 0) {
+                out[o] = (f32)dd[src] * kBinangToRad * sign;
             }
         }
         f32 dx = out[0], dy = out[1], dz = out[2];
@@ -3965,6 +3975,22 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         (void)sscanf(line, "%*s %d", &mid);
         SoH3D_DumpBoneStats(mid);
         SoH3D_ReplReply(outPath, "bonestats model=%d -> run.log", mid);
+    } else if (strcmp(cmd, "wingmap") == 0) {
+        // #5 — LIVE override of the proc-override axis permutation (no rebuild). `wingmap <sx> <sy>
+        // <sz> <gx> <gy> <gz>`: OoT3D bone axis o gets N64 axis s_o * sign g_o (s in {0=x,1=y,2=z,
+        // -1=none}). `wingmap off` reverts to the compiled table.
+        char sub[16];
+        int sx, sy, sz, gx, gy, gz;
+        if (sscanf(line, "%*s %15s", sub) == 1 && strcmp(sub, "off") == 0) {
+            gSoH3dWingMapSrc[0] = gSoH3dWingMapSrc[1] = gSoH3dWingMapSrc[2] = -1;
+        } else if (sscanf(line, "%*s %d %d %d %d %d %d", &sx, &sy, &sz, &gx, &gy, &gz) == 6) {
+            gSoH3dWingMapSrc[0] = sx; gSoH3dWingMapSrc[1] = sy; gSoH3dWingMapSrc[2] = sz;
+            gSoH3dWingMapSign[0] = gx; gSoH3dWingMapSign[1] = gy; gSoH3dWingMapSign[2] = gz;
+        }
+        SoH3D_ReplReply(outPath, "wingmap src=(%d,%d,%d) sign=(%d,%d,%d) %s", gSoH3dWingMapSrc[0],
+                        gSoH3dWingMapSrc[1], gSoH3dWingMapSrc[2], gSoH3dWingMapSign[0],
+                        gSoH3dWingMapSign[1], gSoH3dWingMapSign[2],
+                        gSoH3dWingMapSrc[0] < 0 ? "(table)" : "(live)");
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

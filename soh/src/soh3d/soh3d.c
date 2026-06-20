@@ -3017,6 +3017,17 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                 p->actor.world.pos.y, p->actor.world.pos.z, p->actor.shape.rot.y, p->yDistToLedge,
                 p->ledgeClimbType);
         }
+    } else if (strcmp(cmd, "forceclimb") == 0) {
+        // #79/#74 repro: force Link to grab-climb the wall he is currently flush against, bypassing
+        // the flaky natural approach gate (vine-only check, narrow yaw window, must-be-moving). Walk
+        // Link into a climbable wall first (`gcam 1; walkhold ...` until climbinfo shows a wallPoly),
+        // then `forceclimb` to enter the climb action and observe the 3DS-anim climb path on demand.
+        Player* p = GET_PLAYER(play);
+        s32 r = SoH3D_PlayerForceClimb(p, play);
+        SoH3D_ReplReply(outPath, "forceclimb -> %s (st1=0x%x pos=(%.0f,%.0f,%.0f))",
+                        r == 1 ? "GRABBED" : r == 0 ? "declined (yDistToLedge<79 / no wall geom)"
+                                                    : "NO wallPoly (walk Link flush into a climbable first)",
+                        p->stateFlags1, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z);
     } else if (strcmp(cmd, "actors") == 0) {
         // List actors (id + object id + world pos + distance from Link), so an NPC can be
         // located and framed (cam/tp) without hunting. Default: NPC category only; "actors all"

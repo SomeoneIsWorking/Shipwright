@@ -7601,6 +7601,22 @@ s32 func_8083EC18(Player* this, PlayState* play, u32 wallFlags) {
     return false;
 }
 
+// SoH3D climb-repro hook (#79/#74): force Link to grab-climb the wall he is currently flush against,
+// bypassing the natural action-handler approach gate (linearVelocity>0, narrow yaw window, vine-only
+// check) that makes climb initiation flaky to drive headlessly. We OR in the ladder bit (0x08) so
+// func_8083EC18 takes its sp8C!=0 branch: that skips the per-poly lateral-centering test (phi_f12),
+// so the grab succeeds as long as Link actually has a wallPoly and the wall is tall enough
+// (yDistToLedge >= 79). Returns 1 if the climb was entered, 0 if func_8083EC18 declined, -1 if Link
+// isn't touching a wall. Generic, reusable: any climbable wall Link can be walked flush against.
+s32 SoH3D_PlayerForceClimb(Player* this, PlayState* play) {
+    if (this->actor.wallPoly == NULL) {
+        return -1;
+    }
+    // Face squarely into the wall so the climb body's yaw assumptions hold.
+    this->actor.shape.rot.y = this->yaw = this->actor.wallYaw + 0x8000;
+    return func_8083EC18(this, play, sTouchedWallFlags | 0x08) ? 1 : 0;
+}
+
 void func_8083F070(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_8084C5F8, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));

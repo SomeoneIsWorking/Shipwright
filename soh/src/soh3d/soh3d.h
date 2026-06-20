@@ -344,6 +344,11 @@ void SoH3D_ReplPoll(PlayState* play);
 // BEFORE Play_Update so the player reads it (input is re-sampled each frame). No-op unless active.
 void SoH3D_WalkInject(PlayState* play);
 
+// Force Link to grab-climb the wall he is flush against (#79/#74 climb repro). Lives in z_player.c
+// (needs the static touched-wall flags + the static climb-entry func). Returns 1 grabbed, 0 declined,
+// -1 if not touching a wall. REPL `forceclimb`.
+s32 SoH3D_PlayerForceClimb(Player* player, PlayState* play);
+
 // Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
 // day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.
 void SoH3D_ApplyForceTime(void);

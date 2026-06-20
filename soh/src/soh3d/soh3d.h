@@ -359,6 +359,7 @@ int SoH3D_AutoModelId(const char* zarPath);                            // get-or
 // Low-level retarget primitives (DEFINED in soh3d_model.cpp); forwarded here so link.cpp sees them.
 void SoH3D_SetTrackPosedMinY(int modelId, int enable);                  // per-frame posed-feet grounding
 float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model-local Y to ground feet
+int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelPos); // posed bone origin (model-local), #6 held-actor attach
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
                           float n64AnimLength);

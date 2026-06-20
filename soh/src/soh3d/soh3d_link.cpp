@@ -64,6 +64,8 @@ float gSoH3dLinkRotY = 0.0f;
 float gSoH3dLinkRotZ = 0.0f;
 char gSoH3dLinkForceCsab[64] = ""; // REPL `linkanim <csab>` pins a CSAB on Link (verify idle/walk/run
                                    // deterministically without real movement input); empty = live-resolve
+int gSoH3dHeldAttach = 1;          // #6 attach a carried actor (held cucco) to 3DS Link's posed hands
+                                   // (A/B toggle for before/after evidence; REPL `linkheldfix <0|1>`)
 // #7: CSAB frames advanced per draw per unit of Link's ground speed, when speed-driving the
 // locomotion cycle (run/walk) — Link's run/walk advances its pose through a player-internal
 // accumulator, NOT skelAnime.curFrame (pinned at 0 the whole run), so curFrame can't phase-lock the
@@ -408,6 +410,26 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (gSoH3dLinkRotZ != 0.0f) Matrix_RotateZ(gSoH3dLinkRotZ * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (groundOff != 0.0f) Matrix_Translate(0.0f, groundOff, 0.0f, MTXMODE_APPLY);
     gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_MODELVIEW | G_MTX_LOAD);
+    // #6: attach a carried actor (e.g. held cucco) to the 3DS Link's hands. The held actor's
+    // world.pos is normally set by Player_PostLimbDrawGameplay (midpoint of the hands), the post-limb
+    // hook of Link's N64 SkelAnime draw inside Player_DrawGameplay — which z_player.c SKIPS when this
+    // replacement draws, so without this the cucco stays at its pickup spot. Reproduce that anchor on
+    // the posed 3DS rig: childlink_v2 left hand = bone 16, right hand = bone 20 (kLinkChildBoneCorr
+    // limb map: limb 15/18 = L/R_HAND). The bone positions are model-local; the matrix stack top is
+    // the player world transform just loaded, so Matrix_MultVec3f lifts the midpoint to world space.
+    // Faithful to N64: position only (carry rotation stays the actor's own), gated on carrying & not
+    // holding the hookshot / an item-in-hand. Works in both anim sources (both cache skin via
+    // cacheSkinForGround). gSoH3dHeldAttach is the A/B toggle (REPL linkheldfix) for before/after.
+    if (gSoH3dHeldAttach && player->heldActor != NULL && !Player_HoldsHookshot(player) &&
+        (player->stateFlags1 & PLAYER_STATE1_ITEM_IN_HAND) == 0) {
+        float lh[3], rh[3];
+        if (SoH3D_PosedBoneWorldPos(modelId, 16, lh) && SoH3D_PosedBoneWorldPos(modelId, 20, rh)) {
+            Vec3f midLocal = { (lh[0] + rh[0]) * 0.5f, (lh[1] + rh[1]) * 0.5f, (lh[2] + rh[2]) * 0.5f };
+            Vec3f midWorld;
+            Matrix_MultVec3f(&midLocal, &midWorld);
+            Math_Vec3f_Copy(&player->heldActor->world.pos, &midWorld);
+        }
+    }
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);
@@ -620,6 +642,11 @@ extern "C" int SoH3D_LinkRepl(PlayState* play, const char* cmd, const char* line
             gSoH3dLinkForceCsab[0] = '\0';
             SoH3D_ReplReply(outPath, "linkanim OFF (live anim resolution restored)");
         }
+    } else if (strcmp(cmd, "linkheldfix") == 0) {
+        // #6 A/B toggle: attach the carried actor (held cucco) to 3DS Link's posed hands. Default on;
+        // `linkheldfix 0` reverts to the engine's stale pickup-spot pos for before/after evidence.
+        if (sscanf(line, "%*s %i", &iv) == 1) gSoH3dHeldAttach = (iv != 0);
+        SoH3D_ReplReply(outPath, "linkheldfix=%d (attach carried actor to posed hands)", gSoH3dHeldAttach);
     } else if (strcmp(cmd, "linkjointdump") == 0) {
         // `linkjointdump <path> [nframes]` — capture the live player jointTable over nframes (default 60)
         // consecutive draws to a CSV, for the per-bone retarget-correction derivation. Pin Link to a

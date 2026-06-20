@@ -1968,6 +1968,30 @@ extern "C" float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask
     return (mn < 1e29f) ? -mn : 0.0f;
 }
 
+// Model-local position of a posed bone's ORIGIN this frame, recovered from the cached skin matrices
+// (#6 held-actor attach). The animated bone-world matrix is aw[b] = skin[b]*bind[b], so the bone
+// origin in model space is skin[b] applied to the bind-pose origin (bind[b]'s translation column).
+// Returns 1 and writes outModelPos (3 floats) on success; 0 if no pose is cached / bone out of range.
+// The caller lifts this through the actor world matrix (Matrix_MultVec3f) to get world space. Uses
+// the SAME lastSkin cache the feet-grounding path already maintains, so any posing path (N64-retarget
+// or CSAB) that ran cacheSkinForGround this frame exposes it. Requires SoH3D_SetTrackPosedMinY(1).
+extern "C" int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelPos) {
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb || !outModelPos) return 0;
+    auto it = lastSkin().find(modelId);
+    if (it == lastSkin().end() || it->second.empty()) return 0;
+    const auto& sm = it->second;
+    const auto& bind = lm->cmb->boneMatrices();
+    if (boneId < 0 || (size_t)boneId >= sm.size() || (size_t)boneId >= bind.size()) return 0;
+    const float* M = sm[boneId].data();
+    const float* B = bind[boneId].data();
+    const float bx = B[3], by = B[7], bz = B[11]; // bind-pose bone origin (row-major translation col)
+    outModelPos[0] = M[0] * bx + M[1] * by + M[2] * bz + M[3];
+    outModelPos[1] = M[4] * bx + M[5] * by + M[6] * bz + M[7];
+    outModelPos[2] = M[8] * bx + M[9] * by + M[10] * bz + M[11];
+    return 1;
+}
+
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);

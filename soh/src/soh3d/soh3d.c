@@ -4322,6 +4322,39 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             }
         }
         SoH3D_ReplReply(outPath, "%s", rep);
+    } else if (strcmp(cmd, "csinfo") == 0) {
+        // #15 diagnostic — which system is holding control away from the player? Dumps the
+        // scripted-cutscene state (csCtx.state/frames + gSaveContext.cutsceneIndex), the Player
+        // cutscene lock (InCsMode + csAction + the IN_CUTSCENE state flag), and the active
+        // onepoint subcams. Use to identify a "scene-intro pan": if csCtx.state != 0 it's the
+        // scripted Cutscene system; if only the Player lock / a subcam is set it's a different one.
+        Player* p = GET_PLAYER(play);
+        int subcams = 0;
+        for (s32 i = SUBCAM_FIRST; i < NUM_CAMS; i++) {
+            Camera* c = play->cameraPtrs[i];
+            if (c != NULL && c->csId != 0)
+                subcams++;
+        }
+        SoH3D_ReplReply(outPath,
+                        "csState=%d csFrames=%d csIndex=0x%x | inCsMode=%d csAction=%d inCsFlag=%d "
+                        "stateFlags1=0x%x | activeCam=%d onepointSubcams=%d",
+                        play->csCtx.state, play->csCtx.frames, gSaveContext.cutsceneIndex,
+                        Player_InCsMode(play), p->csAction, (p->stateFlags1 & PLAYER_STATE1_IN_CUTSCENE) ? 1 : 0,
+                        p->stateFlags1, play->activeCamera, subcams);
+    } else if (strcmp(cmd, "eventflag") == 0 && sscanf(line, "%*s %i", &iv) >= 1) {
+        // #15 repro tooling — get/set an EVENTCHKINF event flag. Entrance establishing-pan
+        // cutscenes are gated by `!Flags_GetEventChkInf(flag)` (z_demo Cutscene_HandleEntranceTriggers),
+        // so they only play the FIRST time. `eventflag <hex>` reads; `eventflag <hex> 0|1` sets, so a
+        // pan can be REPLAYED on demand (clear its flag, then `warp` to its entrance). E.g. Hyrule
+        // Field intro = flag 0xA0; clear it then `warp 0x185`.
+        int val = -1;
+        if (sscanf(line, "%*s %*i %i", &val) == 1) {
+            if (val)
+                Flags_SetEventChkInf(iv);
+            else
+                Flags_UnsetEventChkInf(iv);
+        }
+        SoH3D_ReplReply(outPath, "eventflag 0x%x = %d", iv, Flags_GetEventChkInf(iv) ? 1 : 0);
     } else if (strcmp(cmd, "skiptest") == 0 && sscanf(line, "%*s %i %i", &iv, &iv2) == 2) {
         // #2 verify — start a onepoint cutscene camera (csId=iv, timer=iv2 frames) anchored on
         // Link, to confirm press-to-skip ends it. Returns the created subcam index.

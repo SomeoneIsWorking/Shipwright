@@ -1484,7 +1484,9 @@ int SoH3D_AutoModelBoneCount(int modelId) {
 // (Grezzo port), so (Σ N64 jointPos lengths × actor->scale) / (Σ OoT3D bone-trans lengths) is
 // the correct OoT3D->world scale — independent of pose and free of the bbox-measure overshoot
 // that made skinned auto-actors giant. Returns 0 if no skeleton.
-float SoH3D_AutoModelBoneLenSum(int modelId) {
+float SoH3D_AutoModelBoneLenSum(int modelId, int boneCap) {
+    (void)boneCap; // see #13: capping at limbCount REGRESSED working actors (ratio 1.0 -> 1.2-1.4),
+                   // so bones with id>=limbCount are needed for the sum to match on normal rigs.
     LoadedModel* lm = loadModel(modelId);
     if (!lm || !lm->ok || !lm->cmb) return 0.0f;
     float sum = 0.0f;

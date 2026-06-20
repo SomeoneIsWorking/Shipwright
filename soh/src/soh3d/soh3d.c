@@ -108,7 +108,7 @@ float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model
 int SoH3D_AutoModelSkinned(int modelId);
 int SoH3D_AutoModelBoneCount(int modelId);
 const char* SoH3D_AutoModelZar(int modelId); // ZAR path the model was allocated from (stable id)
-float SoH3D_AutoModelBoneLenSum(int modelId); // Σ|trans| of non-root OoT3D bones (skeleton size)
+float SoH3D_AutoModelBoneLenSum(int modelId, int boneCap); // Σ|trans| of non-root OoT3D bones with id<boneCap (skeleton size; cap excludes uncorresponded dress bones, #13)
 const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
                           float n64AnimLength); // play OoT3D's own CSAB, phase-locked to the N64 anim
@@ -1793,9 +1793,30 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // bone-length ratio, same character) + a CSAB; no bone correspondence, no count guard, so
         // ANY skinned auto-actor with a CSAB renders.
         float n64sum = SoH3D_N64SkelBoneLenSum(skeleton, limbCount);
-        float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel);
+        float oot3dsum = SoH3D_AutoModelBoneLenSum(gSoH3dPendingModel, limbCount);
         if (n64sum > 1e-3f && oot3dsum > 1e-3f) {
             gSoH3dPendingScale = gSoH3dPendingActor->scale.x * (n64sum / oot3dsum);
+        }
+        // #13 per-rig scale calibration for anomalous OoT3D rigs. The bone-length-sum ratio is
+        // correct for every normal character (ratio ~1.0; capping it instead REGRESSED them), but
+        // child Zelda's zelda_zl4 rig has ~2x the bone-length of a normal child for the SAME
+        // geometry (measured oot3dsum=20636 vs n64sum=10295, ratio 0.499) -> she rendered ~half
+        // size. Not a magic offset masking a symptom: the heuristic's input is genuinely anomalous
+        // for this one asset, so calibrate just this zar (verified vs N64; leaves all others alone).
+        {
+            const char* z = SoH3D_AutoModelZar(gSoH3dPendingModel);
+            if (z != NULL && strstr(z, "zelda_zl4") != NULL) {
+                gSoH3dPendingScale *= 2.0f;
+            }
+        }
+        if (gSoH3dAnimDebug) {
+            static int sdbg = 0;
+            if ((sdbg++ % 30) == 0) {
+                fprintf(stderr, "[SKELSCALE] model %d n64sum=%.1f oot3dsum=%.1f ratio=%.3f actorScale=%.5f -> scale=%.5f\n",
+                        gSoH3dPendingModel, n64sum, oot3dsum, n64sum / oot3dsum,
+                        gSoH3dPendingActor->scale.x, gSoH3dPendingScale);
+                fflush(stderr);
+            }
         }
         // Select the CSAB from the actor's LIVE N64 animation (true N64->3DS anim mapping): map the
         // current animation OTR path through kSoH3dAnimMaps; if it isn't mapped, fall back to the

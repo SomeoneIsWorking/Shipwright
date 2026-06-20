@@ -335,11 +335,24 @@ s32 gSoH3dActorFreeze = 0;
 static Vec3f sSoH3dActorPinPos;
 static Vec3s sSoH3dActorPinRot;
 
+// Pin the PLAYER's world transform (pos + facing yaw) while hand-weaving the Link retarget, so the
+// view is byte-deterministic across `linkcorr` tweaks. linkfreeze pins the LIMB pose; this pins the
+// actor transform the limbs hang off (Link otherwise idle-turns toward the camera/Navi and desyncs
+// the side-profile comparison). REPL `linkpin <0|1>`. asel excludes the player, so this is separate.
+int gSoH3dLinkPin = 0;
+static Vec3f sSoH3dLinkPinPos;
+static s16 sSoH3dLinkPinYaw;
+
 // Pin the selected actor's transform after its own update each frame, so a debug-held actor can't
 // wander/hop/flee/AI-drift. Pointer-identity match against the live actor being iterated, so a
 // killed selection simply stops matching (no dangling deref).
 void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor) {
-    (void)play;
+    if (actor != NULL && gSoH3dLinkPin && play != NULL && actor == &GET_PLAYER(play)->actor) {
+        actor->velocity.x = actor->velocity.y = actor->velocity.z = 0.0f;
+        actor->speedXZ = 0.0f;
+        actor->world.pos = sSoH3dLinkPinPos;
+        actor->shape.rot.y = actor->world.rot.y = sSoH3dLinkPinYaw;
+    }
     if (actor == NULL || actor != gSoH3dSelActor || !gSoH3dActorFreeze) {
         return;
     }
@@ -3868,6 +3881,20 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         SoH3D_ReplReply(outPath, "linkfreeze=%d (frozenLimbs=%d, req=%d)",
                         gLinkFrozenCount > 0 ? 1 : 0, gLinkFrozenCount, gLinkFreezeReq);
+    } else if (strcmp(cmd, "linkpin") == 0) {
+        // #8 hand-weave: pin Link's world pos + facing yaw so the side-profile view is identical
+        // across `linkcorr` tweaks (linkfreeze alone leaves the actor free to idle-turn -> desync).
+        if (sscanf(line, "%*s %i", &iv) == 1) {
+            Player* pl = GET_PLAYER(play);
+            if (iv) {
+                sSoH3dLinkPinPos = pl->actor.world.pos;
+                sSoH3dLinkPinYaw = pl->actor.shape.rot.y;
+                gSoH3dLinkPin = 1;
+            } else {
+                gSoH3dLinkPin = 0;
+            }
+        }
+        SoH3D_ReplReply(outPath, "linkpin=%d (pins player world pos+yaw each frame)", gSoH3dLinkPin);
     } else if (strcmp(cmd, "linkcorr") == 0) {
         // #7 HAND-WEAVE the per-bone arm/upper-body retarget correction LIVE (linksrc n64).
         //   linkcorr                         -> show upper-body bones (b9..b20): mode + C euler (zyx deg)

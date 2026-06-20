@@ -1811,6 +1811,18 @@ extern "C" void SoH3D_UpdateAnimN64Corr(int modelId, const int16_t* jointRots, i
             if (mode == 2) R = matMul(corrMat(c->C), R);              // left:  C·R_n64
             else if (mode == 3) R = matMul(R, corrMat(c->C));         // right: R_n64·C
             else if (mode == 4) R = matMul(matMul(corrMat(c->C), R), corrMat(c->C2)); // C·R·C2
+            else if (mode == 5) {
+                // Conjugation C·R·C⁻¹ (C⁻¹ = Cᵀ for a rotation): a change of basis for the rest-frame
+                // discrepancy. Unlike mode 2/3 (a one-sided constant that's only right near the tuned
+                // pose), this transforms R itself, so a single hand-tuned C holds across the FULL pose
+                // range — idle, walk AND the arms-overhead carry pose (#6). Tune just C.
+                Mat4 C = corrMat(c->C);
+                Mat4 Ci = matId();
+                Ci[0] = C[0]; Ci[1] = C[4]; Ci[2] = C[8];
+                Ci[4] = C[1]; Ci[5] = C[5]; Ci[6] = C[9];
+                Ci[8] = C[2]; Ci[9] = C[6]; Ci[10] = C[10];
+                R = matMul(matMul(C, R), Ci);
+            }
             L = matMul(L, R);
         } else {
             // No live joint / rest mode: keep the CMB rest orientation (bind pose).

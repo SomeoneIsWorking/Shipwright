@@ -5,6 +5,10 @@
 
 #include "global.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Returns true when OoT3D-model rendering is enabled (env SOH3D=1). Cached.
 int SoH3D_Enabled(void);
 
@@ -343,5 +347,43 @@ void SoH3D_WalkInject(PlayState* play);
 // Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
 // day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.
 void SoH3D_ApplyForceTime(void);
+
+// --- Shared internals exposed for soh3d_link.cpp (the Link policy split out of soh3d.c) ----------
+// These were file-static in soh3d.c; un-static'd + declared here so soh3d_link.cpp can call/reference
+// them. They remain DEFINED in soh3d.c (still used by non-Link code there).
+void SoH3D_ReplReply(const char* outPath, const char* fmt, ...);        // REPL reply line (stdout + .out)
+void SoH3D_SceneTint(PlayState* play, u8 out[3]);                       // flat per-scene tint colour
+const char* SoH3D_ResolvePlayerCsab(const char* otr);                  // player anim OTR -> link CSAB base
+void SoH3D_EnsureModelProvider(void);                                   // lazy GL model provider init
+int SoH3D_AutoModelId(const char* zarPath);                            // get-or-alloc a GL model id
+// Low-level retarget primitives (DEFINED in soh3d_model.cpp); forwarded here so link.cpp sees them.
+void SoH3D_SetTrackPosedMinY(int modelId, int enable);                  // per-frame posed-feet grounding
+float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model-local Y to ground feet
+void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
+void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
+                          float n64AnimLength);
+void SoH3D_GL_SetMidMask(int modelId, unsigned long long mask);
+void SoH3D_GL_EmitPose(int modelId);
+// Walk a live N64 skeleton tree, cb per non-root limb (shared with the linkskeldump REPL).
+typedef void (*SoH3D_LimbCb)(int limbIndex, StandardLimb* limb, void* ud);
+void SoH3D_WalkN64Skeleton(void** skeleton, int limbCap, SoH3D_LimbCb cb, void* ud);
+
+// Non-Link globals referenced by the moved Link code.
+extern Actor* gSoH3dSelActor;   // generic actor-control selection (asel)
+extern s32 gSoH3dActorFreeze;   // generic actor pin mode (afreeze)
+extern float gSoH3dAnimRate;    // shared CSAB playback speed
+extern float gSoH3dAnimFrame;   // free-running CSAB scrub frame
+extern int gSoH3dAnimDebug;     // REPL `animdbg` log gate
+
+// Link toggles/sources — DEFINED in soh3d_link.cpp; referenced by the menu integration in
+// SoH3D_ReplPoll (soh3d.c), so exported rather than file-static.
+extern int gSoH3dLinkOn;
+extern int gSoH3dLinkAnimSrc;
+int SoH3D_LinkEnabled(void);
+int SoH3D_LinkAnimSrc(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

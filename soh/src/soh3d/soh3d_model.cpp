@@ -16,6 +16,8 @@
 #include "asset/cityhash.h"
 #include "asset/texpack.h"
 #include "fast/soh3d_gl.h"
+#include "ship/Context.h"                              // #20 keyboard-inject verification shim
+#include "ship/controller/controldeck/ControlDeck.h"   // #20 ProcessKeyboardEvent path
 #include <stb_image.h>
 #include "stairs_stone_png.h" // embedded PNG of assets/soh3d/stairs_stone.svg (custom stair texture)
 #include "xbox_glyphs_png.h"  // embedded PNGs of assets/soh3d/xbox_{a,b,x,y}.svg (HUD button glyphs, #32)
@@ -2212,4 +2214,24 @@ extern "C" void SoH3D_FreeRawCollision(SoH3D_RawCollision* out) {
     free(out->surf0);
     free(out->surf1);
     memset(out, 0, sizeof(*out));
+}
+
+// #20 — headless keyboard verification. Feed a raw KbScancode through the EXACT same path the SDL
+// window handler uses (Fast3dWindow::KeyDown/KeyUp -> ControlDeck::ProcessKeyboardEvent), so the
+// default keyboard->N64-button mapping (LUS::ControllerDefaultMappings) can be exercised and
+// observed live with no physical keyboard. Only the SDL physical-key->scancode step is skipped
+// (generic libultraship plumbing, not SoH3D-specific). Returns 1 if the deck consumed the event,
+// 0 if not, -1 if no control deck. Used by the REPL `key` command.
+extern "C" int SoH3D_InjectKey(int scancode, int down) {
+    auto* ctx = Ship::Context::GetRawInstance();
+    if (ctx == nullptr) {
+        return -1;
+    }
+    auto controlDeck = ctx->GetControlDeck();
+    if (controlDeck == nullptr) {
+        return -1;
+    }
+    Ship::KbEventType ev = down ? Ship::KbEventType::LUS_KB_EVENT_KEY_DOWN
+                                : Ship::KbEventType::LUS_KB_EVENT_KEY_UP;
+    return controlDeck->ProcessKeyboardEvent(ev, static_cast<Ship::KbScancode>(scancode)) ? 1 : 0;
 }

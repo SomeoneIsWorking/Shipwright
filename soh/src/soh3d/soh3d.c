@@ -3729,6 +3729,23 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         // gSoH3dHudTex every frame. 1 = crisp 64x64 hearts, 0 = the blocky N64 16x16 hearts.
         gSoH3dHudTex = (f1 != 0.0f) ? 1 : 0;
         SoH3D_ReplReply(outPath, "hudtex=%d", gSoH3dHudTex);
+    } else if (strcmp(cmd, "key") == 0) {
+        // #20 — inject a raw keyboard scancode through the real SDL->ControlDeck path so the
+        // DEFAULT keyboard->N64-button mapping can be verified headless. `key <scancode> <0|1>`
+        // (1=key down/held, 0=key up). Hold a key (down, wait, up) to drive locomotion (WASD=stick)
+        // or to hold a button. SoH default map: A=X(45) B=C(46) L=E(18) R=R(19) Z=Z(44)
+        // Start=SPACE(57) C-up/dn/lt/rt=arrows(328/336/331/333) D-up/dn/lt/rt=T/G/F/H(20/34/33/35)
+        // stick L/R/U/D=A/D/W/S(30/32/17/31). Pair with posinfo/btnhold to observe the effect.
+        extern int SoH3D_InjectKey(int scancode, int down);
+        int sc = 0, down = 1;
+        int n = sscanf(line, "%*s %d %d", &sc, &down);
+        if (n >= 1) {
+            int r = SoH3D_InjectKey(sc, down);
+            SoH3D_ReplReply(outPath, "key scancode=%d down=%d -> consumed=%d%s", sc, down, r,
+                            r < 0 ? " (no control deck)" : "");
+        } else {
+            SoH3D_ReplReply(outPath, "usage: key <scancode> <0|1>  (e.g. key 57 1 = Start down)");
+        }
     } else if (strcmp(cmd, "skip") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         // #2 — toggle press-to-skip for onepoint cutscene cameras (Start/Space force-ends them).
         gSoH3dSkip = (f1 != 0.0f) ? 1 : 0;

@@ -4140,6 +4140,26 @@ void SoH3D_ReplPoll(PlayState* play) {
         }
     }
 
+    // On-screen diagnostics: fill the RmlUi "Diag" tab's live text (gSoH3dDiagText, owned by
+    // libultraship/SohRmlUi.cpp). Lets the coords be read from a SCREENSHOT when the REPL FIFO
+    // isn't usable (e.g. a player on another OS). Same fields as the `posinfo` REPL command, plus
+    // the floor height directly under Link (the installed colCtx, i.e. OoT3D collision by default).
+    {
+        extern char gSoH3dDiagText[512];
+        Player* pl = GET_PLAYER(play);
+        if (pl != NULL) {
+            Vec3f pos = { pl->actor.world.pos.x, pl->actor.world.pos.y, pl->actor.world.pos.z };
+            Vec3f rc = { pos.x, pos.y + 50.0f, pos.z };
+            CollisionPoly* fp = NULL;
+            f32 floorY = BgCheck_EntityRaycastFloor1(&play->colCtx, &fp, &rc);
+            s16 yaw = pl->actor.shape.rot.y;
+            snprintf(gSoH3dDiagText, sizeof(gSoH3dDiagText),
+                     "scene=0x%X  room=%d\nLink=(%.0f, %.0f, %.0f)\nyaw=%d (%.0f deg)\nfloorY=%.1f%s",
+                     play->sceneNum, play->roomCtx.curRoom.num, pos.x, pos.y, pos.z, yaw,
+                     yaw / 182.044f, (fp != NULL) ? floorY : 0.0f, (fp != NULL) ? "" : " (no floor)");
+        }
+    }
+
     // #36: 2D->3D item drops default + always on. SoH's "3D Item Drops" enhancement
     // (CVAR_ENHANCEMENT("NewDrops"), read all over z_en_item00.c) makes rupees/hearts/jars/ammo draw
     // as 3D models instead of flat billboard sprites; it ships OFF (default 0). The soh3d project

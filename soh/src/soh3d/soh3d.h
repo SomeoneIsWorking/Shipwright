@@ -104,6 +104,12 @@ int SoH3D_TryDrawRoom(PlayState* play, Room* room);
 // N64 SkyboxDraw_Draw), 0 otherwise (caller draws the N64 skybox as normal). #28.
 int SoH3D_TryDrawSky(PlayState* play);
 
+// Query form of SoH3D_TryDrawSky (no draw, no side effects): 1 if the SoH3D OoT3D sky dome is
+// handling the skybox this frame (so the N64 SkyboxDraw_Draw is bypassed and its sSkyboxDrawMatrix
+// is never allocated). Callers MUST then skip the N64 SkyboxDraw_UpdateMatrix to avoid a NULL deref
+// (#16 first-person early-load crash). #28.
+int SoH3D_SkyActive(PlayState* play);
+
 // Draw the OoT3D sun/moon discs (BlueSky.zar fine_sun.ctxb / fine_moon0.ctxb billboards) in place
 // of the N64 Environment_DrawSunAndMoon sprites. Called from Play_Draw at that call site; returns 1
 // if it drew the OoT3D sun/moon (caller skips the N64 path), 0 otherwise (caller draws N64). #28e.

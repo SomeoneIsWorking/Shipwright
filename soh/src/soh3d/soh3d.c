@@ -2106,23 +2106,36 @@ static int SoH3D_SkyStarModelId(int idx) {
     return SoH3D_AutoModelId("SKY:/kankyo/BlueSky.zar|fine_star");
 }
 
-int SoH3D_TryDrawSky(PlayState* play) {
-    int modelId;
+// Query (NO draw, NO side effects): is the SoH3D OoT3D sky dome handling the skybox this frame?
+// When this is true, Play_Draw's skybox point bypasses the N64 SkyboxDraw_Draw — which is the only
+// place sSkyboxDrawMatrix is allocated — so that global stays NULL. The later SkyboxDraw_UpdateMatrix
+// call (fired when the view changes, e.g. first-person engaging sets view.unk_124) would then deref
+// that NULL and crash (#16 early-load first-person SIGSEGV in guMtxF2L). Callers MUST skip the N64
+// SkyboxDraw_UpdateMatrix when this returns 1 (its result is dead work anyway — we draw our own sky).
+// Mirrors exactly the accept conditions of SoH3D_TryDrawSky.
+int SoH3D_SkyActive(PlayState* play) {
     if (!gSoH3dSky || !SoH3D_Enabled()) {
         return 0;
     }
-    // Only the normal day/night gradient sky. Shop/indoor/cutscene skyboxes keep the N64 path.
     if (play->skyboxId != SKYBOX_NORMAL_SKY) {
         return 0;
     }
-    // Only when this scene renders OoT3D world geometry (so the OoT3D sky matches the OoT3D world).
     if (SoH3D_SceneName(play) == NULL) {
         return 0;
     }
-    modelId = SoH3D_SkyModelId(play->envCtx.skybox1Index);
-    if (modelId < 0) {
+    if (SoH3D_SkyModelId(play->envCtx.skybox1Index) < 0) {
         return 0;
     }
+    return 1;
+}
+
+int SoH3D_TryDrawSky(PlayState* play) {
+    int modelId;
+    // Only the normal day/night gradient sky, in an OoT3D-mapped scene, with a valid dome variant.
+    if (!SoH3D_SkyActive(play)) {
+        return 0;
+    }
+    modelId = SoH3D_SkyModelId(play->envCtx.skybox1Index);
     {
         // Dawn/dusk the game cross-fades two sky variants: skybox2Index drawn over skybox1Index at
         // alpha = skyboxBlend (0..255). Mirror that with our domes instead of snapping to the
@@ -2527,6 +2540,17 @@ static s8 gSoH3dWalkStickY = 0;
 static int gSoH3dBtnHoldFrames = 0;
 static unsigned gSoH3dBtnHoldMask = 0;
 static int gSoH3dBtnHoldFirst = 0;
+
+// #16 first-person early-load crash repro harness. SOH3D_FP_REPRO=1 synthesizes C-up (BTN_CUP)
+// press edges for the first ~window frames after control returns at a COLD boot load, so the
+// cold-scene-load settle (the texture-segment race) reliably overlaps first-person engagement —
+// the crash window. The generic `btnhold` REPL can't do this: it needs a human to hammer the edge
+// at the exact early frame, and the shell race that drives it is flaky. Here the engine itself
+// generates the edges deterministically from the first controllable frame. Cycle: kPress frames
+// held (rising edge on the first) then kRelease frames released, repeating across kWindow frames,
+// so every dangerous early frame is covered by a fresh engage edge.
+static int gSoH3dFpRepro = -1; // -1 uninit, 0 off, 1 on
+static int gSoH3dFpFrames = 0; // frames elapsed since first controllable
 
 static int SoH3D_LinkEnabled(void) {
     if (gSoH3dLinkOn < 0) {
@@ -4615,6 +4639,43 @@ void SoH3D_WalkInject(PlayState* play) {
             gSoH3dBtnHoldFirst = 0;
         }
         gSoH3dBtnHoldFrames--;
+    }
+
+    // #16 FP_REPRO: deterministically engage first-person right as the cold scene-load settles.
+    if (gSoH3dFpRepro < 0) {
+        const char* e = getenv("SOH3D_FP_REPRO");
+        gSoH3dFpRepro = (e != NULL && atoi(e) != 0) ? 1 : 0;
+    }
+    if (gSoH3dFpRepro) {
+        Player* pl = GET_PLAYER(play);
+        if (pl != NULL && !Player_InCsMode(play)) {
+            enum { kWindow = 300, kPress = 3, kRelease = 3, kCycle = kPress + kRelease };
+            if (gSoH3dFpFrames < kWindow) {
+                int ph = gSoH3dFpFrames % kCycle;
+                if (ph < kPress) {
+                    play->state.input[0].cur.button |= BTN_CUP;
+                    if (ph == 0) {
+                        play->state.input[0].press.button |= BTN_CUP; // fresh rising edge each cycle
+                    }
+                }
+                if (gSoH3dFpFrames == 0) {
+                    fprintf(stderr, "SOH3D FP_REPRO: start injecting C-up edges (scene=0x%x dayTime=0x%x)\n",
+                            play->sceneNum, gSaveContext.dayTime);
+                    fflush(stderr);
+                }
+                // One-shot log when first-person actually engages, so we KNOW the harness works.
+                {
+                    static int sFpEngagedLogged = 0;
+                    Camera* ac = GET_ACTIVE_CAM(play);
+                    if (!sFpEngagedLogged && ac != NULL && ac->mode == CAM_MODE_FIRSTPERSON) {
+                        sFpEngagedLogged = 1;
+                        fprintf(stderr, "SOH3D FP_REPRO: first-person ENGAGED at fpFrame=%d\n", gSoH3dFpFrames);
+                        fflush(stderr);
+                    }
+                }
+                gSoH3dFpFrames++;
+            }
+        }
     }
 }
 

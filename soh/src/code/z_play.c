@@ -1699,7 +1699,13 @@ Play_Draw_skip:
         Camera_Update(GET_ACTIVE_CAM(play));
         func_800AB944(&play->view);
         play->view.unk_124 = 0;
-        if (play->skyboxId && (play->skyboxId != SKYBOX_UNSET_1D) && !play->envCtx.skyboxDisabled) {
+        // SoH3D #16: when the OoT3D sky dome is active, the N64 SkyboxDraw_Draw was bypassed above
+        // (SoH3D_TryDrawSky drew our sky), so sSkyboxDrawMatrix was never allocated and is NULL.
+        // SkyboxDraw_UpdateMatrix would then deref it (guMtxF2L NULL dest) — the early-load
+        // first-person crash. Skip it: its product (the N64 skybox model matrix) is dead work when
+        // we draw our own sky.
+        if (play->skyboxId && (play->skyboxId != SKYBOX_UNSET_1D) && !play->envCtx.skyboxDisabled &&
+            !SoH3D_SkyActive(play)) {
             SkyboxDraw_UpdateMatrix(&play->skyboxCtx, play->view.eye.x, play->view.eye.y, play->view.eye.z);
         }
     }

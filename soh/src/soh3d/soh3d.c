@@ -92,6 +92,7 @@ static int gSoH3dPendingModel = -1;
 static float gSoH3dPendingScale = 1.0f;
 static float gSoH3dPendingGroundOff = 0.0f;
 static int gSoH3dPendingAuto = 0; // 1 = auto-replaced (apply the rig-mismatch guard); 0 = hand-verified table entry
+float gSoH3dAutoYoffNudge = 0.0f; // #22 live global Y nudge on top of the static-prop -minY base-anchor (REPL `autoyoff`)
 
 // Get-or-allocate a scene-room model id (soh3d_model.cpp). Keyed by ZSI path; loads
 // the embedded room CMB lazily on first draw. Returns -1 for an unmapped scene.
@@ -1435,8 +1436,15 @@ static int SoH3D_TryAuto(PlayState* play, Actor* actor) {
             gSoH3dPendingBoneMap = SoH3D_FindBoneMap(zar); // precomputed correspondence (or NULL)
             return 0;
         }
-        // Ready static prop: draw the OoT3D model at the measured scale. No anim.
-        SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, 0.0f, NULL, NULL);
+        // Ready static prop: base-anchor the model to the actor's world Y with the same
+        // "feet -> ground" offset (-minY) the skinned path uses. For a base-anchored model minY==0
+        // (no change, correctly-placed props unaffected); for a center/top-origin model it lifts the
+        // model so its bottom sits at the actor Y instead of sinking half-underground — #22 En_Goroiwa
+        // (the Kokiri sword-maze rolling boulder) is sphere-center-origin and was buried to its
+        // equator. REPL `autoyoff <f>` adds a live global nudge on top for tuning.
+        extern float gSoH3dAutoYoffNudge;
+        float goff = -SoH3D_AutoModelMinY(e->modelId) + gSoH3dAutoYoffNudge;
+        SoH3D_DrawModelGL(play, e->modelId, actor, e->scale, NULL, goff, NULL, NULL);
         return 1;
     }
     // state 0 or 1: derive scale if the measurement has arrived, else (re)measure.
@@ -3192,6 +3200,29 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
         if (!shown) {
             SoH3D_ReplReply(outPath, "actors: none in the requested categories");
+        }
+    } else if (strcmp(cmd, "autoyoff") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
+        // #22 live global Y nudge added on top of the static-prop base-anchor (-minY), for tuning a
+        // prop's render height against N64 before baking. 0 = pure base-anchor.
+        gSoH3dAutoYoffNudge = f1;
+        SoH3D_ReplReply(outPath, "autoyoff=%.1f (added to static-prop -minY)", gSoH3dAutoYoffNudge);
+    } else if (strcmp(cmd, "roominfo") == 0) {
+        // Report the scene's room count + which room is loaded, so a multi-room scene's other rooms
+        // (and their actors) can be reached with `roomwarp`. actorscan only sees LOADED actors, so an
+        // actor in an unloaded room (e.g. the Kokiri sword-maze boulder #22) is invisible until its
+        // room is loaded.
+        SoH3D_ReplReply(outPath, "rooms=%d curRoom=%d prevRoom=%d status=%d", play->numRooms,
+                        play->roomCtx.curRoom.num, play->roomCtx.prevRoom.num, play->roomCtx.status);
+    } else if (strcmp(cmd, "roomwarp") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // Force-load room <n> so its actors spawn (the game finishes the async load next frame and
+        // runs the room's actor-spawn list). Lets an unloaded-room actor be found/framed/fixed
+        // without navigating there in-game. Does not move Link — pair with `tp` to the actor.
+        if (iv >= 0 && iv < play->numRooms) {
+            s32 r = func_8009728C(play, &play->roomCtx, (s32)iv);
+            SoH3D_ReplReply(outPath, "roomwarp %d -> req=%d (rooms=%d, was %d)", iv, r, play->numRooms,
+                            play->roomCtx.prevRoom.num);
+        } else {
+            SoH3D_ReplReply(outPath, "roomwarp: bad room %d (rooms=%d)", iv, play->numRooms);
         }
     } else if (strcmp(cmd, "floorat") == 0 && sscanf(line, "%*s %f %f", &f1, &f2) == 2) {
         // Authoritative N64-collision floor height at world (x,z): raycast straight down

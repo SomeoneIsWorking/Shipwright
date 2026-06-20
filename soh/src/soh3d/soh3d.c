@@ -1883,6 +1883,17 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
             if (z != NULL && strstr(z, "zelda_zl4") != NULL) {
                 gSoH3dPendingScale *= 2.0f;
             }
+            // #78 Kokiri big chest (zelda_box): the bone-length heuristic assumes the skeleton's
+            // bone lengths track the geometry's size, but a treasure chest's "skeleton" is just
+            // base + lid-hinge (2 bones), so the ratio (n64sum/oot3dsum = 6076/3376 = 1.80) is the
+            // ratio of LID-HINGE OFFSETS, not of chest sizes. The N64 and OoT3D chest are the same
+            // Grezzo-ported asset with ~equal local model heights (OoT3D modelH=4847), so the true
+            // geometry ratio is ~1.0 -> the chest rendered ~1.8x too big. Divide out the spurious
+            // hinge ratio so scale ~= actorScale (verified vs the N64 chest; size-variant-safe since
+            // it scales with the actor's own scale, unlike an absolute constant).
+            if (z != NULL && strstr(z, "zelda_box") != NULL) {
+                gSoH3dPendingScale /= 1.80f;
+            }
         }
         if (gSoH3dAnimDebug) {
             static int sdbg = 0;

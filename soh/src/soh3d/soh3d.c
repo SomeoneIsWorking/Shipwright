@@ -883,6 +883,60 @@ CollisionHeader* SoH3D_BuildSceneCollision(PlayState* play, CollisionHeader* n64
         if (y < minY) minY = y; if (y > maxY) maxY = y;
         if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
     }
+
+    // #11 — flatten the short outward rim-bevels of RAISED WALKABLE patches so N64 BgCheck (ny>0.5
+    // == floor) lets Link step onto them, the way OoT3D's player physics walks up such short curbs.
+    // We run faithful N64 BgCheck (a poly with ny<=0.5 is a WALL regardless of how short it is) over
+    // OoT3D geometry authored for 3DS step-up physics, so the ~20u-tall chamfered rim of a low patch
+    // (e.g. the Kokiri clover patch ~(-460,183)) fences Link out where both originals let him walk.
+    // Reclassify ONLY a short (<= SOH3D_LIP_MAX_H) upward-facing (0.15 < ny <= 0.5) bevel whose TOP
+    // edge is shared with a real floor poly — i.e. it rims a walkable surface — so a standalone short
+    // wall (a cliff-base bevel, whose top borders a WALL, not a floor) is left untouched. A qualifying
+    // bevel becomes a horizontal floor at its top edge (same plane construction as the stair treads
+    // below); the main loop then sees ny>0.5 and classifies it as floor + re-sources its cam/exit.
+#define SOH3D_LIP_MAX_H 24
+    {
+        unsigned char* floorVtx = (unsigned char*)calloc((size_t)(raw.numVerts > 0 ? raw.numVerts : 1), 1);
+        if (floorVtx != NULL) {
+            int j;
+            // Mark every vertex used by a real (ny>0.5) OoT3D floor poly.
+            for (j = 0; j < raw.numPolys; j++) {
+                if (COLPOLY_GET_NORMAL(raw.polyNrm[j * 3 + 1]) > 0.5f) {
+                    floorVtx[raw.polyVtx[j * 3 + 0] & 0x1FFF] = 1;
+                    floorVtx[raw.polyVtx[j * 3 + 1] & 0x1FFF] = 1;
+                    floorVtx[raw.polyVtx[j * 3 + 2] & 0x1FFF] = 1;
+                }
+            }
+            for (j = 0; j < raw.numPolys; j++) {
+                float bny = COLPOLY_GET_NORMAL(raw.polyNrm[j * 3 + 1]);
+                int ja, jb, jc;
+                s16 ymin, ymax;
+                if (bny <= 0.15f || bny > 0.5f) {
+                    continue;
+                }
+                ja = raw.polyVtx[j * 3 + 0] & 0x1FFF;
+                jb = raw.polyVtx[j * 3 + 1] & 0x1FFF;
+                jc = raw.polyVtx[j * 3 + 2] & 0x1FFF;
+                ymin = ymax = vtx[ja].y;
+                if (vtx[jb].y < ymin) ymin = vtx[jb].y; if (vtx[jb].y > ymax) ymax = vtx[jb].y;
+                if (vtx[jc].y < ymin) ymin = vtx[jc].y; if (vtx[jc].y > ymax) ymax = vtx[jc].y;
+                if ((ymax - ymin) > SOH3D_LIP_MAX_H) {
+                    continue; // tall slope -> a real wall/cliff, not a curb
+                }
+                // Only flatten if the TOP edge belongs to a real floor poly (rim of a walkable patch).
+                if (((vtx[ja].y >= ymax - 2) && floorVtx[ja]) || ((vtx[jb].y >= ymax - 2) && floorVtx[jb]) ||
+                    ((vtx[jc].y >= ymax - 2) && floorVtx[jc])) {
+                    raw.polyNrm[j * 3 + 0] = 0;
+                    raw.polyNrm[j * 3 + 1] = COLPOLY_SNORMAL(1.0f); // horizontal floor at the patch top
+                    raw.polyNrm[j * 3 + 2] = 0;
+                    raw.polyDist[j] = -(float)ymax; // n=(0,1,0): n.p + dist == 0 -> dist = -ymax
+                }
+            }
+            free(floorVtx);
+        }
+    }
+#undef SOH3D_LIP_MAX_H
+
     for (i = 0; i < raw.numPolys; i++) {
         u16 ty = raw.polyType[i];
         u32 d0 = (ty < (u16)raw.numSurf && raw.surf0 != NULL) ? raw.surf0[ty] : 0;

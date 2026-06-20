@@ -346,6 +346,17 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
         // gPlayerAnim_link_normal_run_free, so this maps to nml_run_free and Link animates while moving
         // (verified live, Kakariko + Kokiri). speedXZ shown in the debug for future locomotion work.
         csab = SoH3D_ResolvePlayerCsab((const char*)player->skelAnime.animation);
+        // #6/#9: while carrying, OoT layers a held-item animation (e.g. carryB_wait, arms raised
+        // overhead) on the UPPER body via player->upperSkelAnime, leaving the base skelAnime on
+        // wait/locomotion. The N64-retarget path reads the already-merged jointTable so it gets the
+        // carry pose for free; the named-CSAB path here sees only the base name (wait_free -> arms
+        // DOWN), dropping the carry. When carrying, resolve the CSAB from the upper-body anim instead
+        // so the 3DS rig faithfully plays OoT3D's own carry CSAB. (Standing carry is exact; a true
+        // per-limb upper/lower BLEND for walking-while-carrying is future locomotion work, #9.)
+        if (player->heldActor != NULL && player->upperSkelAnime.animation != NULL) {
+            const char* upperCsab = SoH3D_ResolvePlayerCsab((const char*)player->upperSkelAnime.animation);
+            if (upperCsab != NULL) csab = upperCsab;
+        }
         if (csab == NULL) {
             csab = SOH3D_LINK_IDLE_CSAB;
         }

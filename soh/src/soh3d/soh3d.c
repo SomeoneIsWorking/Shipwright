@@ -367,6 +367,18 @@ void SoH3D_DumpBoneStats(int modelId);
 // src[o] = which N64 axis (0=x,1=y,2=z, -1=none) feeds OoT3D bone axis o; sign[o] = its multiplier.
 int gSoH3dWingMapSrc[3] = { -1, -1, -1 };
 int gSoH3dWingMapSign[3] = { 1, 1, 1 };
+// #5 HAND-WOVEN cucco flap: the N64 procedural wing rotation can't be replayed onto the 3DS rig
+// (its wing rest pose is already spread, so the deltas don't compose). Instead author the flap
+// directly on the 3DS wing bones (4 & 6): oscillate them on their local Y axis (bonerot showed y-
+// = wing up, y+ = down for BOTH wings) between a center and an amplitude, driven by the N64 flap
+// INTENSITY (so idle/agitated/still scale naturally). REPL `chickflap`. Default-on once tuned.
+int gSoH3dChickFlap = 1;       // 1 = hand-woven flap replaces the replay for the cucco
+int gSoH3dChickAxis = 1;       // OoT3D bone-local axis to flap on (1 = Y)
+int gSoH3dChickCenter = -4000; // baseline offset (binang): slight raise from the spread rest
+int gSoH3dChickAmp = 14000;    // peak flap amplitude (binang) at full agitation
+float gSoH3dChickFreq = 0.9f;  // oscillation phase advance per draw (rad); frantic flap
+int gSoH3dChickBone2Sign = 1;  // bone 6 sign relative to bone 4 (both y- = up -> +1, symmetric)
+int gSoH3dFrameCtr = 0;        // ++ once per rendered frame (SoH3D_EmitRenderPass); flap phase clock
 
 // Probe the captured override callback for each mapped limb of the current auto actor and push the
 // resulting per-bone local-rotation delta (binang -> radians) onto the OoT3D model. No-op when no
@@ -393,6 +405,10 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
         static int callCtr = 0;
         sampleThisCall = ((callCtr++ % 20) == 0);
     }
+    // #5 hand-woven cucco flap: phase clocked off the per-FRAME counter (not per draw call) so the
+    // beat rate is independent of how many cuccos are on screen (each one calls this per frame).
+    int isCucco = (strcmp(zar, "/actor/zelda_nw.zar") == 0);
+    double chickPhase = (double)gSoH3dFrameCtr * gSoH3dChickFreq;
     for (s32 i = 0; i < (s32)ARRAY_COUNT(kSoH3dProcOverride); i++) {
         const SoH3dProcOverrideRow* row = &kSoH3dProcOverride[i];
         if (strcmp(row->zar, zar) != 0) {
@@ -449,7 +465,35 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
                     zar, row->n64Limb, row->oot3dBone, dd[0], dd[1], dd[2], dx, dy, dz);
             fflush(stderr);
         }
-        SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, dx, dy, dz);
+        if (gSoH3dChickFlap && isCucco) {
+            // HAND-WOVEN flap: oscillate this wing bone on chickAxis, amplitude scaled by the N64
+            // flap INTENSITY (so idle/agitated/still differ), around chickCenter. Ignores the
+            // (ill-composed) replay output dx/dy/dz entirely. bone 6 mirrors bone 4 via Bone2Sign.
+            s16 a0 = dd[0] < 0 ? (s16)-dd[0] : dd[0];
+            s16 a1 = dd[1] < 0 ? (s16)-dd[1] : dd[1];
+            s16 a2 = dd[2] < 0 ? (s16)-dd[2] : dd[2];
+            s16 mag = a0; if (a1 > mag) mag = a1; if (a2 > mag) mag = a2;
+            f32 instInten = (f32)mag / 25000.0f;
+            if (instInten > 1.0f) instInten = 1.0f;
+            // PEAK-HOLD the intensity: the N64 wing delta oscillates fast (8000<->25000), so using
+            // it directly pulses the flap amplitude (every other beat goes weak -> looks sluggish).
+            // Hold the peak and decay slowly so an agitated cucco flaps at full, steady amplitude
+            // while a calming one fades out. Per oot3dBone so both wings track together.
+            static f32 sHeld[8] = { 0 };
+            int bi = row->oot3dBone & 7;
+            if (instInten > sHeld[bi]) sHeld[bi] = instInten;
+            else sHeld[bi] *= 0.97f;
+            f32 inten = sHeld[bi];
+            f32 ang = ((f32)gSoH3dChickCenter + (f32)gSoH3dChickAmp * inten * sinf((f32)chickPhase)) *
+                      kBinangToRad;
+            if (row->oot3dBone == 6) ang *= (f32)gSoH3dChickBone2Sign;
+            f32 hf[3] = { 0.0f, 0.0f, 0.0f };
+            int ax = (gSoH3dChickAxis >= 0 && gSoH3dChickAxis < 3) ? gSoH3dChickAxis : 1;
+            hf[ax] = ang;
+            SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, hf[0], hf[1], hf[2]);
+        } else {
+            SoH3D_SetBoneRotDelta(modelId, row->oot3dBone, dx, dy, dz);
+        }
     }
     // #5 wing-bone sweep: persistently rotate one arbitrary bone (survives the clear above) to find
     // which CMB bone actually drives the wing geometry.
@@ -2180,6 +2224,8 @@ void SoH3D_EmitRenderPass(PlayState* play) {
     if (!SoH3D_Enabled()) {
         return;
     }
+    extern int gSoH3dFrameCtr;
+    gSoH3dFrameCtr++; // once per rendered frame (independent of actor count) — drives the hand flap
     SoH3D_UpdateLight(play);
     OPEN_DISPS(play->state.gfxCtx);
     gSPSoH3DRenderPass(POLY_OPA_DISP++);
@@ -3991,6 +4037,33 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                         gSoH3dWingMapSrc[1], gSoH3dWingMapSrc[2], gSoH3dWingMapSign[0],
                         gSoH3dWingMapSign[1], gSoH3dWingMapSign[2],
                         gSoH3dWingMapSrc[0] < 0 ? "(table)" : "(live)");
+    } else if (strcmp(cmd, "chickflap") == 0) {
+        // #5 HAND-WOVEN cucco flap tuning. Subcommands:
+        //   chickflap <0|1>            enable/disable (hand flap replaces the broken replay)
+        //   chickflap axis <0|1|2>     OoT3D bone-local flap axis (1=Y)
+        //   chickflap center <binang>  baseline offset
+        //   chickflap amp <binang>     peak amplitude at full agitation
+        //   chickflap freq <rad>       phase advance per draw
+        //   chickflap mirror <±1>      bone 6 sign vs bone 4
+        char sub[16];
+        int iv;
+        float fv;
+        if (sscanf(line, "%*s axis %d", &iv) == 1) {
+            gSoH3dChickAxis = iv;
+        } else if (sscanf(line, "%*s center %d", &iv) == 1) {
+            gSoH3dChickCenter = iv;
+        } else if (sscanf(line, "%*s amp %d", &iv) == 1) {
+            gSoH3dChickAmp = iv;
+        } else if (sscanf(line, "%*s freq %f", &fv) == 1) {
+            gSoH3dChickFreq = fv;
+        } else if (sscanf(line, "%*s mirror %d", &iv) == 1) {
+            gSoH3dChickBone2Sign = iv;
+        } else if (sscanf(line, "%*s %15s", sub) == 1) {
+            gSoH3dChickFlap = (atoi(sub) != 0);
+        }
+        SoH3D_ReplReply(outPath, "chickflap=%d axis=%d center=%d amp=%d freq=%.2f mirror=%d",
+                        gSoH3dChickFlap, gSoH3dChickAxis, gSoH3dChickCenter, gSoH3dChickAmp,
+                        gSoH3dChickFreq, gSoH3dChickBone2Sign);
     } else if (strcmp(cmd, "animrate") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dAnimRate = f1;
         SoH3D_ReplReply(outPath, "animrate=%.3f frame=%.1f", gSoH3dAnimRate, gSoH3dAnimFrame);

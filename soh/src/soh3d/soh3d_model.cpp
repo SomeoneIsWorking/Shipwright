@@ -1232,20 +1232,76 @@ void SoH3D_SetStairRiserY(float v) {
 }
 float SoH3D_GetStairRiserY(void) { return gSoH3dStairRiserY; }
 
-// #32 — Xbox face-button HUD glyphs. Decode the embedded A/B/X/Y PNGs to persistent RGBA8888
-// (== N64 G_IM_FMT_RGBA / G_IM_SIZ_32b: one byte each R,G,B,A per texel, matching stbi's order)
-// once, and hand the in-game Fast3D HUD a raw pointer it can gDPLoadTextureBlock as a 32b RGBA
-// texture (the HUD already feeds gfx_pc raw RAM texture pointers, e.g. the do-action labels).
-// `which` is 'A'/'B'/'X'/'Y' (case-insensitive). Returns NULL (and *w=*h=0) on decode failure.
+// #18 — crop a rectangle out of a top-down RGBA32 atlas (e.g. one returned by TexPackLookup) and
+// box-downsample it (area-averaging, incl. alpha-weighted RGB so transparent edge pixels don't
+// bleed dark color into the silhouette) to dst x dst. Returns the dst*dst*4 RGBA buffer. The HUD
+// texrect path has NO mipmaps, so a large atlas crop must be pre-shrunk to a modest size or it
+// shatters when minified on-screen (the #18 digit work hit this exact aliasing).
+static std::vector<uint8_t> cropAndBoxDownsample(const std::vector<uint8_t>& atlas, int aw, int ah,
+                                                 int cx, int cy, int cw, int ch, int dst) {
+    std::vector<uint8_t> out((size_t)dst * dst * 4, 0);
+    if (cw <= 0 || ch <= 0 || dst <= 0) return out;
+    for (int dy = 0; dy < dst; dy++) {
+        // Source row span [sy0, sy1) for this destination row.
+        int sy0 = cy + dy * ch / dst;
+        int sy1 = cy + (dy + 1) * ch / dst;
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        for (int dx = 0; dx < dst; dx++) {
+            int sx0 = cx + dx * cw / dst;
+            int sx1 = cx + (dx + 1) * cw / dst;
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            double ar = 0, ag = 0, ab = 0, aa = 0, wsum = 0, asum = 0;
+            for (int sy = sy0; sy < sy1; sy++) {
+                if (sy < 0 || sy >= ah) continue;
+                for (int sx = sx0; sx < sx1; sx++) {
+                    if (sx < 0 || sx >= aw) continue;
+                    const uint8_t* p = &atlas[((size_t)sy * aw + sx) * 4];
+                    double a = p[3];
+                    ar += p[0] * a; ag += p[1] * a; ab += p[2] * a; // alpha-weighted RGB
+                    aa += a; asum += a; wsum += 1.0;
+                }
+            }
+            uint8_t* d = &out[((size_t)dy * dst + dx) * 4];
+            if (wsum > 0) {
+                d[3] = (uint8_t)std::lround(aa / wsum);                  // mean alpha (coverage)
+                double wa = asum > 0 ? asum : 1.0;
+                d[0] = (uint8_t)std::lround(std::min(255.0, ar / wa));   // alpha-weighted mean RGB
+                d[1] = (uint8_t)std::lround(std::min(255.0, ag / wa));
+                d[2] = (uint8_t)std::lround(std::min(255.0, ab / wa));
+            }
+        }
+    }
+    return out;
+}
+
+// #18 — Xbox face-button HUD glyphs, now sourced as 3DS-style GRAY STONE buttons from the OoT3D
+// texture pack (user approved 2026-06-20, overriding the #32 Xbox style). The pack's UI glyph atlas
+// (hash 439913BD09FA2671, 4096x2048) carries a row of pre-composited circular gray buttons — a gray
+// stone disc with the black letter already centered (A/B/X/Y, at atlas x=1165/1288/1411/1534, y=1280,
+// 124px pitch). These are drawn UNTINTED (SoH3D_DrawXboxBtn: out.rgb=TEXEL0, out.a=TEXEL0.a*PRIM.a),
+// so we crop+box-downsample each disc to 64x64 full-colour RGBA and hand it over directly — no
+// compositing needed (the letter is baked into the atlas). Falls back to the embedded Xbox SVG PNGs
+// when the pack is absent. Same 64x64 dims as the SVG glyphs, so the HUD layout is unchanged.
 const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
     struct Glyph { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
     static Glyph g[4];
     static int tried = 0;
     if (!tried) {
         tried = 1;
+        // Pack disc crop boxes in the glyph atlas (x, y, w, h), order A,B,X,Y. Square 124px discs.
+        static const int kDiscX[4] = { 1165, 1288, 1411, 1534 };
+        const int discY = 1280, discW = 124, discH = 124, kDst = 64;
+        std::vector<uint8_t> atlas;
+        int aw = 0, ah = 0;
+        bool havePack = SoH3D::TexPackLookup(0x439913BD09FA2671ULL, aw, ah, atlas) && aw > 0 && ah > 0;
         const unsigned char* png[4] = { kXboxGlyphAPng, kXboxGlyphBPng, kXboxGlyphXPng, kXboxGlyphYPng };
         unsigned int len[4] = { kXboxGlyphAPngLen, kXboxGlyphBPngLen, kXboxGlyphXPngLen, kXboxGlyphYPngLen };
         for (int i = 0; i < 4; i++) {
+            if (havePack) {
+                g[i].rgba = cropAndBoxDownsample(atlas, aw, ah, kDiscX[i], discY, discW, discH, kDst);
+                g[i].w = kDst; g[i].hh = kDst;
+                continue;
+            }
             int sw = 0, sh = 0, n = 0;
             stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
             if (px) {
@@ -1271,10 +1327,39 @@ const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
     return g[idx].rgba.data();
 }
 
-// #31 — crisp higher-res HUD heart textures. Decode the embedded PNGs once into persistent RGBA32
-// (grayscale: rgb=intensity, a=silhouette). `kind` is SOH3D_HEART_* (0..4). Returns the buffer +
-// dims, or NULL on failure. The N64 heart combine reads TEXEL0.rgb as the PRIM<->ENV lerp factor,
-// so a grayscale heart tints identically to the original IA8 one (see z_lifemeter.c).
+// #18 — derive the FULL / EMPTY HUD heart from the OoT3D item atlas (user approved 2026-06-20).
+// The clean red heart icon lives in the pack item atlas (hash CF461E58E637A97A, 4096x4096) at
+// x=2018..2338, y=3020..3352 (a red heart with a light rim). The lifemeter combine is
+// out=(PRIM-ENV)*TEXEL0+ENV on rgb and reads TEXEL0.rgb as the PRIM<->ENV lerp factor, alpha as the
+// silhouette (see z_lifemeter.c HealthMeter_Draw). So the heart's rgb must be an INTENSITY (bright
+// body -> tints to PRIM red, dark -> ENV). The saturated-red core has low luminance but high VALUE,
+// so we use value = max(r,g,b) as the intensity (luminance would make the red body dark -> wrong);
+// alpha stays the silhouette. EMPTY uses the same silhouette with rgb pinned low (0x20, the SVG
+// empty-heart level) so it lerps toward ENV (dark). Both box-downsampled to 64x64 (same as the SVG
+// hearts) so they align in the row and render crisp under HUD minification.
+static void heartPackVariant(const std::vector<uint8_t>& atlas, int aw, int ah, bool empty,
+                             std::vector<uint8_t>& outRgba, int& ow, int& oh) {
+    const int hx = 2018, hy = 3020, hw = 320, hh = 332, kDst = 64;
+    std::vector<uint8_t> crop = cropAndBoxDownsample(atlas, aw, ah, hx, hy, hw, hh, kDst);
+    for (size_t i = 0; i < (size_t)kDst * kDst; i++) {
+        uint8_t* p = &crop[i * 4];
+        if (empty) {
+            p[0] = p[1] = p[2] = 0x20; // dark -> lerps toward ENV, matching the SVG empty heart
+        } else {
+            uint8_t v = std::max(p[0], std::max(p[1], p[2])); // value = bright body & rim highlight
+            p[0] = p[1] = p[2] = v;
+        }
+    }
+    outRgba.swap(crop);
+    ow = kDst; oh = kDst;
+}
+
+// #31/#18 — crisp higher-res HUD heart textures. Kinds 0 (full) and 4 (empty) are derived from the
+// OoT3D item-atlas heart in the texture pack (grayscale-value rgb=intensity, a=silhouette; see
+// heartPackVariant); kinds 1/2/3 (3-4, 1/2, 1-4) stay the embedded SVG hearts (the pack has no
+// fractional hearts). Falls back entirely to the embedded SVG PNGs when the pack is absent. `kind`
+// is SOH3D_HEART_* (0..4). Returns the buffer + dims, or NULL on failure. The N64 heart combine
+// reads TEXEL0.rgb as the PRIM<->ENV lerp factor, so the grayscale heart tints exactly like IA8.
 const void* SoH3D_HeartTex(int kind, int* w, int* h) {
     struct Tex { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
     static Tex t[5];
@@ -1285,7 +1370,14 @@ const void* SoH3D_HeartTex(int kind, int* w, int* h) {
                                         kHeartQuarterPng, kHeartEmptyPng };
         unsigned int len[5] = { kHeartFullPngLen, kHeartThreeQuarterPngLen, kHeartHalfPngLen,
                                 kHeartQuarterPngLen, kHeartEmptyPngLen };
+        std::vector<uint8_t> atlas;
+        int aw = 0, ah = 0;
+        bool havePack = SoH3D::TexPackLookup(0xCF461E58E637A97AULL, aw, ah, atlas) && aw > 0 && ah > 0;
         for (int i = 0; i < 5; i++) {
+            if (havePack && (i == 0 || i == 4)) {
+                heartPackVariant(atlas, aw, ah, /*empty=*/i == 4, t[i].rgba, t[i].w, t[i].hh);
+                continue;
+            }
             int sw = 0, sh = 0, n = 0;
             stbi_uc* px = stbi_load_from_memory(png[i], (int)len[i], &sw, &sh, &n, 4);
             if (px) {

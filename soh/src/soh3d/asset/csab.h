@@ -45,6 +45,7 @@ class Csab {
         int type = CONSTANT;
         int timeStart = 0, timeEnd = 1;
         bool present = false;
+        bool constant = false; // present but all keyframe values equal -> a static (non-animated) bake
         std::vector<Keyframe> frames;
     };
     struct AnimNode {

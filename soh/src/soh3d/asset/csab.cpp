@@ -51,6 +51,14 @@ Csab::Track Csab::parseTrack(uint32_t o, bool isRotInt16) const {
     } else {
         t.present = false; // CONSTANT / unknown -> no track (fall back to rest TRS)
     }
+    // Flag a present-but-static track: all keyframe values equal => not real animation, just a
+    // baked constant. For translation this distinguishes a redundant bone-OFFSET bake (which must
+    // defer to the target rig's rest, see animatedBoneWorld) from genuine motion (e.g. idle bob).
+    if (t.present && !t.frames.empty()) {
+        t.constant = true;
+        for (const auto& k : t.frames)
+            if (std::fabs(k.value - t.frames[0].value) > 1e-4f) { t.constant = false; break; }
+    }
     return t;
 }
 
@@ -178,9 +186,23 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
             if (node->tracks[3].present) r[0] = sampleTrack(node->tracks[3], fr, true);
             if (node->tracks[4].present) r[1] = sampleTrack(node->tracks[4], fr, true);
             if (node->tracks[5].present) r[2] = sampleTrack(node->tracks[5], fr, true);
-            if (node->tracks[0].present) t[0] = sampleTrack(node->tracks[0], fr, false);
-            if (node->tracks[1].present) t[1] = sampleTrack(node->tracks[1], fr, false);
-            if (node->tracks[2].present) t[2] = sampleTrack(node->tracks[2], fr, false);
+            // Bone OFFSETS belong to the SKELETON, not the clip. CSABs authored for one rig (the
+            // boy/adult Link clips) bake that rig's bone translations into per-bone translation tracks
+            // as STATIC (constant-valued) tracks. When such a clip drives a DIFFERENT-proportioned rig
+            // — child Link has no own idle/most clips and reuses the boy ones — those longer baked
+            // offsets override the child's shorter rest offsets and STRETCH the limb (the long/
+            // stretched right arm, #7/#8: child R-arm 283/593/548 -> boy 442/927/856). So for a
+            // non-root bone, IGNORE a static translation track and keep the rig's rest offset (a no-op
+            // for same-rig clips, where rest == the baked value). Genuinely ANIMATED translation
+            // (varying track, e.g. the idle pelvis bob) is still applied — it is real motion, not a
+            // skeletal offset. Root (parent<0) always keeps its translation (root placement/motion).
+            bool nonRoot = bn->parent >= 0;
+            if (node->tracks[0].present && !(nonRoot && node->tracks[0].constant))
+                t[0] = sampleTrack(node->tracks[0], fr, false);
+            if (node->tracks[1].present && !(nonRoot && node->tracks[1].constant))
+                t[1] = sampleTrack(node->tracks[1], fr, false);
+            if (node->tracks[2].present && !(nonRoot && node->tracks[2].constant))
+                t[2] = sampleTrack(node->tracks[2], fr, false);
         }
         // Procedural OverrideLimbDraw delta: add the extra LOCAL rotation (radians) for this bone
         // on top of the animated pose, in the SAME T·Rz·Ry·Rx·S frame the tracks use.

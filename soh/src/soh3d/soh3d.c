@@ -317,6 +317,31 @@ static const SoH3dProcOverrideRow kSoH3dProcOverride[] = {
 int gSoH3dProcOverride = -1;
 int gSoH3dWingForce = -1;
 int gSoH3dForceCuccoAgitate = 0; // #5 diagnostic: hold cuccos in the agitated wing-spread pose
+int gSoH3dCuccoState = -1;        // #5 force func_80AB5BF8 arg (-1 = live AI); see soh3d.h
+int gSoH3dCuccoDbgPhase = -1;     // #5 last cucco's flap phase (unk_29C)
+short gSoH3dCuccoDbgWing[6] = { 0, 0, 0, 0, 0, 0 }; // #5 limb7 xyz, limb11 xyz applied this frame
+
+// Generic actor-control debug surface (any actor). gSoH3dSelActor is driven each frame by
+// SoH3D_ActorPostUpdate; see soh3d.h for the REPL surface (asel/afreeze/apos/arot/aparams/acam).
+Actor* gSoH3dSelActor = NULL;
+s32 gSoH3dSelId = -1;
+s32 gSoH3dActorFreeze = 0;
+static Vec3f sSoH3dActorPinPos;
+static Vec3s sSoH3dActorPinRot;
+
+// Pin the selected actor's transform after its own update each frame, so a debug-held actor can't
+// wander/hop/flee/AI-drift. Pointer-identity match against the live actor being iterated, so a
+// killed selection simply stops matching (no dangling deref).
+void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor) {
+    (void)play;
+    if (actor == NULL || actor != gSoH3dSelActor || !gSoH3dActorFreeze) {
+        return;
+    }
+    actor->velocity.x = actor->velocity.y = actor->velocity.z = 0.0f;
+    actor->speedXZ = 0.0f;
+    actor->world.pos = sSoH3dActorPinPos;
+    actor->shape.rot = actor->world.rot = sSoH3dActorPinRot;
+}
 // #5 derivation probe: when active, force a fixed rotation (binang) DIRECTLY on the OoT3D wing
 // bones' local x/y/z, bypassing the N64->bone sign map — to discover which OoT3D bone axis is the
 // "lift"/"fan" so the multi-axis agitated mapping can be derived. REPL `wingprobe <x> <y> <z>`.
@@ -3843,8 +3868,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         int iv;
         if (sscanf(line, "%*s %d", &iv) == 1) {
             gSoH3dForceCuccoAgitate = (iv != 0);
+            gSoH3dCuccoState = iv ? 2 : -1; // legacy alias for cuccostate 2 / off
         }
-        SoH3D_ReplReply(outPath, "cuccopose=%d", gSoH3dForceCuccoAgitate);
+        SoH3D_ReplReply(outPath, "cuccopose=%d (cuccostate=%d). Hold still+frame via asel/afreeze/acam.",
+                        gSoH3dForceCuccoAgitate, gSoH3dCuccoState);
+    } else if (strcmp(cmd, "cuccostate") == 0) {
+        // #5 — drive the cucco WING-STATE machine (func_80AB5BF8) directly on every cucco, independent
+        // of AI. `cuccostate <n>` (0=calm,1=mild,2=agitated/held spread,3,5..), `cuccostate off`=live.
+        char sub[16];
+        if (sscanf(line, "%*s %15s", sub) == 1) {
+            gSoH3dCuccoState = (strcmp(sub, "off") == 0) ? -1 : atoi(sub);
+        }
+        SoH3D_ReplReply(outPath, "cuccostate=%d (-1=live AI)", gSoH3dCuccoState);
+    } else if (strcmp(cmd, "flapinfo") == 0) {
+        // #5 — read-back of the last cucco drawn this frame: flap phase + the wing binang actually
+        // applied. Capture two frames; differing phase/wing = the wing is animating (real flap).
+        SoH3D_ReplReply(outPath, "flapinfo state=%d phase=%d limb7=(%d,%d,%d) limb11=(%d,%d,%d)",
+                        gSoH3dCuccoState, gSoH3dCuccoDbgPhase, gSoH3dCuccoDbgWing[0],
+                        gSoH3dCuccoDbgWing[1], gSoH3dCuccoDbgWing[2], gSoH3dCuccoDbgWing[3],
+                        gSoH3dCuccoDbgWing[4], gSoH3dCuccoDbgWing[5]);
     } else if (strcmp(cmd, "wingprobe") == 0) {
         // #5 derivation: `wingprobe <x> <y> <z>` forces that binang DIRECTLY on the OoT3D wing
         // bones' local axes (bypassing the N64->bone sign map); `wingprobe off` disables.
@@ -3973,6 +4015,141 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             c[5]);
         } else {
             SoH3D_ReplReply(outPath, "cam needs 6 floats: eyeX eyeY eyeZ atX atY atZ");
+        }
+    } else if (strcmp(cmd, "asel") == 0) {
+        // GENERIC actor select: `asel <id> [n]` selects the n-th nearest live actor with that actor
+        // id (0xHEX or dec) to Link (default nearest); `asel any [n]` ignores id. Captures the
+        // actor's current pos/rot as the freeze pin. The selection is the target for
+        // afreeze/apos/arot/aparams/acam/ainfo. (actorscan indices are not stable; this is the stable
+        // way to grab an actor.)
+        char idtok[24];
+        int nth = 0;
+        int wantId = -1;
+        if (sscanf(line, "%*s %23s %d", idtok, &nth) >= 1) {
+            if (strcmp(idtok, "any") != 0) {
+                wantId = (int)strtol(idtok, NULL, 0);
+            }
+        }
+        Player* pl = GET_PLAYER(play);
+        // gather matches, then pick the nth-nearest by simple selection over distance
+        Actor* matches[96];
+        float dists[96];
+        int m = 0, cat;
+        for (cat = 0; cat < ACTORCAT_MAX && m < 96; cat++) {
+            Actor* a = play->actorCtx.actorLists[cat].head;
+            for (; a != NULL && m < 96; a = a->next) {
+                if (wantId >= 0 && a->id != wantId) continue;
+                if (a == &pl->actor) continue;
+                float dx = a->world.pos.x - pl->actor.world.pos.x;
+                float dz = a->world.pos.z - pl->actor.world.pos.z;
+                matches[m] = a;
+                dists[m] = sqrtf(dx * dx + dz * dz);
+                m++;
+            }
+        }
+        // Pick the nth-nearest by repeated min-extraction: each rank takes the current minimum and
+        // inflates its distance so the next rank takes the following one.
+        Actor* sel = NULL;
+        for (int rank = 0; rank <= nth && rank < m; rank++) {
+            int bi = -1;
+            for (int j = 0; j < m; j++) {
+                if (bi < 0 || dists[j] < dists[bi]) bi = j;
+            }
+            if (bi >= 0) { sel = matches[bi]; dists[bi] = 1e30f; }
+        }
+        if (sel == NULL) {
+            SoH3D_ReplReply(outPath, "asel: no match (found %d candidates)", m);
+        } else {
+            gSoH3dSelActor = sel;
+            gSoH3dSelId = sel->id;
+            sSoH3dActorPinPos = sel->world.pos;
+            sSoH3dActorPinRot = sel->world.rot;
+            SoH3D_ReplReply(outPath, "asel id=0x%X pos=(%.0f,%.0f,%.0f) rotY=%d params=%d (of %d)",
+                            sel->id, sel->world.pos.x, sel->world.pos.y, sel->world.pos.z,
+                            sel->world.rot.y, sel->params, m);
+        }
+    } else if (strcmp(cmd, "afreeze") == 0) {
+        // GENERIC: pin the selected actor's transform every frame (no wander/hop/flee/AI drift).
+        if (sscanf(line, "%*s %i", &iv) == 1) {
+            gSoH3dActorFreeze = iv ? 1 : 0;
+            if (gSoH3dActorFreeze && gSoH3dSelActor != NULL) {
+                sSoH3dActorPinPos = gSoH3dSelActor->world.pos;
+                sSoH3dActorPinRot = gSoH3dSelActor->world.rot;
+            }
+        }
+        SoH3D_ReplReply(outPath, "afreeze=%d sel=%s", gSoH3dActorFreeze,
+                        gSoH3dSelActor ? "set" : "NONE (asel first)");
+    } else if (strcmp(cmd, "apos") == 0) {
+        // GENERIC: set + pin the selected actor's world position.
+        float c[3];
+        if (gSoH3dSelActor == NULL) {
+            SoH3D_ReplReply(outPath, "apos: no selection (asel first)");
+        } else if (sscanf(line, "%*s %f %f %f", &c[0], &c[1], &c[2]) == 3) {
+            gSoH3dSelActor->world.pos.x = sSoH3dActorPinPos.x = c[0];
+            gSoH3dSelActor->world.pos.y = sSoH3dActorPinPos.y = c[1];
+            gSoH3dSelActor->world.pos.z = sSoH3dActorPinPos.z = c[2];
+            SoH3D_ReplReply(outPath, "apos=(%.0f,%.0f,%.0f)", c[0], c[1], c[2]);
+        } else {
+            SoH3D_ReplReply(outPath, "apos needs x y z");
+        }
+    } else if (strcmp(cmd, "arot") == 0) {
+        // GENERIC: set + pin the selected actor's rotation (binang x y z).
+        int rx, ry, rz;
+        if (gSoH3dSelActor == NULL) {
+            SoH3D_ReplReply(outPath, "arot: no selection (asel first)");
+        } else if (sscanf(line, "%*s %d %d %d", &rx, &ry, &rz) == 3) {
+            sSoH3dActorPinRot.x = (s16)rx;
+            sSoH3dActorPinRot.y = (s16)ry;
+            sSoH3dActorPinRot.z = (s16)rz;
+            gSoH3dSelActor->world.rot = gSoH3dSelActor->shape.rot = sSoH3dActorPinRot;
+            SoH3D_ReplReply(outPath, "arot=(%d,%d,%d)", rx, ry, rz);
+        } else {
+            SoH3D_ReplReply(outPath, "arot needs x y z (binang)");
+        }
+    } else if (strcmp(cmd, "aparams") == 0) {
+        // GENERIC: set the selected actor's params.
+        if (gSoH3dSelActor == NULL) {
+            SoH3D_ReplReply(outPath, "aparams: no selection (asel first)");
+        } else if (sscanf(line, "%*s %i", &iv) == 1) {
+            gSoH3dSelActor->params = (s16)iv;
+            SoH3D_ReplReply(outPath, "aparams=%d", gSoH3dSelActor->params);
+        } else {
+            SoH3D_ReplReply(outPath, "aparams=%d", gSoH3dSelActor ? gSoH3dSelActor->params : 0);
+        }
+    } else if (strcmp(cmd, "acam") == 0) {
+        // GENERIC: frame the selected actor as a side profile. `acam [dist] [axis]` (axis 0=+X,1=+Z;
+        // dist default 110). Looks slightly above the actor origin. Combine with afreeze for a stable
+        // A/B view of any actor.
+        float dist = 110.0f;
+        int axis = 0;
+        (void)sscanf(line, "%*s %f %d", &dist, &axis);
+        if (gSoH3dSelActor == NULL) {
+            SoH3D_ReplReply(outPath, "acam: no selection (asel first)");
+        } else {
+            float cx = gSoH3dSelActor->world.pos.x, cy = gSoH3dSelActor->world.pos.y + 12.0f,
+                  cz = gSoH3dSelActor->world.pos.z;
+            gSoH3dCamAt[0] = cx;
+            gSoH3dCamAt[1] = cy;
+            gSoH3dCamAt[2] = cz;
+            gSoH3dCamEye[0] = cx + (axis == 0 ? dist : 0.0f);
+            gSoH3dCamEye[1] = cy + 14.0f;
+            gSoH3dCamEye[2] = cz + (axis == 0 ? 0.0f : dist);
+            gSoH3dCamOverride = 1;
+            SoH3D_ReplReply(outPath, "acam at=(%.0f,%.0f,%.0f) dist=%.0f axis=%d eye=(%.0f,%.0f,%.0f)",
+                            cx, cy, cz, dist, axis, gSoH3dCamEye[0], gSoH3dCamEye[1], gSoH3dCamEye[2]);
+        }
+    } else if (strcmp(cmd, "ainfo") == 0) {
+        // GENERIC: dump the selected actor's live state.
+        if (gSoH3dSelActor == NULL) {
+            SoH3D_ReplReply(outPath, "ainfo: no selection (asel first)");
+        } else {
+            Actor* a = gSoH3dSelActor;
+            SoH3D_ReplReply(outPath,
+                            "ainfo id=0x%X params=%d pos=(%.0f,%.0f,%.0f) rot=(%d,%d,%d) "
+                            "vel=(%.1f,%.1f,%.1f) speedXZ=%.1f freeze=%d",
+                            a->id, a->params, a->world.pos.x, a->world.pos.y, a->world.pos.z,
+                            a->world.rot.x, a->world.rot.y, a->world.rot.z, a->velocity.x,
+                            a->velocity.y, a->velocity.z, a->speedXZ, gSoH3dActorFreeze);
         }
     } else if (strcmp(cmd, "camlift") == 0) {
         // #4 toggle/inspect the cutscene/title camera-lift. `camlift 0|1` sets it; `camlift` alone

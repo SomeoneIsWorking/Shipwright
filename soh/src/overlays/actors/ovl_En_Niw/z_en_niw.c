@@ -974,15 +974,17 @@ void EnNiw_Update(Actor* thisx, PlayState* play) {
     thisx->shape.rot = thisx->world.rot;
     thisx->shape.shadowScale = 15.0f;
     this->actionFunc(this, play);
-    // #5 diagnostic: force-hold the agitated wing-spread pose so the spread flap can be A/B'd
-    // headless. Runs AFTER actionFunc so it overrides whatever wing targets the idle action set.
-    if (gSoH3dForceCuccoAgitate) {
-        func_80AB5BF8(this, play, 2);
-        // Freeze position + lock yaw to face +Z so every A/B shot is an identical right-side
-        // profile (camera framed from +X) — the wandering cucco otherwise changes orientation.
-        this->actor.speedXZ = 0.0f;
-        this->actor.velocity.x = this->actor.velocity.z = 0.0f;
-        this->actor.world.rot.y = this->actor.shape.rot.y = 0;
+    // #5 cucco wing STATE machine (the one genuinely cucco-specific control — there is no generic
+    // equivalent). `cuccostate <n>` drives func_80AB5BF8 directly, independent of AI, so any flap
+    // path (0 calm .. 2 agitated/held spread) can be selected on demand; `cuccopose 1` is the
+    // legacy alias for state 2. Run AFTER actionFunc so it overrides whatever the live action set.
+    // Holding the cucco STILL (no wander/hop) and FRAMING it are done with the GENERIC actor
+    // controls (`asel 0x19` + `afreeze 1` + `acam`), not a cucco-specific freeze.
+    if (gSoH3dForceCuccoAgitate && gSoH3dCuccoState < 0) {
+        gSoH3dCuccoState = 2;
+    }
+    if (gSoH3dCuccoState >= 0) {
+        func_80AB5BF8(this, play, (s16)gSoH3dCuccoState);
     }
     Actor_SetFocus(&this->actor, this->unk_304);
     Actor_MoveXZGravity(&this->actor);
@@ -1134,11 +1136,20 @@ s32 EnNiw_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* p
         rot->x += (s16)this->unk_2D8;
         rot->y += (s16)this->unk_2D4;
         rot->z += (s16)this->unk_2D0;
+        // #5 diagnostic read-back: record the wing binang actually applied + the flap phase so the
+        // REPL `flapinfo` can tell which of the two flap phases a captured frame shows.
+        gSoH3dCuccoDbgPhase = this->unk_29C;
+        gSoH3dCuccoDbgWing[3] = (s16)this->unk_2D8;
+        gSoH3dCuccoDbgWing[4] = (s16)this->unk_2D4;
+        gSoH3dCuccoDbgWing[5] = (s16)this->unk_2D0;
     }
     if (limbIndex == 7) {
         rot->x += (s16)this->unk_2CC;
         rot->y += (s16)this->unk_2C8;
         rot->z += (s16)this->unk_2C4;
+        gSoH3dCuccoDbgWing[0] = (s16)this->unk_2CC;
+        gSoH3dCuccoDbgWing[1] = (s16)this->unk_2C8;
+        gSoH3dCuccoDbgWing[2] = (s16)this->unk_2C4;
     }
 
     return false;

@@ -2692,6 +2692,7 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                     if (GameInteractor_ShouldActorUpdate(actor)) {
                         actor->update(actor, play);
                         GameInteractor_ExecuteOnActorUpdate(actor);
+                        SoH3D_ActorPostUpdate(play, actor); // generic actor-control debug override
                     }
                     func_8003F8EC(play, &play->colCtx.dyna, actor);
                 }

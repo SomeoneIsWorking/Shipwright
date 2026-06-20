@@ -49,6 +49,31 @@ void SoH3D_SetLimbOverride(void* overrideFn, void* arg, int kind);
 // `cuccopose <0|1>`. The agitated flap drives the wing bones on local X+Y+Z, not just Z like idle.
 extern int gSoH3dForceCuccoAgitate;
 
+// #5 cucco WING-STATE machine (the one genuinely cucco-specific control — no generic equivalent):
+//   gSoH3dCuccoState : -1 = live AI; >=0 = force func_80AB5BF8(this,play,STATE) every frame on every
+//                      cucco (0=calm, 1=mild flap, 2=agitated/held spread, 3, 5=...). REPL
+//                      `cuccostate <n|off>`; `cuccopose 1` is the legacy alias for state 2.
+// Diagnostic read-back (last cucco drawn this frame) so a captured frame's flap phase is known:
+//   gSoH3dCuccoDbgPhase : that cucco's unk_29C (the two-phase flap toggle, 0/1).
+//   gSoH3dCuccoDbgWing  : the per-limb binang actually applied — [0..2]=limb7 xyz, [3..5]=limb11 xyz.
+// REPL `flapinfo` prints these, so two distinct flap phases can be captured. Hold the cucco STILL
+// and FRAME it with the GENERIC actor controls below (`asel 0x19` + `afreeze 1` + `acam`).
+extern int gSoH3dCuccoState;
+extern int gSoH3dCuccoDbgPhase;
+extern short gSoH3dCuccoDbgWing[6];
+
+// Generic actor-control debug surface (works on ANY actor, not just cuccos). One selected actor is
+// driven each frame from SoH3D_ActorPostUpdate (called per-actor at the end of Actor_UpdateAll).
+//   `asel <id> [n]` / `asel any [n]` : select the n-th nearest live actor of that id (0xHEX or dec)
+//                                      to Link (default nearest); captures its current pos/rot.
+//   `afreeze <0|1>`   : pin the selected actor's transform every frame (no wander/hop/flee/AI drift).
+//   `apos <x y z>`    : set + pin the selected actor's world position.
+//   `arot <x y z>`    : set + pin its rotation (binang, x y z).
+//   `aparams <v>`     : set actor->params.
+//   `acam [dist] [ax]`: frame the selected actor as a side profile (ax 0=+X, 1=+Z; dist default 110).
+//   `ainfo`           : dump the selected actor (id, pos, rot, params, velocity, update/draw ptrs).
+void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor);
+
 // Raw variant of the N64-anim hook for draw choke points that don't have a SkelAnime* on hand
 // (SkelAnime_DrawFlexOpa / SkelAnime_DrawOpa, called directly by many actors). Same effect as
 // SoH3D_SkelAnimeDraw; derives limbCount from the skeleton tree. Returns 1 if it drew the OoT3D

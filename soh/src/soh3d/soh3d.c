@@ -2438,6 +2438,7 @@ static int gLinkJointDumpCap = 0;
 // the real locomotion system (the `move` command only teleports, leaving SkelAnime in idle). Used
 // to verify the N64-retarget walk cycle live and to capture a big-arm-motion jointTable for a
 // better-conditioned per-bone correction. Applied in SoH3D_WalkInject just before Play_Update.
+int gSoH3dGCam = 0; // #25 force game camera behind Link (drive locomotion headless); REPL `gcam`
 static int gSoH3dWalkHoldFrames = 0;
 static s8 gSoH3dWalkStickX = 0;
 static s8 gSoH3dWalkStickY = 0;
@@ -3151,6 +3152,10 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         p->actor.prevPos = p->actor.world.pos;
         SoH3D_ReplReply(outPath, "move %.0f -> (%.0f,%.0f,%.0f)", f1, p->actor.world.pos.x, p->actor.world.pos.y,
                         p->actor.world.pos.z);
+    } else if (strcmp(cmd, "gcam") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        gSoH3dGCam = iv ? 1 : 0;
+        SoH3D_ReplReply(outPath, "gcam=%d (force game camera behind Link for walkhold-driven locomotion)",
+                        gSoH3dGCam);
     } else if (strcmp(cmd, "walkhold") == 0) {
         // `walkhold <frames> [stickX] [stickY]` — inject a held control stick for N frames so Link
         // really WALKS/RUNS via the locomotion system (default stickY=+60 forward; stick range +-60
@@ -4465,6 +4470,28 @@ void SoH3D_ReplPoll(PlayState* play) {
     if (gSoH3dForceTime >= 0) {
         gSaveContext.dayTime = (u16)gSoH3dForceTime;
         gSaveContext.skyboxTime = (u16)gSoH3dForceTime;
+    }
+
+    // `gcam <0|1>`: force the GAME camera directly BEHIND Link (looking along his facing) every
+    // frame, so headless `walkhold`-driven locomotion goes where Link faces (the analog stick is
+    // camera-relative; after a `tp` the game cam lags/snaps in front, sending Link the wrong way).
+    // Runs here (frame end) so next frame's player reads it before Camera_Update follows Link. This
+    // is the tool that makes a climb drivable headless (#25): `tp` to the climbable, `turn` to face
+    // it, `gcam 1`, `walkhold`.
+    {
+        extern int gSoH3dGCam;
+        if (gSoH3dGCam) {
+            Camera* c = GET_ACTIVE_CAM(play);
+            Player* pl = GET_PLAYER(play);
+            if (c != NULL && pl != NULL) {
+                s16 yaw = pl->actor.shape.rot.y;
+                f32 fx = Math_SinS(yaw), fz = Math_CosS(yaw);
+                f32 px = pl->actor.world.pos.x, py = pl->actor.world.pos.y, pz = pl->actor.world.pos.z;
+                c->at.x = px; c->at.y = py + 40.0f; c->at.z = pz;
+                c->eye.x = px - 120.0f * fx; c->eye.y = py + 50.0f; c->eye.z = pz - 120.0f * fz;
+                c->eyeNext = c->eye;
+            }
+        }
     }
 
     // #36: 2D->3D item drops default + always on. SoH's "3D Item Drops" enhancement

@@ -1315,14 +1315,26 @@ const void* SoH3D_ButtonBgTex(int* w, int* h) {
     static int tried = 0;
     if (!tried) {
         tried = 1;
-        int sw = 0, sh = 0, n = 0;
-        stbi_uc* px = stbi_load_from_memory(kButtonBgPng, (int)kButtonBgPngLen, &sw, &sh, &n, 4);
-        if (px) {
-            rgba.assign(px, px + (size_t)sw * sh * 4);
-            bw = sw; bh = sh;
-            stbi_image_free(px);
+        // #18 — prefer the OoT3D texture pack's HD button-bg disc (filename hash 08F40E3D6D548398),
+        // a grayscale white beveled disc on transparency that tints via MODULATEIA_PRIM exactly like
+        // the SVG (white center -> PRIM colour, dark rim stays dark). Loaded at runtime from the
+        // gitignored pack (never embedded/committed — it is a game asset). Falls back to the embedded
+        // SVG disc when the pack isn't present. (Pack returns top-down RGBA32; this pack is flip=0.)
+        std::vector<uint8_t> pk;
+        int pw = 0, ph = 0;
+        if (SoH3D::TexPackLookup(0x08F40E3D6D548398ULL, pw, ph, pk) && pw > 0 && ph > 0) {
+            rgba.swap(pk);
+            bw = pw; bh = ph;
         } else {
-            fprintf(stderr, "[SoH3D] button bg tex: PNG decode failed\n");
+            int sw = 0, sh = 0, n = 0;
+            stbi_uc* px = stbi_load_from_memory(kButtonBgPng, (int)kButtonBgPngLen, &sw, &sh, &n, 4);
+            if (px) {
+                rgba.assign(px, px + (size_t)sw * sh * 4);
+                bw = sw; bh = sh;
+                stbi_image_free(px);
+            } else {
+                fprintf(stderr, "[SoH3D] button bg tex: PNG decode failed\n");
+            }
         }
     }
     if (rgba.empty()) { if (w) *w = 0; if (h) *h = 0; return nullptr; }

@@ -4185,6 +4185,7 @@ void SoH3D_ReplPoll(PlayState* play) {
     {
         extern int gSoH3dMenuWarp;     // SohRmlUi.cpp; -1 = none pending
         extern int gSoH3dMenuWarpTime; // SohRmlUi.cpp; 0 Default / 1 Day / 2 Night
+        extern int gSoH3dMenuWarpAge;  // SohRmlUi.cpp; 0 Default / 1 Child(past) / 2 Adult(future)
         if (gSoH3dMenuWarp >= 0 && play != NULL) {
             // Apply the menu's chosen time-of-day to the destination scene. gSoH3dForceTime is
             // honored by SoH3D_ApplyForceTime() in the new scene's Play_Init (before the day/night
@@ -4195,6 +4196,18 @@ void SoH3D_ReplPoll(PlayState* play) {
                 gSoH3dForceTime = 0x0000; // Night (midnight; < 0x4555 sets nightFlag)
             } else {
                 gSoH3dForceTime = -1; // Default: release the clock so it runs normally
+            }
+            // Past/future variant: set Link's age so Play_Init picks the CHILD vs ADULT scene-setup
+            // layer (it indexes gEntranceTable[entrance + sceneSetupIndex], and sceneSetupIndex is
+            // derived from LINK_IS_ADULT). Set BOTH linkAge (read by Play_Init for the scene layer)
+            // and linkAgeOnLoad (Player_InitImpl copies it back into linkAge on reload, so without it
+            // the new scene's player init would revert Link's model to the old age). 0 = keep age.
+            if (gSoH3dMenuWarpAge == 1) {
+                gSaveContext.linkAge = LINK_AGE_CHILD;
+                play->linkAgeOnLoad = LINK_AGE_CHILD;
+            } else if (gSoH3dMenuWarpAge == 2) {
+                gSaveContext.linkAge = LINK_AGE_ADULT;
+                play->linkAgeOnLoad = LINK_AGE_ADULT;
             }
             play->nextEntranceIndex = gSoH3dMenuWarp;
             play->transitionTrigger = TRANS_TRIGGER_START;

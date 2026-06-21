@@ -2626,6 +2626,16 @@ static int gSoH3dBtnHoldFrames = 0;
 static unsigned gSoH3dBtnHoldMask = 0;
 static int gSoH3dBtnHoldFirst = 0;
 
+// #71 `pause` REPL: generic, reusable pause-menu navigation primitive. Drives the REAL kaleido
+// input path (no state poking) so the menu opens/switches pages exactly as a player would, which is
+// what makes the observed render faithful. Target page: PAUSE_ITEM/MAP/QUEST/EQUIP (0..3), or -2 to
+// close, -1 inactive. SoH3D_PauseNav (driven each frame from SoH3D_WalkInject) injects a START edge
+// to open when closed, then BTN_R press edges (each rotates one page right) once the menu is settled
+// in its navigable idle state (pauseCtx->state==6, unk_1E4==0 i.e. not mid-rotation), until pageIndex
+// reaches the target. To close it re-injects START from the idle state. Reach the map subscreen with
+// `pause map`, frame it, screenshot, then `pause close`.
+static int gSoH3dPauseTarget = -1;
+
 // #16 first-person early-load crash repro harness. SOH3D_FP_REPRO=1 synthesizes C-up (BTN_CUP)
 // press edges for the first ~window frames after control returns at a COLD boot load, so the
 // cold-scene-load settle (the texture-segment race) reliably overlaps first-person engagement —
@@ -3086,6 +3096,29 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             SoH3D_ReplReply(outPath, "btnhold mask=0x%x frames=%d", mask, frames);
         } else {
             SoH3D_ReplReply(outPath, "usage: btnhold <hexmask> <frames>  (B=0x4000 A=0x8000)");
+        }
+    } else if (strcmp(cmd, "pause") == 0) {
+        // `pause <item|map|quest|equip|close>` — generic pause-menu nav (see SoH3D_PauseNav / #71).
+        // Drives the real kaleido input path: opens the menu and rotates to the named page (or closes
+        // it). `pause` with no arg reports the live pause state for observation.
+        char arg[32] = { 0 };
+        if (sscanf(line, "%*s %31s", arg) == 1) {
+            int tgt = -3;
+            if (strcmp(arg, "item") == 0) tgt = PAUSE_ITEM;
+            else if (strcmp(arg, "map") == 0) tgt = PAUSE_MAP;
+            else if (strcmp(arg, "quest") == 0) tgt = PAUSE_QUEST;
+            else if (strcmp(arg, "equip") == 0) tgt = PAUSE_EQUIP;
+            else if (strcmp(arg, "close") == 0) tgt = -2;
+            if (tgt == -3) {
+                SoH3D_ReplReply(outPath, "usage: pause <item|map|quest|equip|close>");
+            } else {
+                gSoH3dPauseTarget = tgt;
+                SoH3D_ReplReply(outPath, "pause -> %s (target=%d)", arg, tgt);
+            }
+        } else {
+            PauseContext* pc = &play->pauseCtx;
+            SoH3D_ReplReply(outPath, "pause state=%d pageIndex=%d unk_1E4=%d mode=%d target=%d",
+                            pc->state, pc->pageIndex, pc->unk_1E4, pc->mode, gSoH3dPauseTarget);
         }
     } else if (strcmp(cmd, "turn") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         Player* p = GET_PLAYER(play);
@@ -4286,6 +4319,29 @@ void SoH3D_WalkInject(PlayState* play) {
             gSoH3dBtnHoldFirst = 0;
         }
         gSoH3dBtnHoldFrames--;
+    }
+
+    // #71 pause-menu nav: open/switch-page/close via the real kaleido input path (see gSoH3dPauseTarget).
+    if (gSoH3dPauseTarget != -1) {
+        PauseContext* pc = &play->pauseCtx;
+        if (gSoH3dPauseTarget == -2) { // close
+            if (pc->state == 0) {
+                gSoH3dPauseTarget = -1; // fully closed
+            } else if (pc->state == 6 && pc->unk_1E4 == 0) {
+                play->state.input[0].cur.button |= BTN_START;
+                play->state.input[0].press.button |= BTN_START; // edge: trigger close
+            }
+        } else if (pc->state == 0) { // closed -> open
+            play->state.input[0].cur.button |= BTN_START;
+            play->state.input[0].press.button |= BTN_START; // edge: trigger open
+        } else if (pc->state == 6 && pc->unk_1E4 == 0) { // open & settled (not mid-rotation)
+            if (pc->pageIndex == (u16)gSoH3dPauseTarget) {
+                gSoH3dPauseTarget = -1; // arrived
+            } else {
+                play->state.input[0].cur.button |= BTN_R;
+                play->state.input[0].press.button |= BTN_R; // edge: rotate one page right
+            }
+        }
     }
 
     // #6/#9 linkgrab: hold the selected actor in front of Link + inject fresh A edges until grabbed.

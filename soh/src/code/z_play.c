@@ -32,6 +32,43 @@ s16 sTransitionFillTimer;
 void* gDebugCutsceneScript = NULL;
 UNK_TYPE D_8012D1F4 = 0; // unused
 
+// SoH3D (#15 + #24): universal one-key "skip" for fast playtesting.
+//
+// The keyboard SPACE key is ALREADY mapped to the controller BTN_START button by default
+// (libultraship ControllerDefaultMappings.cpp), and the SoH3D build already routes BTN_START to:
+//   - skip skippable in-game cutscenes (z_demo.c: "press START to skip", always on),
+//   - skip onepoint cutscenes (timesaver_hook_handlers.cpp VB_PLAY_ONEPOINT_CS, CVar-gated),
+//   - advance / fast-forward / close textboxes (Message_ShouldAdvance in z_message_PAL.c, which the
+//     SoH3D build extended so a HELD START fast-forwards dialog), and
+//   - end the get-item "item over head" hold (func_8084DFF4 in z_player.c ends the hold when its
+//     "You got X" textbox closes, which the same BTN_START advance drives).
+// So tapping SPACE skips a cutscene / onepoint / get-item, and holding SPACE blitzes dialog — with
+// no synthetic input needed. The only missing wiring was that several of these fast-forwards are
+// gated on TimeSaver enhancement CVars that defaulted off. SoH3D_SkipInit() force-enables them once
+// at gameplay start so SPACE actually fast-forwards everything #15/#24 asks for, including the
+// chest-open animation (FastChests). It deliberately injects NO input, so a stray SPACE keeps its
+// normal BTN_START meaning (open the pause menu) and nothing is double-triggered.
+void SoH3D_SkipInit(void) {
+    static s32 sForced = 0;
+    if (sForced) {
+        return;
+    }
+    sForced = 1;
+
+    // #24: skip the En_Box chest-open animation (VB_PLAY_SLOW_CHEST_CS in timesaver_hook_handlers.cpp).
+    if (CVarGetInteger(CVAR_ENHANCEMENT("FastChests"), 0) == 0) {
+        CVarSetInteger(CVAR_ENHANCEMENT("FastChests"), 1);
+    }
+    // #15: let BTN_START skip onepoint cutscenes and story transition cutscenes (the in-game cutscene
+    // skip in z_demo.c is always-on, but these onepoint/story paths are CVar-gated).
+    if (CVarGetInteger(CVAR_ENHANCEMENT("TimeSavers.SkipCutscene.OnePoint"), 0) == 0) {
+        CVarSetInteger(CVAR_ENHANCEMENT("TimeSavers.SkipCutscene.OnePoint"), 1);
+    }
+    if (CVarGetInteger(CVAR_ENHANCEMENT("TimeSavers.SkipCutscene.Story"), 0) == 0) {
+        CVarSetInteger(CVAR_ENHANCEMENT("TimeSavers.SkipCutscene.Story"), 1);
+    }
+}
+
 Input* D_8012D1F8 = NULL;
 
 PlayState* gPlayState;
@@ -1759,6 +1796,10 @@ void Play_Main(GameState* thisx) {
         HREG(93) = 1;
         HREG(94) = 10;
     }
+
+    // SoH3D (#15 + #24): one-time force-enable of the TimeSaver skip enhancements so the existing
+    // SPACE(=BTN_START) skip fast-forwards cutscenes / onepoint / dialog / get-item / chest-open.
+    SoH3D_SkipInit();
 
     // SoH3D: inject any held `walkhold` control-stick input before the player reads it, so Link
     // really walks/runs via the locomotion system (for verifying the N64-retarget walk cycle).

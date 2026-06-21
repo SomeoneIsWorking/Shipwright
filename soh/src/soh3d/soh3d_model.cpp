@@ -532,8 +532,6 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
         const float SH_TREAD = 1.00f, SH_RISER = 0.72f, SH_SIDE = 0.55f; // per-face shade
         const float nUp[3] = { 0, 1, 0 };
         const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] }; // riser faces downhill (toward the climber)
-        const float nUpA[3] = { f.aDir[0], 0, f.aDir[2] };  // back face at amax faces uphill (+aDir)
-        const float nDown[3] = { 0, -1, 0 };                // underside faces straight down
         const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side wall at cmin faces -c
         const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side wall at cmax faces +c
         const float kTileW = 44.0f;   // world units per horizontal texture tile
@@ -541,19 +539,16 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
         const float uMin = f.cmin / kTileW, uMax = f.cmax / kTileW;
         // #1: raise the whole flight by a FULL step (user, 2026-06-20: "move elevation from d/2 to d")
         // so the treads sit a step above the original ramp diagonal and the top tread reaches the
-        // upper ground. The staircase is emitted as a FULLY CLOSED solid volume: treads + risers on
-        // top, two stepped side walls down to a flat bottom plane, a bottom underside, a front riser
-        // at the base, and a back wall at the top. A closed manifold means the OoT3D sky dome can no
-        // longer bleed through the step edges/undersides (the cyan halo bug, #1).
+        // upper ground. yr=dy => the tread top yk = ymin+(k+1)*dy lands exactly on the ORIGINAL ramp
+        // diagonal at a1 (yRamp(a1) = ymin + (a1-amin)*dy/da = ymin+(k+1)*dy). So the stepped upper
+        // surface and the ramp diagonal coincide at every step's back edge and diverge by at most one
+        // step in front of it — the solid occupies ONLY the thin wedge between the steps and the ramp
+        // they replace, exactly the envelope of the old flat ramp. The side caps are per-step wedge
+        // TRIANGLES bounded above by the tread and below by the ramp diagonal — NOT rectangles down to
+        // ymin (those buried the flanking brick wall, #1 follow-up). The closed stepped-vs-ramp wedge
+        // still admits no sky bleed (#1 cyan halo) from normal viewing angles, while leaving the wall
+        // behind fully visible.
         const float yr = f.dy;
-        const float yBot = f.ymin; // flat bottom plane of the solid (buried in the surrounding terrain)
-        // Bottom front riser: from the bottom plane up to the first tread, at a=amin, facing downhill.
-        {
-            float yk0 = f.ymin + yr; // first tread height
-            stepShade = SH_RISER;
-            emit(f.amin, yBot, f.cmin, uMin, 1.0f, nDn); emit(f.amin, yk0, f.cmin, uMin, Vnose, nDn); emit(f.amin, yk0, f.cmax, uMax, Vnose, nDn);
-            emit(f.amin, yBot, f.cmin, uMin, 1.0f, nDn); emit(f.amin, yk0, f.cmax, uMax, Vnose, nDn); emit(f.amin, yBot, f.cmax, uMax, 1.0f, nDn);
-        }
         for (int k = 0; k < f.N; k++) {
             float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
             // yk/yk1 = the treads/risers, raised a full step above the original ramp diagonal. The
@@ -564,37 +559,31 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmin, uMin, 0.0f, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp);
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp); emit(a0, yk, f.cmax, uMax, Vnose, nUp);
             // Riser (front face, -aDir) at a1, yk -> yk1: top yk1 = nosing (V=Vnose), bottom yk = V=1.
-            // (Skip the last step's riser; the back wall closes that end instead.)
+            // (Skip the last step's riser; the top tread meets the upper ground at amax, no face past it.)
             if (k + 1 < f.N) {
                 stepShade = SH_RISER;
                 emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
                 emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
             }
-            // Side walls: a full rectangle per step from the flat bottom plane (yBot) up to the tread
-            // (yk), on each c edge — TWO triangles each, no terrain-diagonal hypotenuse (that left
-            // open slivers + a stray protruding triangle). Stepped outer silhouette, fully closed.
+            // Side cap: the thin WEDGE between this step and the original ramp diagonal, on each c
+            // edge — a single TRIANGLE per step (NOT a rectangle down to ymin, which buried the
+            // flanking brick wall, #1 follow-up). The ramp diagonal is yRamp(a)=ymin+(a-amin)*dy/da,
+            // so yRamp(a0)=ymin+k*dy and yRamp(a1)=ymin+(k+1)*dy=yk (since yr=dy). The wedge corners:
+            //   P1 (a0, yRamp(a0)=ymin+k*dy) — front-bottom, on the ramp / base of this riser front
+            //   P2 (a0, yk)                  — front-top, top of the riser / front edge of the tread
+            //   P3 (a1, yk)                  — back, where the tread rejoins the ramp (yk=yRamp(a1))
+            // Consecutive steps share P1 with the previous step's P3 along the ramp, so the triangles
+            // tile the steps-vs-ramp region with no gap and no overhang below the ramp surface — the
+            // staircase occupies exactly the old flat ramp's envelope, leaving the brick wall behind
+            // fully visible. The ramp diagonal closes the underside, so no separate bottom/back plane
+            // is needed and no sky bleeds through from normal viewing angles (#1 cyan halo).
             stepShade = SH_SIDE;
             float uA0 = a0 / kTileW, uA1 = a1 / kTileW;
-            // cmin side faces -c (outward). CCW seen from -c: (a0,yBot)->(a1,yBot)->(a1,yk)->(a0,yk).
-            emit(a0, yBot, f.cmin, uA0, 1.0f, nCmin); emit(a1, yBot, f.cmin, uA1, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin);
-            emit(a0, yBot, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin); emit(a0, yk, f.cmin, uA0, Vnose, nCmin);
-            // cmax side faces +c (outward, opposite winding).
-            emit(a0, yBot, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax); emit(a1, yBot, f.cmax, uA1, 1.0f, nCmax);
-            emit(a0, yBot, f.cmax, uA0, 1.0f, nCmax); emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax);
-        }
-        // Back wall at a=amax: from the top tread down to the bottom plane, facing uphill (+aDir).
-        {
-            float ykTop = f.ymin + (f.N - 1) * f.dy + yr; // top tread height (no riser past it)
-            stepShade = SH_RISER;
-            emit(f.amax, ykTop, f.cmin, uMin, Vnose, nUpA); emit(f.amax, yBot, f.cmin, uMin, 1.0f, nUpA); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nUpA);
-            emit(f.amax, ykTop, f.cmin, uMin, Vnose, nUpA); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nUpA); emit(f.amax, ykTop, f.cmax, uMax, Vnose, nUpA);
-        }
-        // Underside: one flat quad at yBot over the whole footprint, facing straight down, so the
-        // sky can't be seen from below. CCW seen from -Y: (amin,cmin)->(amin,cmax)->(amax,cmax)->(amax,cmin).
-        {
-            stepShade = SH_SIDE;
-            emit(f.amin, yBot, f.cmin, uMin, 0.0f, nDown); emit(f.amin, yBot, f.cmax, uMax, 0.0f, nDown); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nDown);
-            emit(f.amin, yBot, f.cmin, uMin, 0.0f, nDown); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nDown); emit(f.amax, yBot, f.cmin, uMin, 1.0f, nDown);
+            float yRamp0 = f.ymin + (float)k * f.dy; // ramp surface at a0 (one step below the tread)
+            // cmin side faces -c (outward). CCW seen from -c: P1 -> P3 -> P2.
+            emit(a0, yRamp0, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin); emit(a0, yk, f.cmin, uA0, Vnose, nCmin);
+            // cmax side faces +c (outward, opposite winding): P1 -> P2 -> P3.
+            emit(a0, yRamp0, f.cmax, uA0, 1.0f, nCmax); emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax);
         }
     }
     g.verts.swap(outv);

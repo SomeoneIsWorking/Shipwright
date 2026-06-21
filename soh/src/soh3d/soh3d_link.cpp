@@ -717,6 +717,19 @@ extern "C" int SoH3D_LinkRepl(PlayState* play, const char* cmd, const char* line
             } else {
                 SoH3D_ReplReply(outPath, "usage: linkcorr set <bid> <mode> <cx> <cy> <cz> [c2x c2y c2z]");
             }
+        } else if (n == 1 && strcmp(sub, "limb") == 0) {
+            // #8 remap test: change which N64 jointTable limb drives an OoT3D bone, live (the
+            // .inc's static limb field is otherwise the only authority). Lets us test the
+            // structural-mismatch fix (OoT3D head b11 <- N64 head limb 10, chest b10 <- torso
+            // limb 9) without a rebuild-per-guess. -1 = rest (no live limb).
+            int bid = -1, limb = -2;
+            if (sscanf(line, "%*s %*s %i %i", &bid, &limb) == 2 && bid >= 0 && bid < 25) {
+                gLinkBoneCorr[bid].limb = (signed char)limb;
+                SoH3D_ReplReply(outPath, "linkcorr b%d limb=%d mode=%d", bid, gLinkBoneCorr[bid].limb,
+                                gLinkBoneCorr[bid].mode);
+            } else {
+                SoH3D_ReplReply(outPath, "usage: linkcorr limb <bid> <n64limb|-1>");
+            }
         } else if (n == 1 && strcmp(sub, "bake") == 0) {
             char path[1024] = "";
             if (sscanf(line, "%*s %*s %1023s", path) == 1) {

@@ -368,6 +368,23 @@ f32 SoH3D_PlayerForceTeleport(Player* player, PlayState* play, f32 x, f32 z, s16
 // REPL `linkstate roll|talk`. ForceTalk returns the nearest-NPC actor id (0 if none within `range`).
 s32 SoH3D_PlayerForceRoll(Player* player, PlayState* play);
 s32 SoH3D_PlayerForceTalk(Player* player, PlayState* play, f32 range);
+// Safe reset out of forced talk/roll (avoids the talkActor-null CLOSING crash). REPL `linkstate idle`.
+s32 SoH3D_PlayerForceIdle(Player* player, PlayState* play);
+
+// Per-frame pose-scan LOGGER (anim QA). Active=on records each drawn player frame's max bone-rotation
+// jump + bone + resolved csab + frame into a log the REPL reads back (`posescan on|off|dump`). Sampled
+// in the DRAW path (where the pose updates), so it works at normal speed, not under frame-step.
+void SoH3D_PoseScanSetActive(int on);
+int SoH3D_PoseScanCount(void);
+float SoH3D_PoseScanGet(int i, int* bone, float* frame, const char** csab);
+
+// Pose-discontinuity scanner (anim QA). SoH3D_PoseDiscontinuity returns the largest per-bone rotation
+// jump (degrees) between this frame's pose and the previous, plus that bone via outBone — a hard cut /
+// missing-morph pop shows as a big value. SoH3D_LinkModelId returns the player body's modelId (the
+// scanner's target). Reset between transitions with SoH3D_PoseScanReset. REPL `posescan`.
+int SoH3D_LinkModelId(void);
+float SoH3D_PoseDiscontinuity(int modelId, int* outBone);
+void SoH3D_PoseScanReset(int modelId);
 
 // Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
 // day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.

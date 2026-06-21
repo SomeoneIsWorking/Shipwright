@@ -7693,6 +7693,22 @@ s32 SoH3D_PlayerForceTalk(Player* this, PlayState* play, f32 range) {
     return best->id;
 }
 
+// Safe reset out of any forced state (esp. the forced talk, whose CLOSING path null-derefs talkActor
+// because the NPC side never did the talk handshake). Clears the talk/cutscene flags + talkActor/
+// focusActor, force-closes any open textbox, and forces the standing-idle action directly (NOT by
+// advancing the textbox with A, which routes through the crashy Player_Action_Talk CLOSING branch).
+s32 SoH3D_PlayerForceIdle(Player* this, PlayState* play) {
+    this->stateFlags1 &= ~(PLAYER_STATE1_TALKING | PLAYER_STATE1_IN_CUTSCENE);
+    this->talkActor = NULL;
+    this->focusActor = NULL;
+    this->actor.textId = 0;
+    if (play->msgCtx.msgMode != MSGMODE_NONE) {
+        Message_CloseTextbox(play);
+    }
+    func_80839E88(this, play); // standing idle
+    return 1;
+}
+
 void func_8083F070(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_8084C5F8, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));

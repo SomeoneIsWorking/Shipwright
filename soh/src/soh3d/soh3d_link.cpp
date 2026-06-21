@@ -267,6 +267,44 @@ static unsigned long long SoH3D_LinkComputeMidMask(Player* player) {
 }
 #undef LINK_MID
 
+static int sLinkModelId = -1; // last modelId the player body drew with (for the REPL pose scanner)
+extern "C" int SoH3D_LinkModelId(void) { return sLinkModelId; }
+
+// Pose-scan LOGGER. The pose (lastSkin) is recomputed in the DRAW path (here), not in Play_Update, so
+// the per-frame discontinuity must be sampled here — once per rendered frame — to be meaningful (the
+// frame-step `step` advances logic without drawing). When active, each drawn player frame records the
+// max per-bone rotation jump + the bone + the resolved csab + its frame. The REPL reads the log back.
+struct PoseScanRec { float deg; int bone; float frame; char csab[28]; };
+static PoseScanRec sPoseLog[512];
+static int sPoseLogN = 0;
+static int sPoseScanActive = 0;
+extern "C" void SoH3D_PoseScanSetActive(int on) {
+    sPoseScanActive = on ? 1 : 0;
+    if (on) {
+        sPoseLogN = 0; // clear the log only when STARTING a scan; `off` keeps it for `dump`
+        if (sLinkModelId >= 0) SoH3D_PoseScanReset(sLinkModelId); // baseline = next frame
+    }
+}
+extern "C" int SoH3D_PoseScanCount(void) { return sPoseLogN; }
+extern "C" float SoH3D_PoseScanGet(int i, int* bone, float* frame, const char** csab) {
+    if (i < 0 || i >= sPoseLogN) { if (bone) *bone = -1; if (frame) *frame = 0; if (csab) *csab = ""; return 0; }
+    if (bone) *bone = sPoseLog[i].bone;
+    if (frame) *frame = sPoseLog[i].frame;
+    if (csab) *csab = sPoseLog[i].csab;
+    return sPoseLog[i].deg;
+}
+// Called from the draw path right after the pose is set, when the scan is active.
+static void poseScanRecord(int modelId, const char* csab, float frame) {
+    if (!sPoseScanActive || sPoseLogN >= (int)(sizeof(sPoseLog) / sizeof(sPoseLog[0]))) return;
+    int bone = -1;
+    float deg = SoH3D_PoseDiscontinuity(modelId, &bone);
+    PoseScanRec& r = sPoseLog[sPoseLogN++];
+    r.deg = deg; r.bone = bone; r.frame = frame;
+    const char* c = csab ? csab : "(n64-retarget)";
+    int k = 0; for (; c[k] && k < 27; k++) r.csab[k] = c[k];
+    r.csab[k] = '\0';
+}
+
 extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     const char* zar;
     const char* csab = NULL; // set only in the own-CSAB (linksrc 3ds) branch; NULL in N64-retarget
@@ -288,6 +326,7 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (modelId < 0) {
         return 0; // model unavailable -> fall back to the N64 body
     }
+    sLinkModelId = modelId; // expose to the REPL pose-discontinuity scanner (SoH3D_LinkModelId)
     // Player is Actor-first so the cast is valid (see z64player.h).
     player = (Player*)actor;
     // #16c: in FIRST-PERSON (C-up) the camera eye sits AT Link's head bone, so drawing the 3DS body
@@ -421,6 +460,8 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
                                  player->skelAnime.animLength);
         }
     }
+    // Pose-scan QA: sample the per-frame discontinuity now that lastSkin is set (once per drawn frame).
+    poseScanRecord(modelId, csab, player->skelAnime.curFrame);
     // Select Link's live equipment / hand-pose variant subset (the childlink_v2 mesh bakes them
     // all on distinct mesh_ids). Must be set BEFORE EmitPose so it pairs with this draw item.
     unsigned long long midMask = SoH3D_LinkComputeMidMask(player);

@@ -3340,8 +3340,11 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             s32 id = SoH3D_PlayerForceTalk(p, play, 600.0f);
             SoH3D_ReplReply(outPath, "linkstate talk -> %s (talkActor id=0x%x textId=0x%x st1=0x%x)",
                             id ? "talking" : "NO NPC within 600u", id, p->actor.textId, p->stateFlags1);
+        } else if (strcmp(arg, "idle") == 0) {
+            SoH3D_PlayerForceIdle(p, play);
+            SoH3D_ReplReply(outPath, "linkstate idle -> reset (st1=0x%x)", p->stateFlags1);
         } else {
-            SoH3D_ReplReply(outPath, "usage: linkstate <roll|talk>");
+            SoH3D_ReplReply(outPath, "usage: linkstate <roll|talk|idle>");
         }
     } else if (strcmp(cmd, "freeze") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
         // Frame-step harness: `freeze 1` holds the game logic still (Play_Update skipped) so a brief
@@ -3381,6 +3384,35 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             p->upperSkelAnime.morphWeight,
             p->upperLimbRot.x, p->upperLimbRot.y, p->upperLimbRot.z, p->headLimbRot.y,
             p->actor.shape.rot.y, p->yaw, p->actor.focus.rot.y, p->actor.speedXZ, p->stateFlags1);
+    } else if (strcmp(cmd, "posescan") == 0) {
+        // Anim QA logger: records each DRAWN player frame's max per-bone rotation jump (+bone +resolved
+        // csab) so a hard-cut / missing-morph pop shows as an isolated spike. Sampled in the draw path,
+        // so run at NORMAL speed (not under freeze). `posescan on` starts+clears; `off` stops; `dump`
+        // prints the recorded series (one line per frame). The python sweep (tools/soh3d_anim_qa.py)
+        // drives every transition and flags spikes automatically.
+        char sub[16] = { 0 };
+        sscanf(line, "%*s %15s", sub);
+        if (strcmp(sub, "on") == 0) {
+            SoH3D_PoseScanSetActive(1);
+            SoH3D_ReplReply(outPath, "posescan on (recording; modelId=%d)", SoH3D_LinkModelId());
+        } else if (strcmp(sub, "off") == 0) {
+            int n = SoH3D_PoseScanCount();
+            SoH3D_PoseScanSetActive(0);
+            SoH3D_ReplReply(outPath, "posescan off (n=%d frames recorded)", n);
+        } else if (strcmp(sub, "dump") == 0) {
+            int n = SoH3D_PoseScanCount();
+            // Reply is line-oriented; emit a compact CSV the python sweep parses: i,deg,bone,frame,csab
+            char buf[8192]; int off = 0;
+            off += snprintf(buf + off, sizeof(buf) - off, "posescan n=%d\n", n);
+            for (int i = 0; i < n && off < (int)sizeof(buf) - 64; i++) {
+                int bone; float fr; const char* cs;
+                float deg = SoH3D_PoseScanGet(i, &bone, &fr, &cs);
+                off += snprintf(buf + off, sizeof(buf) - off, "%d,%.1f,%d,%.1f,%s\n", i, deg, bone, fr, cs);
+            }
+            SoH3D_ReplReply(outPath, "%s", buf);
+        } else {
+            SoH3D_ReplReply(outPath, "usage: posescan <on|off|dump> (n=%d)", SoH3D_PoseScanCount());
+        }
     } else if (strcmp(cmd, "linkground") == 0) {
         // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
         // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big

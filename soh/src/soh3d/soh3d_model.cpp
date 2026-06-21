@@ -2244,6 +2244,56 @@ extern "C" int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelP
     return 1;
 }
 
+// Pose-discontinuity scanner (anim QA tooling): the 3d3 named-CSAB path picks ONE csab at a phase and
+// never blends morphs, so any transition that hard-cuts the pose shows as a per-bone rotation that JUMPS
+// between consecutive frames far beyond what a continuous animation could produce. This compares the
+// current cached pose (lastSkin) against the previous snapshot and returns the LARGEST per-bone rotation
+// delta (degrees) plus that bone. Generic: works for ANY animation/transition driven through the model,
+// needs no oracle. Orthonormalizes each bone's 3x3 (removing skin scale) then measures the relative
+// rotation angle acos((tr(Ra^T Rb)-1)/2). First call after a reset returns 0 (no previous). Pair with
+// the freeze/step harness + the action machine to sweep transitions and auto-flag pops. Uses lastSkin,
+// so it requires SoH3D_SetTrackPosedMinY(1) on the model (the player path already enables it).
+static std::unordered_map<int, std::vector<std::array<float, 16>>>& posePrev() {
+    static std::unordered_map<int, std::vector<std::array<float, 16>>> m;
+    return m;
+}
+static void orthoRows(const float* M, float r[3][3]) {
+    // row-major 4x4 rotation rows (v' = M*v): r0..r2; Gram-Schmidt to a pure rotation.
+    float a[3] = { M[0], M[1], M[2] }, b[3] = { M[4], M[5], M[6] }, c[3] = { M[8], M[9], M[10] };
+    auto norm = [](float* v) { float n = std::sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]); if (n>1e-8f){v[0]/=n;v[1]/=n;v[2]/=n;} };
+    auto dot = [](const float* u, const float* v) { return u[0]*v[0]+u[1]*v[1]+u[2]*v[2]; };
+    norm(a);
+    float pb = dot(a, b); b[0]-=pb*a[0]; b[1]-=pb*a[1]; b[2]-=pb*a[2]; norm(b);
+    c[0]=a[1]*b[2]-a[2]*b[1]; c[1]=a[2]*b[0]-a[0]*b[2]; c[2]=a[0]*b[1]-a[1]*b[0]; // c = a x b
+    for (int k=0;k<3;k++){ r[0][k]=a[k]; r[1][k]=b[k]; r[2][k]=c[k]; }
+}
+extern "C" float SoH3D_PoseDiscontinuity(int modelId, int* outBone) {
+    if (outBone) *outBone = -1;
+    auto it = lastSkin().find(modelId);
+    if (it == lastSkin().end() || it->second.empty()) return 0.0f;
+    const auto& cur = it->second;
+    auto& prev = posePrev()[modelId];
+    float maxDeg = 0.0f; int maxBone = -1;
+    if (prev.size() == cur.size()) {
+        for (size_t b = 0; b < cur.size(); b++) {
+            float Ra[3][3], Rb[3][3];
+            orthoRows(prev[b].data(), Ra);
+            orthoRows(cur[b].data(), Rb);
+            // tr(Ra^T * Rb) = sum_ij Ra[i][j]*Rb[i][j]  (Ra rows are basis vectors)
+            float tr = 0.0f;
+            for (int i=0;i<3;i++) for (int j=0;j<3;j++) tr += Ra[i][j]*Rb[i][j];
+            float cosA = (tr - 1.0f) * 0.5f;
+            if (cosA > 1.0f) cosA = 1.0f; if (cosA < -1.0f) cosA = -1.0f;
+            float deg = std::acos(cosA) * (180.0f / 3.14159265358979f);
+            if (deg > maxDeg) { maxDeg = deg; maxBone = (int)b; }
+        }
+    }
+    prev = cur; // snapshot for next call
+    if (outBone) *outBone = maxBone;
+    return maxDeg;
+}
+extern "C" void SoH3D_PoseScanReset(int modelId) { posePrev().erase(modelId); }
+
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);

@@ -1676,12 +1676,16 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     // come from zelda_field_keep.zar (glModelIds 2,4,5,6; see kModels in soh3d_model.cpp).
     // gSoH3dGScale[id] (REPL `gscale <id> <f>`, 0 = use the per-call default) tunes them live.
     if (SoH3D_AutoMode() != 2) {
-        // Obj_Hana (params & 3): 0 = gHanaDL flower, 1 = gFieldKakeraDL debris, 2 = gFieldBushDL
-        // bush. Bush -> the kusa model (same cuttable bush as En_Kusa); flower -> field-keep
-        // flower. Debris (1) is a transient break effect -> leave N64.
+        // Obj_Hana (params & 3): 0 = gHanaDL flower, 1 = gFieldKakeraDL rock-debris, 2 = gFieldBushDL
+        // bush. Bush -> the kusa model (same cuttable bush as En_Kusa); flower -> field-keep flower.
+        // Debris (1) is NOT a transient effect (#81): ObjHana_Init installs a persistent collider, so
+        // these are deliberately-placed collidable rock-rubble props that otherwise stay N64-gray.
+        // OoT3D's zelda_field_keep.zar ships no dedicated "kakera" CMB, so use the small field rock
+        // (obj_isi01 = model 4, the same asset as En_Ishi's liftable rock) as the faithful match.
         if (actor->id == ACTOR_OBJ_HANA) {
             int v = actor->params & 3;
             if (v == 2) { SoH3D_DrawModelGL(play, 2, actor, SOH3D_GSCALE(2, SOH3D_HANABUSH_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
+            if (v == 1) { SoH3D_DrawModelGL(play, 4, actor, SOH3D_GSCALE(4, SOH3D_ROCK_SMALL_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
             if (v == 0) { SoH3D_DrawModelGL(play, 6, actor, SOH3D_GSCALE(6, SOH3D_FLOWER_WORLD_SCALE), NULL, 0.0f, NULL, NULL); return 1; }
         }
         // En_Ishi (params & 1): 0 = small liftable rock, 1 = large/silver rock.
@@ -1782,7 +1786,7 @@ int SoH3D_ActorHasReplacement(PlayState* play, Actor* actor) {
     if (SoH3D_AutoMode() != 2) {
         if (actor->id == ACTOR_OBJ_HANA) {
             int v = actor->params & 3;
-            if (v == 0 || v == 2) {
+            if (v == 0 || v == 1 || v == 2) { // 1 = rock-debris -> small field rock (#81)
                 return 1;
             }
         }
@@ -3523,7 +3527,7 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                     if (sModelTable[ti].actorId == a->id) { inTable = 1; break; }
                 if (a->id == ACTOR_OBJ_HANA) {
                     int v = a->params & 3;
-                    cov = (v == 2) ? "HANA-bush(3DS)" : (v == 0) ? "HANA-flower(3DS)" : "HANA-debris(N64)";
+                    cov = (v == 2) ? "HANA-bush(3DS)" : (v == 0) ? "HANA-flower(3DS)" : "HANA-debris(3DS)";
                 } else if (a->id == ACTOR_EN_ISHI) {
                     cov = "ISHI-rock(3DS)";
                 } else if (inTable) {

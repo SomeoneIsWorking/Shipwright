@@ -2673,8 +2673,18 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                 actor->yawTowardsPlayer = Actor_WorldYawTowardActor(actor, &player->actor);
                 actor->flags &= ~ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT;
 
+                // SoH3D #3: actors with an OoT3D replacement (e.g. En_Ko Kokiri kids / Saria) must keep
+                // updating regardless of distance/frustum, or the replaced NPC freezes and its OoT3D model
+                // + dynamic shadow pop out once out of the N64 cull range (only reappearing when the player
+                // re-enters the vanilla activation range). The INSIDE_CULLING_VOLUME flag this gate normally
+                // reads is set in the SEPARATE draw loop (func_800315AC), which runs AFTER Actor_UpdateAll
+                // and can be skipped on some frames — relying on it is fragile. Consult the replacement
+                // override directly here so replaced actors update unconditionally. Vanilla (unreplaced)
+                // actors are unaffected: SoH3D_ActorHasReplacement is a pure id/object lookup that returns
+                // false for them, so they keep their normal distance/frustum culling.
                 if ((DECR(actor->freezeTimer) == 0) &&
-                    (actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME))) {
+                    ((actor->flags & (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)) ||
+                     SoH3D_ActorHasReplacement(play, actor))) {
                     if (actor == player->focusActor) {
                         actor->isTargeted = true;
                     } else {
@@ -3110,7 +3120,13 @@ void func_800315AC(PlayState* play, ActorContext* actorCtx) {
                         actor->flags &= ~ACTOR_FLAG_INSIDE_CULLING_VOLUME;
                     }
                 } else {
-                    if (func_800314B0(play, actor)) {
+                    // SoH3D #3: with the extended-culling CVars at default, the SoH3D replacement
+                    // override in Ship_CalcShouldDrawAndUpdate is NOT consulted here — vanilla
+                    // func_800314B0 culling clears INSIDE_CULLING_VOLUME at distance, which stops the
+                    // actor's update() (z_actor.c update gate) so the replaced NPC FREEZES and pops
+                    // out (Mido + all replaced humanoid NPCs). Force the flag for replaced actors so
+                    // they keep updating + drawing at any range, independent of the CVars.
+                    if (func_800314B0(play, actor) || SoH3D_ActorHasReplacement(play, actor)) {
                         actor->flags |= ACTOR_FLAG_INSIDE_CULLING_VOLUME;
                     } else {
                         actor->flags &= ~ACTOR_FLAG_INSIDE_CULLING_VOLUME;
@@ -3121,9 +3137,14 @@ void func_800315AC(PlayState* play, ActorContext* actorCtx) {
             actor->isDrawn = false;
 
             if ((HREG(64) != 1) || ((HREG(65) != -1) && (HREG(65) != HREG(66))) || (HREG(71) == 0)) {
+                // SoH3D #3: draw replaced actors unconditionally (see the update gate in Actor_UpdateAll).
+                // The flag-forcing block above already sets INSIDE_CULLING_VOLUME for replaced actors, but
+                // OR the override in here too so draw can't be culled by distance/frustum regardless of which
+                // culling-CVar branch ran. Pure id/object lookup -> false for vanilla actors, so they keep
+                // their normal culling.
                 if ((actor->init == NULL) && (actor->draw != NULL) &&
                     ((actor->flags & (ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_INSIDE_CULLING_VOLUME)) ||
-                     shipShouldDraw)) {
+                     shipShouldDraw || SoH3D_ActorHasReplacement(play, actor))) {
                     // #endregion
                     if ((actor->flags & ACTOR_FLAG_REACT_TO_LENS) &&
                         ((play->roomCtx.curRoom.lensMode == LENS_MODE_HIDE_ACTORS) || play->actorCtx.lensActive ||

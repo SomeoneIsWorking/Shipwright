@@ -2075,6 +2075,34 @@ static unsigned long long SoH3D_EnKoMidMask(int modelId, Actor* actor) {
     return ~0ull;
 }
 
+// #87: per-ENKO_TYPE CSAB override for Kokiri kids, grounded in OoT3D GROUND TRUTH (the running 3DS
+// game is authoritative; its per-type pose selection DIVERGES from the N64 sOsAnimeLookup table, so
+// the live N64 animation alone cannot pick the right OoT3D pose for some types). Returns a CSAB base
+// to force for this actor's ENKO_TYPE, or NULL to leave the normal N64-anim mapping in place. The
+// resolver only applies it if the CSAB actually exists in this kid's zar.
+//
+// Two failure modes this fixes (both are "kids look wrong vs OoT3D"):
+//   - DIVERGENCE: a type whose N64 anim says one thing but OoT3D plays another. CHILD_5 (the shop-
+//     awning girl) has sOsAnimeLookup[CHILD_5]=STANDUP_2 (STANDING) for EVERY forest quest state,
+//     yet OoT3D shows her SITTING (verified live: oracle oot3d-decomp/tools/enko_anim.py read a
+//     looping 21-frame anim, and animforce km1_suwari_pose reproduces the sit). N64-anim mapping can
+//     never sit her; only a type override can.
+//   - COLLAPSE: several types share gKokiriStandUpAnim (a frozen N64 standing rest) so the N64-anim
+//     map can't distinguish them; OoT3D plays distinct poses per type.
+// Add an entry ONLY after verifying the pose against OoT3D (enko_anim.py readout + a framed shot).
+static const char* SoH3D_EnKoCsabOverride(int modelId, Actor* actor) {
+    (void)modelId;
+    if (actor == NULL || actor->id != ACTOR_EN_KO) {
+        return NULL;
+    }
+    switch (actor->params & 0xFF) {
+        case ENKO_TYPE_CHILD_5:
+            return "km1_suwari_pose"; // OoT3D: shop-awning girl SITS (verified); N64 says she stands
+        default:
+            return NULL;
+    }
+}
+
 static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable, int limbCount) {
     // ORACLE DUMP (SOH3D_SKELDUMP=1): print the live N64 skeleton + the OoT3D skeleton once per
     // model, for offline analysis. Tree walk is OOB-safe.
@@ -2164,6 +2192,13 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
             mapped = NULL;
         }
         const char* csab = (mapped != NULL) ? mapped : SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
+        // #87: En_Ko per-ENKO_TYPE override beats the N64-anim mapping where OoT3D diverges/collapses
+        // (e.g. CHILD_5 sits in OoT3D though her N64 anim says stand). Only honor it if the CSAB lives
+        // in this kid's zar (same guard as the #73 missing-CSAB drop above).
+        const char* enkoOv = SoH3D_EnKoCsabOverride(gSoH3dPendingModel, gSoH3dPendingActor);
+        if (enkoOv != NULL && SoH3D_AutoModelHasCsab(gSoH3dPendingModel, enkoOv)) {
+            csab = enkoOv;
+        }
         // LIVE anim-compare tooling: REPL `animforce <base>` pins a chosen CSAB on every replaced
         // actor so its motion can be eyeballed against the N64 anim (toggle `auto 0/1`). Empty = auto.
         gSoH3dLastAutoModel = gSoH3dPendingModel; // for REPL `animlist`

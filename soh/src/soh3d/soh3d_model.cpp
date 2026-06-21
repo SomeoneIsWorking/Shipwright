@@ -584,6 +584,20 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
             emit(a0, yRamp0, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin); emit(a0, yk, f.cmin, uA0, Vnose, nCmin);
             // cmax side faces +c (outward, opposite winding): P1 -> P2 -> P3.
             emit(a0, yRamp0, f.cmax, uA0, 1.0f, nCmax); emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax);
+
+            // BOTTOM-FRONT SEAL (first step only). Each step's riser is emitted at the BACK of its
+            // tread (a1), so the very FIRST step has no downhill face at its front (a=amin): the
+            // volume between the first tread (ymin+dy) and the ramp base (ymin) is left OPEN there,
+            // and the OoT3D sky bleeds through that gap at the bottom of the flight (user: "first
+            // step missing its Y vertex" — a cyan wedge under the bottom step). Close it with one
+            // downhill-facing front wall at a=amin spanning the full width, from the first tread top
+            // (yk) down to the ramp base (ymin) — one step tall, flush with the ground, so nothing
+            // below ymin is added and the flanking wall stays visible.
+            if (k == 0) {
+                stepShade = SH_RISER;
+                emit(a0, f.ymin, f.cmin, uMin, 1.0f, nDn); emit(a0, yk, f.cmin, uMin, Vnose, nDn); emit(a0, yk, f.cmax, uMax, Vnose, nDn);
+                emit(a0, f.ymin, f.cmin, uMin, 1.0f, nDn); emit(a0, yk, f.cmax, uMax, Vnose, nDn); emit(a0, f.ymin, f.cmax, uMax, 1.0f, nDn);
+            }
         }
     }
     g.verts.swap(outv);

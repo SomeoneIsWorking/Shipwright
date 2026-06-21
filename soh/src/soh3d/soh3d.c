@@ -4252,19 +4252,34 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         }
     } else if (strcmp(cmd, "asel") == 0) {
         // GENERIC actor select: `asel <id> [n]` selects the n-th nearest live actor with that actor
-        // id (0xHEX or dec) to Link (default nearest); `asel any [n]` ignores id. Captures the
-        // actor's current pos/rot as the freeze pin. The selection is the target for
-        // afreeze/apos/arot/aparams/acam/ainfo. (actorscan indices are not stable; this is the stable
-        // way to grab an actor.)
+        // id (0xHEX or dec) to Link (default nearest); `asel any [n]` ignores id; `asel link` (or
+        // `player`) selects Link himself (normally excluded). Captures the actor's current pos/rot as
+        // the freeze pin. The selection is the target for afreeze/apos/arot/aparams/acam/ainfo.
+        // Selecting Link lets `acam` frame the player rig from any angle (front/side) while it plays a
+        // LIVE transient pose (talk/roll/walk-stop) — the engine cam stays behind him, so this is the
+        // only synced way to see his front during those states. (actorscan indices are not stable.)
         char idtok[24];
         int nth = 0;
         int wantId = -1;
+        int wantPlayer = 0;
         if (sscanf(line, "%*s %23s %d", idtok, &nth) >= 1) {
-            if (strcmp(idtok, "any") != 0) {
+            if (strcmp(idtok, "link") == 0 || strcmp(idtok, "player") == 0) {
+                wantPlayer = 1;
+            } else if (strcmp(idtok, "any") != 0) {
                 wantId = (int)strtol(idtok, NULL, 0);
             }
         }
         Player* pl = GET_PLAYER(play);
+        if (wantPlayer) {
+            gSoH3dSelActor = &pl->actor;
+            gSoH3dSelId = pl->actor.id;
+            sSoH3dActorPinPos = pl->actor.world.pos;
+            sSoH3dActorPinRot = pl->actor.world.rot;
+            SoH3D_ReplReply(outPath, "asel link pos=(%.0f,%.0f,%.0f) rotY=%d params=%d",
+                            pl->actor.world.pos.x, pl->actor.world.pos.y, pl->actor.world.pos.z,
+                            pl->actor.world.rot.y, pl->actor.params);
+            goto repl_done;
+        }
         // gather matches, then pick the nth-nearest by simple selection over distance
         Actor* matches[96];
         float dists[96];
@@ -4459,6 +4474,8 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else {
         SoH3D_ReplReply(outPath, "? '%s' (cmds: mul diff tint enable auto autostate scale yoff rotx roty rotz animrate animframe animlive spawn cam camorbit camfreeze floorat exitat floorgrid exitgrid collision dump state)", line);
     }
+repl_done:
+    ;
 }
 
 // Inject the held `walkhold` control-stick value into player input. Called from Play_Main right

@@ -1522,10 +1522,35 @@ typedef struct {
 static SoH3D_AutoEntry sAuto[ARRAY_COUNT(kSoH3dObjectZars)];
 static int sPendingMeasureKey = -1; // object id whose measure bracket is open this draw
 
+// Dedicated measure slots for forced-CMB actors that CANNOT use the per-object sAuto[objId]
+// cache because several actors share one object bank slot. Kakariko's windmill
+// (Bg_Spot01_Fusya), well-arch (Bg_Spot01_Idohashira) and well-water (Bg_Spot01_Idomizu) all
+// load OBJECT_SPOT01_OBJECTS, so they collide on sAuto[OBJECT_SPOT01_OBJECTS]; the explicit
+// per-actor branches route each to its OWN CMB. The shared SOH3D_SPOT01_WORLD_SCALE was derived
+// from the WINDMILL's N64 height, which is wrong for the arch — the OoT3D arch CMB
+// (c_s01idohashira, localH=1302) re-authored at a different relative size than the windmill, so
+// the windmill scale renders the arch ~4x too short, dropping the windlass beam down into the
+// shaft near the water instead of standing it at the well mouth (#77). Fix: self-calibrate the
+// arch's OWN scale from its OWN N64 draw height (scale = n64H / OoT3D-CMB-H), same principle as
+// the auto path — no borrowed/magic constant. Keyed by a sentinel above the object-id range.
+#define SOH3D_MEASKEY_WELLARCH 0x40000 // > any object id; routes to sWellArchMeas, not sAuto[]
+typedef struct {
+    float measuredH; // N64 world-space height from the measure pass (0 = none yet)
+    float scale;     // derived worldScale (valid when state==2)
+    int modelId;     // forced-CMB GL model id (resolved lazily)
+    signed char state;   // 0 unseen, 1 measuring, 2 ready, 3 failed
+    signed char tries;
+} SoH3D_ForcedMeas;
+static SoH3D_ForcedMeas sWellArchMeas;
+
 // Interpreter callback (libultraship): the measure bracket closed for `key` (object id)
 // with the actor's measured world-space bbox diagonal. Store it; the scale is derived
 // lazily in SoH3D_TryDrawActor next frame (needs the OoT3D model diagonal, loaded there).
 void SoH3D_MeasureResult(int key, float height) {
+    if (key == SOH3D_MEASKEY_WELLARCH) {
+        sWellArchMeas.measuredH = height;
+        return;
+    }
     if (key >= 0 && key < (int)ARRAY_COUNT(sAuto)) {
         sAuto[key].measuredH = height;
     }
@@ -1705,8 +1730,57 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
             return 1;
         }
         if (actor->id == ACTOR_BG_SPOT01_IDOHASHIRA) {
-            SoH3D_DrawModelGL(play, SoH3D_AutoModelId(ZSPOT01 "|c_s01idohashira"), actor,
-                              SOH3D_GSCALE(8, SOH3D_SPOT01_WORLD_SCALE), NULL, 0.0f, NULL, NULL);
+            // Well-arch (windlass): the OoT3D c_s01idohashira CMB is base-origin (localMinY=0, the
+            // post bottoms) so groundOffset=0 correctly anchors the bottom at the actor's world.pos.y;
+            // the windlass beam is the model TOP. The bug was SCALE, not anchor: the shared
+            // SOH3D_SPOT01_WORLD_SCALE (windmill-derived) made the arch ~4x too short, so the beam sat
+            // down in the shaft near the water instead of at the well mouth (#77). Self-calibrate the
+            // arch's own scale from its own N64 draw height (scale = n64H / OoT3D-CMB-H), like the auto
+            // path. REPL `gscale 8 <f>` still overrides (non-zero gSoH3dGScale[8] wins).
+            SoH3D_ForcedMeas* wa = &sWellArchMeas;
+            if (wa->modelId == 0) {
+                wa->modelId = SoH3D_AutoModelId(ZSPOT01 "|c_s01idohashira");
+                if (wa->modelId < 0) { wa->state = 3; }
+            }
+            if (wa->modelId < 0) {
+                return 0; // no OoT3D arch CMB -> let the N64 arch draw
+            }
+            float wscale;
+            if (gSoH3dGScale[8] > 0.0f) {
+                wscale = gSoH3dGScale[8]; // live REPL override wins, skip calibration
+            } else if (wa->state == 2) {
+                wscale = wa->scale; // calibrated
+            } else if (wa->state != 3) {
+                // Derive once the N64 height has arrived; else (re)measure the N64 draw this frame.
+                if (wa->measuredH > 0.0f) {
+                    float modelH = SoH3D_AutoModelHeight(wa->modelId);
+                    if (modelH > 1e-3f) {
+                        wa->scale = wa->measuredH / modelH;
+                        wa->state = 2;
+                        if (SoH3D_AutoMode() >= 1) {
+                            printf("SOH3D AUTO: well-arch (c_s01idohashira) -> scale=%.5f (n64h=%.1f modelh=%.1f)\n",
+                                   wa->scale, wa->measuredH, modelH);
+                            fflush(stdout);
+                        }
+                        wscale = wa->scale;
+                    } else {
+                        wa->state = 3;
+                        wscale = SOH3D_SPOT01_WORLD_SCALE; // model has no geometry; fall back
+                    }
+                } else if (wa->tries < 8) {
+                    wa->tries++;
+                    wa->state = 1;
+                    SoH3D_EmitMeasure(play, SOH3D_MEASKEY_WELLARCH, /*begin=*/1);
+                    sPendingMeasureKey = SOH3D_MEASKEY_WELLARCH;
+                    return 0; // let the N64 arch draw so it can be measured this frame
+                } else {
+                    wa->state = 3; // never measured (always culled) -> fall back to shared scale
+                    wscale = SOH3D_SPOT01_WORLD_SCALE;
+                }
+            } else {
+                wscale = SOH3D_SPOT01_WORLD_SCALE; // failed calibration -> shared scale fallback
+            }
+            SoH3D_DrawModelGL(play, wa->modelId, actor, wscale, NULL, 0.0f, NULL, NULL);
             return 1;
         }
         if (actor->id == ACTOR_BG_SPOT01_IDOMIZU) {
@@ -4238,6 +4312,22 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
                             a->world.rot.x, a->world.rot.y, a->world.rot.z, a->velocity.x,
                             a->velocity.y, a->velocity.z, a->speedXZ, gSoH3dActorFreeze);
         }
+    } else if (strcmp(cmd, "archinfo") == 0) {
+        // #77 diagnostic: dump the well-arch (Idohashira) CMB geometry anchoring vs the actor.
+        // minY/height are LOCAL CMB units; multiply by worldScale for world units. Predicts where
+        // the model's bottom/top land relative to the selected actor's world Y.
+        int mid = SoH3D_AutoModelId(ZSPOT01 "|c_s01idohashira");
+        float miny = SoH3D_AutoModelMinY(mid);
+        float h = SoH3D_AutoModelHeight(mid);
+        float ex = 0.0f, ez = 0.0f;
+        SoH3D_AutoModelExtentXZ(mid, &ex, &ez);
+        float ws = SOH3D_GSCALE(8, SOH3D_SPOT01_WORLD_SCALE);
+        float ay = (gSoH3dSelActor != NULL) ? gSoH3dSelActor->world.pos.y : 0.0f;
+        SoH3D_ReplReply(outPath,
+                        "archinfo mid=%d localMinY=%.1f localH=%.1f extXZ=(%.1f,%.1f) wscale=%.5f "
+                        "| world: bottom=Y%+.1f top=Y%+.1f (actorY=%.1f) -> drawnBottom=%.1f drawnTop=%.1f",
+                        mid, miny, h, ex, ez, ws, miny * ws, (miny + h) * ws, ay,
+                        ay + miny * ws, ay + (miny + h) * ws);
     } else if (strcmp(cmd, "camlift") == 0) {
         // #4 toggle/inspect the cutscene/title camera-lift. `camlift 0|1` sets it; `camlift` alone
         // reports state + the live view eye and the lift applied THIS frame (post-reconcile).

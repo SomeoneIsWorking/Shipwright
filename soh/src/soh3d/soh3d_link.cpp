@@ -330,8 +330,21 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             gLinkJointDumpFile = NULL;
         }
     }
+    // #85 carry-walk: in N64, walking-while-carrying merges TWO anims per-limb — the BASE skelAnime's
+    // locomotion anim drives the LOWER body (legs cycle) while the upper carry anim (carryB_wait, arms
+    // raised) is copied onto only the upper-body limbs (z_player.c ~3611, SetCopyTrue +
+    // sUpperBodyLimbCopyMap; "moving" = linearVelocity != 0). The 3ds own-CSAB path plays ONE CSAB on
+    // the whole rig and, when carrying, picks the upper carry CSAB (below) — which has STATIC legs, so
+    // Link slides with frozen legs (#85a). There is no per-limb two-CSAB blend in the model layer. The
+    // N64-retarget path, however, reads the ALREADY-MERGED jointTable, so it gets the correct
+    // legs+arms carry-walk pose for free. So for carry-WALK only, route the body pose through the
+    // retarget path even in 3ds mode (it is the faithful N64 pose). Carry-IDLE (linearVelocity == 0)
+    // still uses the 3ds carry CSAB below — N64 copies the carry anim onto ALL limbs there
+    // (SetCopyAll), so the standing carry pose is a single whole-rig anim with no leg cycle anyway.
+    int carryWalk = (player->heldActor != NULL && player->linearVelocity != 0.0f &&
+                     player->skelAnime.jointTable != NULL && player->skelAnime.limbCount > 0);
     // Two user-selectable animation sources (REPL `linksrc`), both kept working:
-    if (SoH3D_LinkAnimSrc() == 1 && gSoH3dLinkForceCsab[0] == '\0' &&
+    if ((SoH3D_LinkAnimSrc() == 1 || carryWalk) && gSoH3dLinkForceCsab[0] == '\0' &&
         player->skelAnime.jointTable != NULL && player->skelAnime.limbCount > 0) {
         // N64 RETARGET: drive the OoT3D rig from Link's LIVE blended jointTable (captures walk/run and
         // every blended state, which the named-CSAB path is blind to). jointTable[0] = root translation,
@@ -465,9 +478,8 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     // the posed 3DS rig: childlink_v2 left hand = bone 16, right hand = bone 20 (kLinkChildBoneCorr
     // limb map: limb 15/18 = L/R_HAND). The bone positions are model-local; the matrix stack top is
     // the player world transform just loaded, so Matrix_MultVec3f lifts the midpoint to world space.
-    // Faithful to N64: position only (carry rotation stays the actor's own), gated on carrying & not
-    // holding the hookshot / an item-in-hand. Works in both anim sources (both cache skin via
-    // cacheSkinForGround). gSoH3dHeldAttach is the A/B toggle (REPL linkheldfix) for before/after.
+    // Gated on carrying & not holding the hookshot / an item-in-hand. Works in both anim sources (both
+    // cache skin via cacheSkinForGround). gSoH3dHeldAttach is the A/B toggle (REPL linkheldfix).
     if (gSoH3dHeldAttach && player->heldActor != NULL && !Player_HoldsHookshot(player) &&
         (player->stateFlags1 & PLAYER_STATE1_ITEM_IN_HAND) == 0) {
         float lh[3], rh[3];
@@ -476,6 +488,19 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             Vec3f midWorld;
             Matrix_MultVec3f(&midLocal, &midWorld);
             Math_Vec3f_Copy(&player->heldActor->world.pos, &midWorld);
+        }
+        // #85b: also make the carried actor FACE with Link. N64 sets this in Player_PostLimbDrawGameplay
+        // (z_player_lib.c ~1845, the PLAYER_STATE1_CARRYING_ACTOR branch) — which z_player.c SKIPS when
+        // this replacement draws, so without it the cucco keeps its pickup-time facing and never rotates
+        // as Link turns/walks. Reproduce N64 exactly: world.rot.y = shape.rot.y = Link's facing yaw plus
+        // unk_3BC.y, the held-vs-Link yaw offset captured at pickup (z_player.c ~10459). The actor's own
+        // Draw uses shape.rot.y, so set both. The X-rot-influence variant (heavy/tilted carries) keeps
+        // the actor's own X and is left untouched. Position behavior above is unchanged.
+        if (player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR &&
+            (player->heldActor->flags & ACTOR_FLAG_CARRY_X_ROT_INFLUENCE) == 0) {
+            s16 faceYaw = (s16)(player->actor.shape.rot.y + player->unk_3BC.y);
+            player->heldActor->world.rot.y = faceYaw;
+            player->heldActor->shape.rot.y = faceYaw;
         }
     }
     // #16(b): keep Link's actor.focus.pos (the head world position) live. N64 sets it in

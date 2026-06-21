@@ -1650,6 +1650,30 @@ const char* SoH3D_AutoModelDefaultAnim(int modelId) {
     return lm->defaultAnim.empty() ? nullptr : lm->defaultAnim.c_str();
 }
 
+// Does this model's OWN resident ZAR contain the CSAB `base` (base name, "Anim/x.csab", or a
+// verbatim zar path)? Mirrors getCsab's resolution: exact "Anim/<base>.csab", or — for a bare base —
+// any file ending "/<base>.csab" (the link-style age-split dirs). Used to reject a generic N64->CSAB
+// map hit whose CSAB lives in a DIFFERENT skeleton's zar (e.g. the Kokiri-kid os_anime entries that
+// also match En_Hy adults but resolve to km1/kw1 CSABs absent from the boj/ahg body zars -> #73
+// T-pose). Returns 0 (no model / no zar / not present) so the caller can fall back to the default idle.
+extern "C" int SoH3D_AutoModelHasCsab(int modelId, const char* base) {
+    if (base == nullptr || *base == '\0') return 0;
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->zar) return 0;
+    std::string nm(base);
+    bool verbatim = nm.rfind("Anim/", 0) == 0 || (nm.size() > 5 && nm.compare(nm.size() - 5, 5, ".csab") == 0);
+    std::string full = verbatim ? nm : ("Anim/" + nm + ".csab");
+    for (const auto& f : lm->zar->files()) if (f.name == full) return 1;
+    if (!verbatim) {
+        std::string suffix = "/" + nm + ".csab";
+        for (const auto& f : lm->zar->files())
+            if (f.name.size() >= suffix.size() &&
+                f.name.compare(f.name.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return 1;
+    }
+    return 0;
+}
+
 // LIVE anim-compare tooling: list a model's CSAB base names (+ duration) into `out`, space-separated
 // as "base(duration)". For REPL `animlist` so the live comparer knows which CSABs to `animforce`.
 extern "C" void SoH3D_AutoModelCsabList(int modelId, char* out, int outsz) {

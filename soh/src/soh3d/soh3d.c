@@ -112,6 +112,7 @@ int SoH3D_AutoModelBoneCount(int modelId);
 const char* SoH3D_AutoModelZar(int modelId); // ZAR path the model was allocated from (stable id)
 float SoH3D_AutoModelBoneLenSum(int modelId, int boneCap); // Σ|trans| of non-root OoT3D bones with id<boneCap (skeleton size; cap excludes uncorresponded dress bones, #13)
 const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
+int SoH3D_AutoModelHasCsab(int modelId, const char* base); // 1 if the model's own zar holds this CSAB (#73)
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
                           float n64AnimLength); // play OoT3D's own CSAB, phase-locked to the N64 anim
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
@@ -2003,6 +2004,16 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // model's default idle so an unmapped state still reads as standing rather than freezing.
         const char* mapped = SoH3D_ResolveAutoCsab(gSoH3dPendingAnimOtr,
                                                     SoH3D_AutoModelZar(gSoH3dPendingModel));
+        // The N64->CSAB map has GENERIC (zar-agnostic) entries authored for one skeleton family — the
+        // Kokiri kids' object_os_anime states resolve to km1/kw1 CSABs. Those entries also match OTHER
+        // actors that share the same N64 anim bank (En_Hy adult townsfolk: gObjOsAnim_*) but whose OoT3D
+        // body zar (zelda_boj/ahg/aob/...) does NOT contain that km1/kw1 CSAB. Feeding a missing CSAB
+        // name to the update path yields no pose -> the skeleton stays at bind = splayed-arm T-pose
+        // (#73). Only honor `mapped` if the CSAB actually exists in THIS model's zar; otherwise drop to
+        // the model's own default idle (its authored *_matsu), so the NPC stands rather than T-poses.
+        if (mapped != NULL && !SoH3D_AutoModelHasCsab(gSoH3dPendingModel, mapped)) {
+            mapped = NULL;
+        }
         const char* csab = (mapped != NULL) ? mapped : SoH3D_AutoModelDefaultAnim(gSoH3dPendingModel);
         // LIVE anim-compare tooling: REPL `animforce <base>` pins a chosen CSAB on every replaced
         // actor so its motion can be eyeballed against the N64 anim (toggle `auto 0/1`). Empty = auto.

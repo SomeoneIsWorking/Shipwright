@@ -69,6 +69,7 @@ int gSoH3dClimbGroundFix = 0; // #79: freeze feet-grounding during climb poses (
                               // poses) but the freeze DIRECTION is not yet live-verified on a real
                               // sustained climb (repro blocked — see #79). Off = current behavior.
 int gSoH3dHeldAttach = 1;          // #6 attach a carried actor (held cucco) to 3DS Link's posed hands
+int gSoH3dFocusFix = 1;            // #16(b) keep actor.focus.pos at 3DS Link's posed head (first-person cam)
                                    // (A/B toggle for before/after evidence; REPL `linkheldfix <0|1>`)
 // #7: CSAB frames advanced per draw per unit of Link's ground speed, when speed-driving the
 // locomotion cycle (run/walk) — Link's run/walk advances its pose through a player-internal
@@ -462,6 +463,39 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             Math_Vec3f_Copy(&player->heldActor->world.pos, &midWorld);
         }
     }
+    // #16(b): keep Link's actor.focus.pos (the head world position) live. N64 sets it in
+    // Player_PostLimbDrawGameplay at the HEAD limb (z_player_lib.c) inside Player_DrawGameplay,
+    // which z_player.c SKIPS when this replacement draws — so without this focus.pos goes STALE
+    // and the first-person (C-up) camera, which reads Actor_GetFocus()->pos, snaps to where the
+    // head USED to be (#16 reopen: "3DS Link first-person camera moves to the wrong place"). Same
+    // mechanism/pattern as the #6 held-actor hand anchor above: take the posed head bone origin
+    // (childlink_v2 OoT3D bone 10) in model-local space and lift it to world via the matrix stack
+    // top (player world transform just loaded). Faithful: position only, every frame.
+    {
+        float hd[3];
+        if (gSoH3dFocusFix && SoH3D_PosedBoneWorldPos(modelId, 10, hd)) {
+            Vec3f hdLocal = { hd[0], hd[1], hd[2] };
+            Vec3f hdWorld;
+            Matrix_MultVec3f(&hdLocal, &hdWorld);
+            Math_Vec3f_Copy(&actor->focus.pos, &hdWorld);
+        }
+        if (gSoH3dAnimDebug) {
+            float b9[3] = {0}, b10[3] = {0}, b11[3] = {0};
+            SoH3D_PosedBoneWorldPos(modelId, 9, b9);
+            SoH3D_PosedBoneWorldPos(modelId, 10, b10);
+            SoH3D_PosedBoneWorldPos(modelId, 11, b11);
+            Vec3f l9 = {b9[0],b9[1],b9[2]}, w9; Matrix_MultVec3f(&l9, &w9);
+            Vec3f l10 = {b10[0],b10[1],b10[2]}, w10; Matrix_MultVec3f(&l10, &w10);
+            Vec3f l11 = {b11[0],b11[1],b11[2]}, w11; Matrix_MultVec3f(&l11, &w11);
+            static int fdbg = 0;
+            if ((fdbg++ % 30) == 0) {
+                printf("SOH3D FOCUS dbg b9=(%.0f,%.0f,%.0f) b10=(%.0f,%.0f,%.0f) b11=(%.0f,%.0f,%.0f) world=(%.0f,%.0f,%.0f)\n",
+                       w9.x,w9.y,w9.z, w10.x,w10.y,w10.z, w11.x,w11.y,w11.z,
+                       actor->world.pos.x, actor->world.pos.y, actor->world.pos.z);
+                fflush(stdout);
+            }
+        }
+    }
     SoH3D_GL_EmitPose(modelId); // capture the CSAB-posed skin matrices
     gSPSoH3DDraw(POLY_OPA_DISP++, modelId | (int)0x80000000, tint[0], tint[1], tint[2]);
     CLOSE_DISPS(play->state.gfxCtx);
@@ -711,6 +745,12 @@ extern "C" int SoH3D_LinkRepl(PlayState* play, const char* cmd, const char* line
         // `linkheldfix 0` reverts to the engine's stale pickup-spot pos for before/after evidence.
         if (sscanf(line, "%*s %i", &iv) == 1) gSoH3dHeldAttach = (iv != 0);
         SoH3D_ReplReply(outPath, "linkheldfix=%d (attach carried actor to posed hands)", gSoH3dHeldAttach);
+    } else if (strcmp(cmd, "linkfocusfix") == 0) {
+        // #16(b) A/B toggle: keep actor.focus.pos at the 3DS Link posed head so the first-person
+        // (C-up) camera frames Link's eye. Default on; `linkfocusfix 0` reverts to the stale focus
+        // (Player_DrawGameplay skipped) for before/after evidence.
+        if (sscanf(line, "%*s %i", &iv) == 1) gSoH3dFocusFix = (iv != 0);
+        SoH3D_ReplReply(outPath, "linkfocusfix=%d (keep focus.pos at posed head)", gSoH3dFocusFix);
     } else if (strcmp(cmd, "linkjointdump") == 0) {
         // `linkjointdump <path> [nframes]` — capture the live player jointTable over nframes (default 60)
         // consecutive draws to a CSV, for the per-bone retarget-correction derivation. Pin Link to a

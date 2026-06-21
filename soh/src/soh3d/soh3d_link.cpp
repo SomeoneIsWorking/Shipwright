@@ -288,11 +288,26 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
     if (modelId < 0) {
         return 0; // model unavailable -> fall back to the N64 body
     }
+    // Player is Actor-first so the cast is valid (see z64player.h).
+    player = (Player*)actor;
+    // #16c: in FIRST-PERSON (C-up) the camera eye sits AT Link's head bone, so drawing the 3DS body
+    // renders the head mesh around/in front of the camera — "you see inside his head". Vanilla OoT
+    // hides the head/torso here via Player_OverrideLimbDrawGameplayFirstPerson (z_player.c ~12576),
+    // selected when `unk_6AD != 0` AND the projected head is in front of the camera (projHead.z<-4).
+    // The 3DS draw path has no per-limb override, so suppress the WHOLE body in first-person (held
+    // items in 3DS-Link FP aren't handled yet, so dropping everything is acceptable and matches "I
+    // don't want to see my head"). Same condition vanilla uses, so it's true exactly while FP is
+    // engaged. Return 1 (NOT 0) so the N64 fallback in z_player.c is also skipped -> draw nothing.
+    if (player->unk_6AD != 0) {
+        Vec3f projectedHeadPos;
+        SkinMatrix_Vec3fMtxFMultXYZ(&play->viewProjectionMtxF, &actor->focus.pos, &projectedHeadPos);
+        if (projectedHeadPos.z < -4.0f) {
+            return 1; // first-person: draw nothing (no head clipping the camera)
+        }
+    }
     OPEN_DISPS(play->state.gfxCtx);
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
     SoH3D_SceneTint(play, tint);
-    // Player is Actor-first so the cast is valid (see z64player.h).
-    player = (Player*)actor;
     // Measure the posed feet this frame so we can ground them: the OoT3D Link CSABs lift the
     // skeleton off the floor (boy-rig hip translation; #29b). The world matrix is built AFTER the
     // pose + visible-mesh mask are known (below), so the ground offset can use the live pose.

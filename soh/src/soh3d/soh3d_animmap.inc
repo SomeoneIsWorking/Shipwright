@@ -586,7 +586,12 @@ static const SoH3DAnimMap kSoH3dAnimMaps[] = {
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandingArmsBehindBackAnim", "km1_usirote_pose"),  // OVERRIDE (was km1_ukiuki_wait)
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriLeaningForwardAnim", "km1_utsumuki_pose"),  // OVERRIDE (was fad_kusu_to_wait)
     SOH3D_ANIMMAP("objects/object_os_anime/gKokiriSittingCrossedLegsAnim", "km1_agura_pose"),  // OVERRIDE (was km1_bed_suwari_pose)
-    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandUpAnim", "km1_ukiuki_wait"),  // OVERRIDE (was fad_kusu_to_wait)
+    // #87: En_Ko holds gKokiriStandUpAnim FROZEN at an early frame (speed 0, frames 0/1/2 via
+    // STANDUP_1/2/3) as a static SEATED resting pose — the kid plays it forward to stand only when
+    // triggered. The shop-awning girl (ENKO_TYPE_CHILD_5) sits this way on N64; mapping the anim to
+    // the standing idle (km1_ukiuki_wait) made her stand. Map it to the seated pose instead (matches
+    // gKokiriSittingAnim -> km1_suwari_pose). km1_suwari_pose exists in kw1 (girl) as well as km1.
+    SOH3D_ANIMMAP("objects/object_os_anime/gKokiriStandUpAnim", "km1_suwari_pose"),  // OVERRIDE (#87 seated; was km1_ukiuki_wait)
     SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_9F94", "km1_out_in_pose3", "/actor/zelda_km1.zar"),
     SOH3D_ANIMMAP_Z("objects/object_os_anime/gObjOsAnim_A630", "kw1_out_in_pose2", "/actor/zelda_km1.zar"),
     // ---- /actor/zelda_kz.zar (object_kz) ----

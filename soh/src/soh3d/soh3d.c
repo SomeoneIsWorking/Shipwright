@@ -30,6 +30,7 @@ int gSoH3dEnabled = -1;      // -1 = uninit (read env), 0/1 = OoT3D render off/o
 float gSoH3dRotX = 0.0f;
 float gSoH3dRotY = 0.0f;
 float gSoH3dRotZ = 0.0f;
+int gSoH3dSwTilt = 1; // #75: replicate En_Sw wall/tree draw tilt in the auto emit (REPL `swtilt`, A/B)
 
 // Live world-scale override per glModelId for the param-keyed field-keep props (rock/flower/
 // bush). 0 = use the per-call SOH3D_*_WORLD_SCALE default. REPL `gscale <id> <f>` pokes it so
@@ -1322,6 +1323,20 @@ static void SoH3D_EmitModelDraw(PlayState* play, int modelId, Actor* actor, floa
     Matrix_RotateY(BINANG_TO_RAD(actor->shape.rot.y), MTXMODE_APPLY);
     Matrix_RotateX(BINANG_TO_RAD(actor->shape.rot.x), MTXMODE_APPLY);
     Matrix_RotateZ(BINANG_TO_RAD(actor->shape.rot.z), MTXMODE_APPLY);
+    // #75: some actors bake an orientation into their DRAW function (matrix stack), not shape.rot, so
+    // rebuilding the transform from shape.rot alone loses it. En_Sw (Gold Skulltula) wall/tree variant
+    // (params bits 13..15 set) does exactly this in EnSw_Draw: Matrix_RotateX(-80deg) to lean the
+    // spider flat against the surface, then (alive) Matrix_Translate(0,0,200) to lift it off the face.
+    // Replicate that here so the OoT3D model tilts onto the wall instead of rendering upright/splayed.
+    // Rotation commutes with the uniform scale, so applying it pre-scale matches EnSw's post-scale op;
+    // the lift is applied in the pre-worldScale (world-unit) frame, sized by the actor's own scale to
+    // match EnSw's translate-after-scale (200 * actorScale world units along the tilted local Z).
+    if (gSoH3dSwTilt && actor->id == ACTOR_EN_SW && ((actor->params & 0xE000) >> 0xD) != 0) {
+        Matrix_RotateX(DEGF_TO_RADF(-80.0f), MTXMODE_APPLY);
+        if (actor->colChkInfo.health != 0) {
+            Matrix_Translate(0.0f, 0.0f, 200.0f * actor->scale.z, MTXMODE_APPLY);
+        }
+    }
     Matrix_Scale(worldScale, worldScale, worldScale, MTXMODE_APPLY);
     if (gSoH3dRotX != 0.0f) Matrix_RotateX(gSoH3dRotX * (3.14159265f / 180.0f), MTXMODE_APPLY);
     if (gSoH3dRotY != 0.0f) Matrix_RotateY(gSoH3dRotY * (3.14159265f / 180.0f), MTXMODE_APPLY);
@@ -2891,13 +2906,18 @@ static SoH3D_ModelEntry* SoH3D_FindModel(const char* name) {
     return NULL;
 }
 
-static Actor* SoH3D_SpawnInFront(PlayState* play, s16 actorId, float dist) {
+static Actor* SoH3D_SpawnInFrontP(PlayState* play, s16 actorId, float dist, s16 params) {
     Player* p = GET_PLAYER(play);
     s16 yaw = p->actor.shape.rot.y;
     s16 right = yaw + 0x4000; // Link's right, to clear his body so feet/ground are visible
     float fx = p->actor.world.pos.x + dist * Math_SinS(yaw) + 55.0f * Math_SinS(right);
     float fz = p->actor.world.pos.z + dist * Math_CosS(yaw) + 55.0f * Math_CosS(right);
-    return Actor_Spawn(&play->actorCtx, play, actorId, fx, p->actor.world.pos.y, fz, 0, p->actor.shape.rot.y, 0, 0);
+    return Actor_Spawn(&play->actorCtx, play, actorId, fx, p->actor.world.pos.y, fz, 0, p->actor.shape.rot.y, 0,
+                       params);
+}
+
+static Actor* SoH3D_SpawnInFront(PlayState* play, s16 actorId, float dist) {
+    return SoH3D_SpawnInFrontP(play, actorId, dist, 0);
 }
 
 void SoH3D_ReplReply(const char* outPath, const char* fmt, ...) {
@@ -3587,6 +3607,21 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "no model '%s'", arg);
         }
+    } else if (strcmp(cmd, "spawnp") == 0 && sscanf(line, "%*s %63s %i", arg, &iv) == 2) {
+        // spawn-with-params (#75 repro): like `spawn` but with explicit init params, so variant-gated
+        // actors can be posed (e.g. En_Sw Gold Skulltula wall/tree variant needs params bits 13..15).
+        // The name is a sModelTable name OR a raw actor id (0x..); raw lets auto-path actors (not in
+        // the table, e.g. En_Sw) be spawned for verification, provided their object is in the scene.
+        SoH3D_ModelEntry* e = SoH3D_FindModel(arg);
+        s16 actorId = (e != NULL) ? e->actorId : (s16)strtol(arg, NULL, 0);
+        Actor* a = SoH3D_SpawnInFrontP(play, actorId, 120.0f, (s16)iv);
+        SoH3D_ReplReply(outPath, "spawnp id=0x%x params=0x%x -> %s", actorId, (u16)iv,
+                        a != NULL ? "OK" : "FAILED (object not in scene)");
+    } else if (strcmp(cmd, "swtilt") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // #75 A/B: toggle the En_Sw wall/tree draw-tilt replication. `swtilt 0` reproduces the bug
+        // (Gold Skulltula renders upright/splayed); default 1 leans it onto the surface.
+        gSoH3dSwTilt = (iv != 0);
+        SoH3D_ReplReply(outPath, "swtilt=%d (replicate En_Sw wall/tree draw tilt)", gSoH3dSwTilt);
     } else if (strcmp(cmd, "rotx") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dRotX = f1;
         SoH3D_ReplReply(outPath, "rot=(%.0f,%.0f,%.0f)", gSoH3dRotX, gSoH3dRotY, gSoH3dRotZ);

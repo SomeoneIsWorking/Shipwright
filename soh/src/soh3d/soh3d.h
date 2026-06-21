@@ -213,6 +213,12 @@ const void* SoH3D_CounterIconTex(int kind, int* w, int* h);
 // (door/attention/treasure pans) so it hands control back. Call once per frame from Play_Update
 // before the camera update loop. Gate env SOH3D_SKIP (default on) / REPL `skip <0|1>`.
 extern int gSoH3dSkip;
+
+// Frame-step harness (transient-capture tooling, e.g. #86 walk-stop snap, #80 boulder spin). When
+// gSoH3dFreeze!=0 the per-frame Play_Update in z_play.c is skipped, holding the game logic still while
+// the REPL + Play_Draw keep running (so dumped frames stay stable). REPL `step [n]` advances exactly n
+// logic ticks on demand, letting `dumpframe` capture every single game frame of a brief transient.
+extern int gSoH3dFreeze;
 int SoH3D_SkipEnabled(void);
 void SoH3D_SkipControlTakers(PlayState* play);
 

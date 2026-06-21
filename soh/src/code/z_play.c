@@ -1805,7 +1805,10 @@ void Play_Main(GameState* thisx) {
     // really walks/runs via the locomotion system (for verifying the N64-retarget walk cycle).
     SoH3D_WalkInject(play);
 
-    if ((HREG(80) != 10) || (HREG(81) != 0)) {
+    // SoH3D frame-step (#86 transient capture): when frozen, skip the per-frame logic tick so the
+    // game holds still; the REPL `step` command advances Play_Update N ticks on demand. REPL + draw
+    // keep running, so dumped frames stay stable between steps.
+    if (((HREG(80) != 10) || (HREG(81) != 0)) && !gSoH3dFreeze) {
         Play_Update(play);
     }
 

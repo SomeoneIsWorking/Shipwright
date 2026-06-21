@@ -525,6 +525,8 @@ int SoH3D_HudTexEnabled(void) {
 // game's own OnePointCutscene_EndCutscene (the same path the timer expiry uses, so it lands in
 // the proper post-cam state). -1 = uninit (read SOH3D_SKIP env, default on). REPL `skip <0|1>`.
 int gSoH3dSkip = -1;
+int gSoH3dFreeze = 0; // frame-step harness: 1 = hold Play_Update; REPL `step` ticks it (see soh3d.h)
+void Play_Update(PlayState* play); // engine-internal (z_play.c); REPL `step` drives it under freeze
 int SoH3D_SkipEnabled(void) {
     if (gSoH3dSkip < 0) {
         const char* v = getenv("SOH3D_SKIP");
@@ -3341,6 +3343,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "usage: linkstate <roll|talk>");
         }
+    } else if (strcmp(cmd, "freeze") == 0 && sscanf(line, "%*s %i", &iv) == 1) {
+        // Frame-step harness: `freeze 1` holds the game logic still (Play_Update skipped) so a brief
+        // transient can be captured frame-by-frame; `freeze 0` resumes. Use with `step`.
+        gSoH3dFreeze = iv ? 1 : 0;
+        SoH3D_ReplReply(outPath, "freeze=%d%s", gSoH3dFreeze,
+                        gSoH3dFreeze ? " (logic held; use `step [n]` to advance)" : " (resumed)");
+    } else if (strcmp(cmd, "step") == 0) {
+        // `step [n]` — advance exactly n logic ticks (default 1) right now, even while frozen. Each
+        // tick re-injects any held walkhold input then runs one Play_Update, mirroring the real frame
+        // sequence; `dumpframe`/`shot` between steps captures every single game frame of a transient.
+        int n = 1;
+        sscanf(line, "%*s %d", &n);
+        if (n < 1) n = 1;
+        if (n > 600) n = 600; // sanity cap (one shouldn't step minutes of logic by hand)
+        for (int i = 0; i < n; i++) {
+            SoH3D_WalkInject(play); // keep walkhold-driven locomotion advancing under manual stepping
+            Play_Update(play);
+        }
+        SoH3D_ReplReply(outPath, "step %d (frame advanced; freeze=%d)", n, gSoH3dFreeze);
     } else if (strcmp(cmd, "linkground") == 0) {
         // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
         // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big

@@ -3323,6 +3323,24 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         f32 y = SoH3D_PlayerForceTeleport(p, play, f1, f2, yaw, setYaw);
         SoH3D_ReplReply(outPath, "tpf -> (%.0f,%.1f,%.0f) yaw=%d%s", f1, y, f2,
                         p->actor.shape.rot.y, setYaw ? " (aimed)" : "");
+    } else if (strcmp(cmd, "linkstate") == 0 && sscanf(line, "%*s %63s", arg) == 1) {
+        // #70/#83 repro: drive Link's player ACTION-STATE directly so the LIVE pose/blend reproduces
+        // headlessly (the natural triggers are context-gated and btnhold/walkhold can't hit them). The
+        // 3d3 transient bugs (roll, dialog-arms) only show in the live action, not a forced static CSAB.
+        //   linkstate roll   -> forward dodge-roll (Player_SetupRoll); no NPC needed.
+        //   linkstate talk   -> talk action vs the nearest NPC (sets talkActor/textId, opens textbox);
+        //                       holds in talk_free_wait headlessly so `asel link; acam` can frame it.
+        Player* p = GET_PLAYER(play);
+        if (strcmp(arg, "roll") == 0) {
+            SoH3D_PlayerForceRoll(p, play);
+            SoH3D_ReplReply(outPath, "linkstate roll -> rolling (st1=0x%x)", p->stateFlags1);
+        } else if (strcmp(arg, "talk") == 0) {
+            s32 id = SoH3D_PlayerForceTalk(p, play, 600.0f);
+            SoH3D_ReplReply(outPath, "linkstate talk -> %s (talkActor id=0x%x textId=0x%x st1=0x%x)",
+                            id ? "talking" : "NO NPC within 600u", id, p->actor.textId, p->stateFlags1);
+        } else {
+            SoH3D_ReplReply(outPath, "usage: linkstate <roll|talk>");
+        }
     } else if (strcmp(cmd, "linkground") == 0) {
         // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
         // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big

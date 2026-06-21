@@ -7645,6 +7645,54 @@ f32 SoH3D_PlayerForceTeleport(Player* this, PlayState* play, f32 x, f32 z, s16 y
     return y;
 }
 
+// SoH3D action-state injection (#70 roll / #83 talk repro): drive Link's player action-state DIRECTLY
+// so the LIVE pose/blend can be reproduced + framed headlessly. The natural triggers are context-gated
+// (roll needs a moving stick + non-water floor; talk needs an NPC's talk-offer accepted via an A edge),
+// which `btnhold`/`walkhold` can't reliably hit headless. These call the real setup functions, so the
+// LIVE action runs exactly as in gameplay (not a forced static CSAB) — the 3d3 transient bugs only show
+// in that live blend. Generic & reusable for any future player-state repro. REPL `linkstate roll|talk`.
+
+// Force a forward dodge-roll (sets Player_Action_Roll + plays the landing_roll clip). Returns 1.
+s32 SoH3D_PlayerForceRoll(Player* this, PlayState* play) {
+    Player_SetupRoll(this, play);
+    return 1;
+}
+
+// Force the talk action-state. Faithful repro needs a real talkActor + textId so Player_Action_Talk's
+// talkActor derefs are valid and the talk_free_wait gesture loops (it holds headlessly since no input
+// advances the textbox). Picks the nearest live NPC (ACTORCAT_NPC) within `range` units; if it has no
+// textId of its own, falls back to a generic one so Message_StartTextbox still opens. Returns the NPC's
+// actor id, 0 if no NPC was found (talk not entered).
+s32 SoH3D_PlayerForceTalk(Player* this, PlayState* play, f32 range) {
+    Actor* best = NULL;
+    f32 bestDistSq = range * range;
+    Actor* it = play->actorCtx.actorLists[ACTORCAT_NPC].head;
+    for (; it != NULL; it = it->next) {
+        if (it == &this->actor) {
+            continue;
+        }
+        f32 dx = it->world.pos.x - this->actor.world.pos.x;
+        f32 dz = it->world.pos.z - this->actor.world.pos.z;
+        f32 dsq = dx * dx + dz * dz;
+        if (dsq < bestDistSq) {
+            bestDistSq = dsq;
+            best = it;
+        }
+    }
+    if (best == NULL) {
+        return 0;
+    }
+    // Face the NPC so the talk yaw assumptions hold (func_8083DB98 also re-aims while focusActor set).
+    this->actor.shape.rot.y = this->yaw =
+        Math_Vec3f_Yaw(&this->actor.world.pos, &best->world.pos);
+    this->talkActor = best;
+    this->focusActor = best;
+    this->actor.textId = (best->textId != 0) ? best->textId : 0x0100;
+    best->flags |= ACTOR_FLAG_TALK;
+    Player_SetupTalk(play, this);
+    return best->id;
+}
+
 void func_8083F070(Player* this, LinkAnimationHeader* anim, PlayState* play) {
     Player_SetupActionPreserveAnimMovement(play, this, Player_Action_8084C5F8, 0);
     LinkAnimation_PlayOnceSetSpeed(play, &this->skelAnime, anim, (4.0f / 3.0f));

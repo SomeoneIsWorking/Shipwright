@@ -357,6 +357,12 @@ s32 SoH3D_PlayerForceClimb(Player* player, PlayState* play);
 // Returns the floor Y used. REPL `tpf x z [yawDeg]`. Lives in z_player.c (needs the idle setup fn).
 f32 SoH3D_PlayerForceTeleport(Player* player, PlayState* play, f32 x, f32 z, s16 yaw, s32 setYaw);
 
+// Action-state injection (#70 roll / #83 talk repro). Drive Link's real player action directly so the
+// LIVE pose/blend reproduces headlessly (natural triggers are context-gated). Live in z_player.c.
+// REPL `linkstate roll|talk`. ForceTalk returns the nearest-NPC actor id (0 if none within `range`).
+s32 SoH3D_PlayerForceRoll(Player* player, PlayState* play);
+s32 SoH3D_PlayerForceTalk(Player* player, PlayState* play, f32 range);
+
 // Force the env SOH3D_TIME time-of-day into the save context. Call from Play_Init before the
 // day/night scene setup layer is chosen, so the loaded actor set matches the forced clock.
 void SoH3D_ApplyForceTime(void);

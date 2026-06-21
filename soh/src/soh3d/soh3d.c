@@ -3413,6 +3413,13 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         } else {
             SoH3D_ReplReply(outPath, "usage: posescan <on|off|dump> (n=%d)", SoH3D_PoseScanCount());
         }
+    } else if (strcmp(cmd, "cvari") == 0 && sscanf(line, "%*s %127s %i", path, &iv) == 2) {
+        // Generic integer-CVar setter: `cvari <name> <val>`. For driving/verifying CVar-gated features
+        // headlessly (e.g. #32 chords: `cvari gChordPhysInject 3` injects RB+A; `cvari gChordPhysInject
+        // -1` restores real SDL). Persists to config like any CVar.
+        CVarSetInteger(path, iv);
+        CVarSave();
+        SoH3D_ReplReply(outPath, "cvari %s = %d (read back %d)", path, iv, CVarGetInteger(path, -999));
     } else if (strcmp(cmd, "linkground") == 0) {
         // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
         // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big
@@ -4732,6 +4739,23 @@ void SoH3D_ReplPoll(PlayState* play) {
             CVarSetInteger(CVAR_ENHANCEMENT("NewDrops"), want);
             fprintf(stderr, "[SoH3D #36] NewDrops -> %d\n",
                     CVarGetInteger(CVAR_ENHANCEMENT("NewDrops"), -1));
+        }
+    }
+
+    // #32 modern-Xbox control scheme: default-on the button chords (RB+A/B/X/Y -> the four C-button
+    // item slots, applied in LUS::Controller::ReadToOSContPad) AND SoH's DpadEquips (D-pad holds 4 more
+    // item slots). Both ship OFF in vanilla SoH; force on so the no-C-pad layout works out of the box.
+    // SOH3D_NOCHORDS=1 opts out. Done once; CVars persist to config.
+    {
+        static int donechords = 0;
+        if (!donechords) {
+            const char* off = getenv("SOH3D_NOCHORDS");
+            int want = (off != NULL && off[0] == '1') ? 0 : 1;
+            donechords = 1;
+            CVarSetInteger("gControllerChords", want);
+            CVarSetInteger(CVAR_ENHANCEMENT("DpadEquips"), want);
+            fprintf(stderr, "[SoH3D #32] chords -> %d, DpadEquips -> %d\n", want,
+                    CVarGetInteger(CVAR_ENHANCEMENT("DpadEquips"), -1));
         }
     }
 

@@ -90,11 +90,14 @@ void SoH3D_ActorPostUpdate(PlayState* play, Actor* actor);
 // model (caller skips the N64 limbs).
 int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable);
 
-// Record the live N64 animation pointer (an OTR path string in SoH) for the actor currently
-// deferred for replacement, so the auto CSAB resolver can map it to the matching OoT3D CSAB. Called
-// from the SkelAnime-bearing draw wrappers (func_80034BA0/CC4) whose inner SkelAnime_DrawFlex (the
-// raw hook) has only the skeleton, not the animation. No-op when no replacement is pending.
-void SoH3D_SetCurAnim(void* animation);
+// Record the live N64 animation pointer (an OTR path string in SoH) AND the live playhead
+// (curFrame / animLength) for the actor currently deferred for replacement, so the auto CSAB
+// resolver can map it to the matching OoT3D CSAB and the auto path can PHASE-LOCK the OoT3D CSAB to
+// the actor's real N64 tempo. Called from the SkelAnime-bearing draw wrappers (func_80034BA0/CC4)
+// whose inner SkelAnime_DrawFlex (the raw hook) has only the skeleton, not the SkelAnime — so
+// without this capture those actors (e.g. En_Ko Kokiri kids) never reach the phase-lock branch and
+// free-run at the global rate (#76: wrong/frozen anims). No-op when no replacement is pending.
+void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength);
 
 // Generalised per-room scene divert, called from Room_Draw. If SoH3D is enabled and
 // the current scene has an OoT3D mapping (kSoH3dSceneNames) with a room CMB for

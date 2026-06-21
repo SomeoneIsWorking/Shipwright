@@ -455,17 +455,23 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
     }
 }
 
-void SoH3D_SetCurAnim(void* animation) {
+void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength) {
     if (gSoH3dAnimDebug) {
         static int dbg = 0;
         if ((dbg++ % 60) == 0) {
-            fprintf(stderr, "[SetCurAnim] pendingModel=%d anim=%s\n", gSoH3dPendingModel,
-                    animation ? (const char*)animation : "(null)");
+            fprintf(stderr, "[SetCurAnim] pendingModel=%d anim=%s frame=%.1f/%.1f\n", gSoH3dPendingModel,
+                    animation ? (const char*)animation : "(null)", curFrame, animLength);
             fflush(stderr);
         }
     }
     if (gSoH3dPendingModel >= 0) { // only meaningful while an actor is deferred for replacement
         gSoH3dPendingAnimOtr = (const char*)animation;
+        // Capture the live N64 playhead too (the inner raw SkelAnime_DrawFlex hook has no SkelAnime,
+        // so this is the ONLY place actors drawn via func_80034BA0/CC4 expose curFrame/animLength).
+        // Without it those actors never satisfy the phase-lock test (animLength>4) and free-run at
+        // the global rate, which is the #76 root cause (Kokiri kids: too-fast / frozen-at-frame-0).
+        gSoH3dPendingN64CurFrame = curFrame;
+        gSoH3dPendingN64AnimLength = animLength;
     }
 }
 
@@ -481,6 +487,10 @@ float gSoH3dSceneOffX = 0.0f, gSoH3dSceneOffY = 0.0f, gSoH3dSceneOffZ = 0.0f;
 // the near plane — any moderate value works). REPL `sky`.
 int gSoH3dSky = 1;
 float gSoH3dSkyScale = 12.0f;
+
+// #29 diagnostic: tint room-mesh draw group N bright red (REPL `hlroom <n>`, -1 = off) so a
+// suspect backdrop group (e.g. the untextured "dome") can be identified by index live.
+int gSoH3dHlGroup = -1;
 
 // #32 — show Xbox face-button glyphs (A/B/X/Y) in the in-game HUD button prompts instead of
 // the shared N64 colored circle. -1 = uninit (read SOH3D_XBOXUI env, default on). The HUD
@@ -3263,9 +3273,10 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
         Player* p = GET_PLAYER(play);
         Camera* c = GET_ACTIVE_CAM(play);
         SoH3D_ReplReply(outPath,
-                        "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f)",
+                        "scene=0x%x link=(%.0f,%.0f,%.0f) yaw=%d | cam eye=(%.0f,%.0f,%.0f) at=(%.0f,%.0f,%.0f) | focus=(%.0f,%.0f,%.0f)",
                         play->sceneNum, p->actor.world.pos.x, p->actor.world.pos.y, p->actor.world.pos.z,
-                        p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z);
+                        p->actor.shape.rot.y, c->eye.x, c->eye.y, c->eye.z, c->at.x, c->at.y, c->at.z,
+                        p->actor.focus.pos.x, p->actor.focus.pos.y, p->actor.focus.pos.z);
     } else if (strcmp(cmd, "climbinfo") == 0) {
         // #25 climb-drop diagnostic: dump Link's per-frame wall-climb decision state so we can see
         // WHY he won't grab a climbable (facing/flags) and, once climbing, WHY he detaches partway
@@ -4086,6 +4097,10 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
     } else if (strcmp(cmd, "scenescale") == 0 && sscanf(line, "%*s %f", &f1) == 1) {
         gSoH3dSceneScale = f1;
         SoH3D_ReplReply(outPath, "scenescale=%.4f", gSoH3dSceneScale);
+    } else if (strcmp(cmd, "hlroom") == 0) {
+        // #29: tint room draw-group N red live (-1 = off). Pair with SOH3D_DBG_ROOM dump.
+        if (sscanf(line, "%*s %i", &iv) == 1) gSoH3dHlGroup = iv;
+        SoH3D_ReplReply(outPath, "hlroom=%d", gSoH3dHlGroup);
     } else if (strcmp(cmd, "sky") == 0) {
         // `sky <0|1>` toggles the OoT3D sky dome (#28); `sky scale <f>` tunes the dome size.
         char sub[32];

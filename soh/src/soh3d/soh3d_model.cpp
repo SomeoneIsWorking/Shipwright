@@ -720,6 +720,23 @@ static void loadSceneRoom(int modelId, LoadedModel* out) {
     buildFromCmb(out, /*bakedVertexColor=*/true, /*skipMesh=*/{}, /*stairs=*/true);
     printf("[SoH3D] loaded scene-room model %d (%s): %zu groups, %zu textures\n", modelId, path.c_str(),
            out->cGroups.size(), out->cTexs.size());
+    // #29 diagnostic: dump per-group material/texture + per-group bbox so the "untextured dome"
+    // group can be identified by index (pair with SOH3D_SOLOGROUP to isolate it visually).
+    if (getenv("SOH3D_DBG_ROOM")) {
+        const auto& texs = out->cmb->textures();
+        for (size_t i = 0; i < out->cGroups.size(); i++) {
+            const auto& g = out->groups[i];
+            int ti = out->cGroups[i].texIndex;
+            const char* tn = (ti >= 0 && ti < (int)texs.size()) ? texs[ti].name.c_str() : "<none/stair>";
+            float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f };
+            for (const auto& v : g.verts)
+                for (int k = 0; k < 3; k++) { mn[k] = std::min(mn[k], v.pos[k]); mx[k] = std::max(mx[k], v.pos[k]); }
+            printf("[SoH3D_DBG_ROOM] grp%2zu mat%d tex%d %-18s verts%5zu mesh_id%d "
+                   "x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]\n",
+                   i, g.material_index, ti, tn, g.verts.size(), g.mesh_id,
+                   mn[0], mx[0], mn[1], mx[1], mn[2], mx[2]);
+        }
+    }
 }
 
 // Load an actor model: read its ZAR, find the .cmb, build groups (+ keep the ZAR/CMB

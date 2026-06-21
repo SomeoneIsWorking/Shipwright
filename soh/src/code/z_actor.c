@@ -4621,8 +4621,10 @@ Gfx* func_80034B54(GraphicsContext* gfxCtx) {
 
 void func_80034BA0(PlayState* play, SkelAnime* skelAnime, OverrideLimbDraw overrideLimbDraw, PostLimbDraw postLimbDraw,
                    Actor* actor, s16 alpha) {
-    SoH3D_SetCurAnim(skelAnime->animation); // capture live anim for the auto CSAB map (inner
-                                            // SkelAnime_DrawFlex/raw hook has no SkelAnime)
+    SoH3D_SetCurAnim(skelAnime->animation, skelAnime->curFrame,
+                     skelAnime->animLength); // capture live anim + playhead for the auto CSAB map +
+                                             // phase-lock (inner SkelAnime_DrawFlex/raw hook has no
+                                             // SkelAnime)
     OPEN_DISPS(play->state.gfxCtx);
 
     Gfx_SetupDL_25Opa(play->state.gfxCtx);
@@ -4640,7 +4642,8 @@ void func_80034BA0(PlayState* play, SkelAnime* skelAnime, OverrideLimbDraw overr
 
 void func_80034CC4(PlayState* play, SkelAnime* skelAnime, OverrideLimbDraw overrideLimbDraw, PostLimbDraw postLimbDraw,
                    Actor* actor, s16 alpha) {
-    SoH3D_SetCurAnim(skelAnime->animation); // capture live anim for the auto CSAB map (see above)
+    SoH3D_SetCurAnim(skelAnime->animation, skelAnime->curFrame,
+                     skelAnime->animLength); // capture live anim + playhead for phase-lock (see above)
     OPEN_DISPS(play->state.gfxCtx);
 
     Gfx_SetupDL_25Xlu(play->state.gfxCtx);

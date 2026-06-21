@@ -2473,6 +2473,12 @@ void KaleidoScope_UpdateNamePanel(PlayState* play) {
 
                 const char* textureName = mapNameTextures[sp2A];
                 memcpy(pauseCtx->nameSegment, textureName, strlen(textureName) + 1);
+                // #71: nameSegment is a fixed heap buffer whose content (the resolved name
+                // texture) changes per area/item, but the Fast3D texture cache keys by source
+                // ADDRESS (+ fmt/siz/size, all identical here). Without eviction the first
+                // name cached at this address is re-served for every later name -> garbled /
+                // wrong name glyphs. Evict the stale entry on every content rewrite.
+                Gfx_TextureCacheDelete(pauseCtx->nameSegment);
             } else {
                 // #region SOH [NTSC] - There's a lot of OOB/Incorrect accesses that can occur so make sure sp2A selects
                 // something valid
@@ -2496,6 +2502,9 @@ void KaleidoScope_UpdateNamePanel(PlayState* play) {
 
                 if (!GameInteractor_Should(VB_DRAW_CUSTOM_ITEM_NAME, false, pauseCtx->namedItem)) {
                     memcpy(pauseCtx->nameSegment, textureName, strlen(textureName) + 1);
+                    // #71: see note above — evict the stale address-keyed cache entry so this
+                    // item/area name doesn't render the previously-cached name.
+                    Gfx_TextureCacheDelete(pauseCtx->nameSegment);
                 }
             }
 
@@ -3985,6 +3994,18 @@ void KaleidoScope_Update(PlayState* play) {
                 const char* textureName = mapNameTextures[offsets[gSaveContext.language] + gSaveContext.worldMapArea];
                 memcpy(pauseCtx->nameSegment + 0x400, textureName, strlen(textureName) + 1);
             }
+
+            // #71: nameSegment is freshly malloc'd on every subscreen (re)build, so it can land
+            // on an address a prior (now-freed) texture was cached under. The Fast3D texture
+            // cache keys by source ADDRESS (the N64 manual-invalidation model) and is never
+            // told that buffer was freed -> the first map-name / area-name draw at this address
+            // hits the STALE prior-tenant entry and renders garbled white glyphs over the map
+            // sky (intermittent because it depends on heap address reuse). Same hazard/fix class
+            // as #21 (HUD). Evict any stale entry for both name sub-buffers on (re)build:
+            //   nameSegment        -> IA4 zoomed item/area name (drawn via QuadTextureIA4)
+            //   nameSegment + 0x400 -> IA8 world-map area-name box (drawn via QuadTextureIA8)
+            Gfx_TextureCacheDelete(pauseCtx->nameSegment);
+            Gfx_TextureCacheDelete((u8*)pauseCtx->nameSegment + 0x400);
 // OTRTODO - player on pause
 #if 1
             // HDTODO: Remove sPreRenderCvg stuff?

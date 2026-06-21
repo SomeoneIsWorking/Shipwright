@@ -3362,6 +3362,25 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             Play_Update(play);
         }
         SoH3D_ReplReply(outPath, "step %d (frame advanced; freeze=%d)", n, gSoH3dFreeze);
+    } else if (strcmp(cmd, "linkanimstate") == 0) {
+        // #86 quantitative trace: dump Link's live animation state so a transient (e.g. the walk-stop
+        // torso snap) is read as a numeric discontinuity, not eyeballed. Drive it under `freeze`/`step`
+        // one tick at a time. Reports the resolved base+upper CSAB, curFrame/morph phase, the upper-body
+        // limb rotation (the literal "torso" yaw the 3d3 body matrix would need), and yaw/speed.
+        Player* p = GET_PLAYER(play);
+        const char* baseOtr = (const char*)p->skelAnime.animation;
+        const char* baseCsab = baseOtr ? SoH3D_ResolvePlayerCsab(baseOtr) : "(null)";
+        const char* upOtr = (const char*)p->upperSkelAnime.animation;
+        const char* upCsab = upOtr ? SoH3D_ResolvePlayerCsab(upOtr) : "(none)";
+        SoH3D_ReplReply(outPath,
+            "base=%s f=%.1f/%.1f spd=%.2f morph=%.2f | upper=%s f=%.1f/%.1f morph=%.2f | "
+            "upperLimbRot=(%d,%d,%d) headRotY=%d | shapeY=%d yaw=%d focusY=%d speedXZ=%.2f st1=0x%x",
+            baseCsab ? baseCsab : "(unmapped)", p->skelAnime.curFrame, p->skelAnime.animLength,
+            p->skelAnime.playSpeed, p->skelAnime.morphWeight,
+            upCsab ? upCsab : "(unmapped)", p->upperSkelAnime.curFrame, p->upperSkelAnime.animLength,
+            p->upperSkelAnime.morphWeight,
+            p->upperLimbRot.x, p->upperLimbRot.y, p->upperLimbRot.z, p->headLimbRot.y,
+            p->actor.shape.rot.y, p->yaw, p->actor.focus.rot.y, p->actor.speedXZ, p->stateFlags1);
     } else if (strcmp(cmd, "linkground") == 0) {
         // #79: report the feet-grounding offset for Link's current cached pose + resolved CSAB.
         // `linkanim nml_wait_typeA_20f; linkground` then `linkanim nml_climb_up; linkground`: a big

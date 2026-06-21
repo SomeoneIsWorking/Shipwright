@@ -1,6 +1,17 @@
 // GENERATED: base table by tools/soh3d_link_retarget_derive.py (idle-fit: head/spine/legs),
 // then the 6 ARM rows (b14/15/16 L, b18/19/20 R) OVERLAID from tools/soh3d_carry_corr_derive.py.
 //
+// ORACLE-VERIFIED BONE MAP: ../../../../oot3d-decomp/docs/link_bone_map.md (read this).
+// The full N64-limb<->OoT3D-bone correspondence was verified against the LIVE OoT3D game (Azahar
+// oracle, link_skel_live.py) + static CMB mesh->bone bindings. KEY UNRESOLVED FINDING: the SPINE
+// here is shifted one bone too low. OoT3D inserts an extra chest bone (b10) between the upper-body
+// root (b9) and the head/arms; eyes+mouth bind to b11 (=HEAD), cap to b12 (=HAT). So the correct
+// drive is b9<-UPPER (ok), b10<-REST (extra), b11<-HEAD, b12<-HAT — but this table drives b10<-HEAD
+// and b11<-HAT (HEAD/HAT applied to chest/head instead of head/hat). Idle hides it (HEAD rot~=0);
+// head-look/dialog animations tilt the chest -> #8/#83. FIX = re-derive with HEAD->b11, HAT->b12,
+// b10->rest; gate on tools/soh3d_anim_qa.py before/after. (Not applied yet — shipped idle is
+// confirmed fine and the change touches the live retarget path.)
+//
 // #8 ROOT-CAUSE FIX (2026-06-21): the previous table's head bone b10 carried a hand-woven
 // correction that TWISTED the whole upper body ~126° and pitched the head/chest forward (b10 is
 // the OoT3D CHEST — head AND arms hang off it), so 3dn Link "looked at the ground" with arms

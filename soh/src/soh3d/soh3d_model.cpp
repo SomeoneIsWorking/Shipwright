@@ -532,40 +532,69 @@ static void generateStairsGroup(SoH3D::CmbDrawGroup& g) {
         const float SH_TREAD = 1.00f, SH_RISER = 0.72f, SH_SIDE = 0.55f; // per-face shade
         const float nUp[3] = { 0, 1, 0 };
         const float nDn[3] = { -f.aDir[0], 0, -f.aDir[2] }; // riser faces downhill (toward the climber)
-        const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side cap at cmin faces -c
-        const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side cap at cmax faces +c
+        const float nUpA[3] = { f.aDir[0], 0, f.aDir[2] };  // back face at amax faces uphill (+aDir)
+        const float nDown[3] = { 0, -1, 0 };                // underside faces straight down
+        const float nCmin[3] = { -f.cDir[0], 0, -f.cDir[2] }; // side wall at cmin faces -c
+        const float nCmax[3] = {  f.cDir[0], 0,  f.cDir[2] }; // side wall at cmax faces +c
         const float kTileW = 44.0f;   // world units per horizontal texture tile
         const float Vnose = 0.62f;    // tread/riser split in the texture (matches the SVG)
         const float uMin = f.cmin / kTileW, uMax = f.cmax / kTileW;
         // #1: raise the whole flight by a FULL step (user, 2026-06-20: "move elevation from d/2 to d")
         // so the treads sit a step above the original ramp diagonal and the top tread reaches the
-        // upper ground. The side caps are OUTWARD-FACING TRIANGLES (stepped, hypotenuse on the
-        // diagonal) — no smooth-slope strip, and they close the open side so there's no see-through
-        // gap between the stairs and the channel wall.
+        // upper ground. The staircase is emitted as a FULLY CLOSED solid volume: treads + risers on
+        // top, two stepped side walls down to a flat bottom plane, a bottom underside, a front riser
+        // at the base, and a back wall at the top. A closed manifold means the OoT3D sky dome can no
+        // longer bleed through the step edges/undersides (the cyan halo bug, #1).
         const float yr = f.dy;
+        const float yBot = f.ymin; // flat bottom plane of the solid (buried in the surrounding terrain)
+        // Bottom front riser: from the bottom plane up to the first tread, at a=amin, facing downhill.
+        {
+            float yk0 = f.ymin + yr; // first tread height
+            stepShade = SH_RISER;
+            emit(f.amin, yBot, f.cmin, uMin, 1.0f, nDn); emit(f.amin, yk0, f.cmin, uMin, Vnose, nDn); emit(f.amin, yk0, f.cmax, uMax, Vnose, nDn);
+            emit(f.amin, yBot, f.cmin, uMin, 1.0f, nDn); emit(f.amin, yk0, f.cmax, uMax, Vnose, nDn); emit(f.amin, yBot, f.cmax, uMax, 1.0f, nDn);
+        }
         for (int k = 0; k < f.N; k++) {
             float a0 = f.amin + k * f.da, a1 = f.amin + (k + 1) * f.da;
-            // yd0/yd1 = the ORIGINAL ramp diagonal at a0/a1 (the line the surrounding terrain meets).
-            // yk/yk1 = the treads/risers, raised a full step above that diagonal. The riser climbs at
-            // the BACK of the tread (a1) up to the next tread's height.
-            float yd0 = f.ymin + k * f.dy, yd1 = f.ymin + (k + 1) * f.dy;
-            float yk = yd0 + yr, yk1 = yd1 + yr;
+            // yk/yk1 = the treads/risers, raised a full step above the original ramp diagonal. The
+            // riser climbs at the BACK of the tread (a1) up to the next tread's height.
+            float yk = f.ymin + k * f.dy + yr, yk1 = f.ymin + (k + 1) * f.dy + yr;
             // Tread (top face, +Y) at yk: front edge a0 = nosing (V=Vnose) -> back a1 = V=0.
             stepShade = SH_TREAD;
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmin, uMin, 0.0f, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp);
             emit(a0, yk, f.cmin, uMin, Vnose, nUp); emit(a1, yk, f.cmax, uMax, 0.0f, nUp); emit(a0, yk, f.cmax, uMax, Vnose, nUp);
             // Riser (front face, -aDir) at a1, yk -> yk1: top yk1 = nosing (V=Vnose), bottom yk = V=1.
-            stepShade = SH_RISER;
-            emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
-            emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
-            // Side caps: ONE outward-facing triangle per step on each c edge. (a0,yd0) is on the
-            // original diagonal (terrain meets there); up to the tread (a0,yk)-(a1,yk). The riser-side
-            // sliver above yk is covered by the NEXT step's triangle. Stepped outer silhouette (no
-            // smooth slope), and the side is closed so nothing shows through to the wall behind.
+            // (Skip the last step's riser; the back wall closes that end instead.)
+            if (k + 1 < f.N) {
+                stepShade = SH_RISER;
+                emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmin, uMin, Vnose, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn);
+                emit(a1, yk, f.cmin, uMin, 1.0f, nDn); emit(a1, yk1, f.cmax, uMax, Vnose, nDn); emit(a1, yk, f.cmax, uMax, 1.0f, nDn);
+            }
+            // Side walls: a full rectangle per step from the flat bottom plane (yBot) up to the tread
+            // (yk), on each c edge — TWO triangles each, no terrain-diagonal hypotenuse (that left
+            // open slivers + a stray protruding triangle). Stepped outer silhouette, fully closed.
             stepShade = SH_SIDE;
             float uA0 = a0 / kTileW, uA1 = a1 / kTileW;
-            emit(a0, yd0, f.cmin, uA0, 1.0f, nCmin); emit(a0, yk, f.cmin, uA0, Vnose, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin);
-            emit(a0, yd0, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax); emit(a0, yk, f.cmax, uA0, Vnose, nCmax);
+            // cmin side faces -c (outward). CCW seen from -c: (a0,yBot)->(a1,yBot)->(a1,yk)->(a0,yk).
+            emit(a0, yBot, f.cmin, uA0, 1.0f, nCmin); emit(a1, yBot, f.cmin, uA1, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin);
+            emit(a0, yBot, f.cmin, uA0, 1.0f, nCmin); emit(a1, yk, f.cmin, uA1, Vnose, nCmin); emit(a0, yk, f.cmin, uA0, Vnose, nCmin);
+            // cmax side faces +c (outward, opposite winding).
+            emit(a0, yBot, f.cmax, uA0, 1.0f, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax); emit(a1, yBot, f.cmax, uA1, 1.0f, nCmax);
+            emit(a0, yBot, f.cmax, uA0, 1.0f, nCmax); emit(a0, yk, f.cmax, uA0, Vnose, nCmax); emit(a1, yk, f.cmax, uA1, Vnose, nCmax);
+        }
+        // Back wall at a=amax: from the top tread down to the bottom plane, facing uphill (+aDir).
+        {
+            float ykTop = f.ymin + (f.N - 1) * f.dy + yr; // top tread height (no riser past it)
+            stepShade = SH_RISER;
+            emit(f.amax, ykTop, f.cmin, uMin, Vnose, nUpA); emit(f.amax, yBot, f.cmin, uMin, 1.0f, nUpA); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nUpA);
+            emit(f.amax, ykTop, f.cmin, uMin, Vnose, nUpA); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nUpA); emit(f.amax, ykTop, f.cmax, uMax, Vnose, nUpA);
+        }
+        // Underside: one flat quad at yBot over the whole footprint, facing straight down, so the
+        // sky can't be seen from below. CCW seen from -Y: (amin,cmin)->(amin,cmax)->(amax,cmax)->(amax,cmin).
+        {
+            stepShade = SH_SIDE;
+            emit(f.amin, yBot, f.cmin, uMin, 0.0f, nDown); emit(f.amin, yBot, f.cmax, uMax, 0.0f, nDown); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nDown);
+            emit(f.amin, yBot, f.cmin, uMin, 0.0f, nDown); emit(f.amax, yBot, f.cmax, uMax, 1.0f, nDown); emit(f.amax, yBot, f.cmin, uMin, 1.0f, nDown);
         }
     }
     g.verts.swap(outv);
@@ -1298,6 +1327,33 @@ static std::vector<uint8_t> cropAndBoxDownsample(const std::vector<uint8_t>& atl
 // so we crop+box-downsample each disc to 64x64 full-colour RGBA and hand it over directly — no
 // compositing needed (the letter is baked into the atlas). Falls back to the embedded Xbox SVG PNGs
 // when the pack is absent. Same 64x64 dims as the SVG glyphs, so the HUD layout is unchanged.
+// #21 FIX — port the HUD texture identity from the N64 model to PC reality.
+//
+// Fast3D's texture cache (libultraship interpreter.cpp) keys textures by their raw SOURCE ADDRESS
+// and is invalidated MANUALLY (Gfx_TextureCacheDelete is only called by the few actors that reuse a
+// texture's memory, e.g. Boss Dodongo's animated lava). That is the N64 model: a texture lives at a
+// stable, engine-managed DRAM/segment address that uniquely identifies it for the session.
+//
+// These SoH3D HUD textures (heart row, rupee/counter icons, button disc, digits, glyphs) are PC heap
+// buffers (std::vector) decoded at runtime. Their address is NOT an engine-managed identity — malloc
+// can hand us an address that a PRIOR texture occupied, was cached under, then freed WITHOUT a
+// Gfx_TextureCacheDelete (most textures never call it). When that happens the very first HUD draw's
+// cache lookup HITS the stale prior-tenant entry and renders its GPU texture instead of ours — garbled
+// HUD that persists the whole session and clears only on restart (#21; nondeterministic because the
+// heap address, and thus the collision, varies per launch).
+//
+// Port: a PC-allocated texture cannot trust the N64 "address == fresh identity" assumption, so when we
+// first take ownership of a buffer we explicitly evict any stale cache entry left at that address. The
+// buffer is allocated once and lives for the session, so a single purge at first use is sufficient and
+// the next draw uploads our real pixels. (Purge can only remove a stale/wrong entry or nothing — the
+// HUD buffer's own entry does not exist yet on first draw — so it never harms correct rendering.)
+extern "C" void Gfx_TextureCacheDelete(const uint8_t* texAddr);
+static inline void SoH3D_HudTexClaim(const void* addr) {
+    if (addr != nullptr) {
+        Gfx_TextureCacheDelete((const uint8_t*)addr);
+    }
+}
+
 const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
     struct Glyph { std::vector<uint8_t> rgba; int w = 0, hh = 0; };
     static Glyph g[4];
@@ -1338,6 +1394,13 @@ const void* SoH3D_XboxGlyphTex(char which, int* w, int* h) {
         default: if (w) *w = 0; if (h) *h = 0; return nullptr;
     }
     if (g[idx].rgba.empty()) { if (w) *w = 0; if (h) *h = 0; return nullptr; }
+    static bool reg = false;
+    if (!reg) {
+        reg = true; // #21: evict any stale prior-tenant cache entry at each glyph buffer's address
+        for (int k = 0; k < 4; k++) {
+            if (!g[k].rgba.empty()) SoH3D_HudTexClaim(g[k].rgba.data());
+        }
+    }
     if (w) *w = g[idx].w;
     if (h) *h = g[idx].hh;
     return g[idx].rgba.data();
@@ -1408,6 +1471,13 @@ const void* SoH3D_HeartTex(int kind, int* w, int* h) {
     if (kind < 0 || kind >= 5 || t[kind].rgba.empty()) {
         if (w) *w = 0; if (h) *h = 0; return nullptr;
     }
+    static bool reg = false;
+    if (!reg) {
+        reg = true; // #21: evict any stale prior-tenant cache entry at each heart buffer's address
+        for (int k = 0; k < 5; k++) {
+            if (!t[k].rgba.empty()) SoH3D_HudTexClaim(t[k].rgba.data());
+        }
+    }
     if (w) *w = t[kind].w;
     if (h) *h = t[kind].hh;
     return t[kind].rgba.data();
@@ -1446,6 +1516,8 @@ const void* SoH3D_ButtonBgTex(int* w, int* h) {
         }
     }
     if (rgba.empty()) { if (w) *w = 0; if (h) *h = 0; return nullptr; }
+    static bool reg = false;
+    if (!reg) { reg = true; SoH3D_HudTexClaim(rgba.data()); } // #21: evict stale cache entry at this addr
     if (w) *w = bw;
     if (h) *h = bh;
     return rgba.data();
@@ -1477,6 +1549,13 @@ const void* SoH3D_CounterIconTex(int kind, int* w, int* h) {
     }
     if (kind < 0 || kind >= 3 || t[kind].rgba.empty()) {
         if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    static bool reg = false;
+    if (!reg) {
+        reg = true; // #21: evict any stale prior-tenant cache entry at each counter-icon buffer's address
+        for (int k = 0; k < 3; k++) {
+            if (!t[k].rgba.empty()) SoH3D_HudTexClaim(t[k].rgba.data());
+        }
     }
     if (w) *w = t[kind].w;
     if (h) *h = t[kind].hh;
@@ -1511,6 +1590,13 @@ const void* SoH3D_DigitTex(int glyph, int* w, int* h) {
     }
     if (glyph < 0 || glyph >= 11 || t[glyph].rgba.empty()) {
         if (w) *w = 0; if (h) *h = 0; return nullptr;
+    }
+    static bool reg = false;
+    if (!reg) {
+        reg = true; // #21: evict any stale prior-tenant cache entry at each digit buffer's address
+        for (int k = 0; k < 11; k++) {
+            if (!t[k].rgba.empty()) SoH3D_HudTexClaim(t[k].rgba.data());
+        }
     }
     if (w) *w = t[glyph].w;
     if (h) *h = t[glyph].hh;

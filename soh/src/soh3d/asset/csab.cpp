@@ -120,6 +120,73 @@ static float lerpAngle(float v0, float v1, float t) {
     float dist = fmodf(2 * da, TAU) - da;
     return v0 + dist * t;
 }
+
+// ---- rotation blend for the morph cross-fade (quaternion slerp) ----
+// Component-wise euler lerp does NOT follow the shortest rotation arc (the composed Rz·Ry·Rx of
+// per-axis-shortest angles can bulge to ~180deg mid-blend — seen live as a head-snap on an
+// idle->idle morph). Blending the rotation MATRICES via quaternion slerp follows the true geodesic,
+// giving the smooth shortest-arc cross-fade the N64 morph intends (docs/anim_system.md "THE MORPH").
+typedef std::array<float, 4> Quat; // (x,y,z,w)
+static Quat matToQuat(const Mat4& R) {
+    // R is row-major (M*v); read the 3x3 rotation block.
+    float m00 = R[0], m01 = R[1], m02 = R[2];
+    float m10 = R[4], m11 = R[5], m12 = R[6];
+    float m20 = R[8], m21 = R[9], m22 = R[10];
+    float tr = m00 + m11 + m22;
+    Quat q;
+    if (tr > 0.0f) {
+        float s = std::sqrt(tr + 1.0f) * 2.0f; // s = 4w
+        q[3] = 0.25f * s;
+        q[0] = (m21 - m12) / s;
+        q[1] = (m02 - m20) / s;
+        q[2] = (m10 - m01) / s;
+    } else if (m00 > m11 && m00 > m22) {
+        float s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f; // s = 4x
+        q[3] = (m21 - m12) / s;
+        q[0] = 0.25f * s;
+        q[1] = (m01 + m10) / s;
+        q[2] = (m02 + m20) / s;
+    } else if (m11 > m22) {
+        float s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f; // s = 4y
+        q[3] = (m02 - m20) / s;
+        q[0] = (m01 + m10) / s;
+        q[1] = 0.25f * s;
+        q[2] = (m12 + m21) / s;
+    } else {
+        float s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f; // s = 4z
+        q[3] = (m10 - m01) / s;
+        q[0] = (m02 + m20) / s;
+        q[1] = (m12 + m21) / s;
+        q[2] = 0.25f * s;
+    }
+    return q;
+}
+static Mat4 quatToMat(const Quat& q) {
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    Mat4 m = matId();
+    m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y - w * z);     m[2] = 2 * (x * z + w * y);
+    m[4] = 2 * (x * y + w * z);     m[5] = 1 - 2 * (x * x + z * z); m[6] = 2 * (y * z - w * x);
+    m[8] = 2 * (x * z - w * y);     m[9] = 2 * (y * z + w * x);     m[10] = 1 - 2 * (x * x + y * y);
+    return m;
+}
+static Quat quatSlerp(Quat a, Quat b, float t) {
+    float dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
+    if (dot < 0.0f) { for (int i = 0; i < 4; i++) b[i] = -b[i]; dot = -dot; } // shortest arc
+    Quat q;
+    if (dot > 0.9995f) { // near-parallel -> linear (avoids sin(0) blow-up), then renormalize
+        for (int i = 0; i < 4; i++) q[i] = a[i] + (b[i] - a[i]) * t;
+    } else {
+        float th = std::acos(dot), s = std::sin(th);
+        float wa = std::sin((1 - t) * th) / s, wb = std::sin(t * th) / s;
+        for (int i = 0; i < 4; i++) q[i] = a[i] * wa + b[i] * wb;
+    }
+    float n = std::sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+    if (n > 1e-8f) for (int i = 0; i < 4; i++) q[i] /= n;
+    return q;
+}
+static Mat4 eulerMat(const float r[3]) { // Rz·Ry·Rx, matching the local-compose order
+    return matMul(matMul(matRz(r[2]), matRy(r[1])), matRx(r[0]));
+}
 static float pointCubic(const float cf[4], float t) {
     return ((cf[0] * t + cf[1]) * t + cf[2]) * t + cf[3];
 }
@@ -159,6 +226,38 @@ float Csab::sampleTrack(const Track& t, float frame, bool rotation) {
     return pointCubic(cf, tt);
 }
 
+void Csab::sampleLocalTRS(int boneId, bool nonRoot, const float restT[3], const float restR[3],
+                         const float restS[3], float fr, float t[3], float r[3], float s[3]) const {
+    s[0] = restS[0]; s[1] = restS[1]; s[2] = restS[2];
+    r[0] = restR[0]; r[1] = restR[1]; r[2] = restR[2];
+    t[0] = restT[0]; t[1] = restT[1]; t[2] = restT[2];
+    const AnimNode* node = nodeForBone(boneId);
+    if (!node) return;
+    // track slots: 0..2 tX/Y/Z, 3..5 rX/Y/Z, 6..8 sX/Y/Z
+    if (node->tracks[6].present) s[0] = sampleTrack(node->tracks[6], fr, false);
+    if (node->tracks[7].present) s[1] = sampleTrack(node->tracks[7], fr, false);
+    if (node->tracks[8].present) s[2] = sampleTrack(node->tracks[8], fr, false);
+    if (node->tracks[3].present) r[0] = sampleTrack(node->tracks[3], fr, true);
+    if (node->tracks[4].present) r[1] = sampleTrack(node->tracks[4], fr, true);
+    if (node->tracks[5].present) r[2] = sampleTrack(node->tracks[5], fr, true);
+    // Bone OFFSETS belong to the SKELETON, not the clip. CSABs authored for one rig (the
+    // boy/adult Link clips) bake that rig's bone translations into per-bone translation tracks
+    // as STATIC (constant-valued) tracks. When such a clip drives a DIFFERENT-proportioned rig
+    // — child Link has no own idle/most clips and reuses the boy ones — those longer baked
+    // offsets override the child's shorter rest offsets and STRETCH the limb (the long/
+    // stretched right arm, #7/#8: child R-arm 283/593/548 -> boy 442/927/856). So for a
+    // non-root bone, IGNORE a static translation track and keep the rig's rest offset (a no-op
+    // for same-rig clips, where rest == the baked value). Genuinely ANIMATED translation
+    // (varying track, e.g. the idle pelvis bob) is still applied — it is real motion, not a
+    // skeletal offset. Root (parent<0) always keeps its translation (root placement/motion).
+    if (node->tracks[0].present && !(nonRoot && node->tracks[0].constant))
+        t[0] = sampleTrack(node->tracks[0], fr, false);
+    if (node->tracks[1].present && !(nonRoot && node->tracks[1].constant))
+        t[1] = sampleTrack(node->tracks[1], fr, false);
+    if (node->tracks[2].present && !(nonRoot && node->tracks[2].constant))
+        t[2] = sampleTrack(node->tracks[2], fr, false);
+}
+
 void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
                              const float* boneRotDelta, int deltaCount) const {
     const auto& bones = model.bones();
@@ -174,36 +273,8 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
         if (id < 0 || (size_t)id >= out.size() || !byId[id]) return matId();
         if (done[id]) return out[id];
         const CmbBone* bn = byId[id];
-        float s[3] = { bn->scale[0], bn->scale[1], bn->scale[2] };
-        float r[3] = { bn->rot[0], bn->rot[1], bn->rot[2] };
-        float t[3] = { bn->trans[0], bn->trans[1], bn->trans[2] };
-        const AnimNode* node = nodeForBone(id);
-        if (node) {
-            // track slots: 0..2 tX/Y/Z, 3..5 rX/Y/Z, 6..8 sX/Y/Z
-            if (node->tracks[6].present) s[0] = sampleTrack(node->tracks[6], fr, false);
-            if (node->tracks[7].present) s[1] = sampleTrack(node->tracks[7], fr, false);
-            if (node->tracks[8].present) s[2] = sampleTrack(node->tracks[8], fr, false);
-            if (node->tracks[3].present) r[0] = sampleTrack(node->tracks[3], fr, true);
-            if (node->tracks[4].present) r[1] = sampleTrack(node->tracks[4], fr, true);
-            if (node->tracks[5].present) r[2] = sampleTrack(node->tracks[5], fr, true);
-            // Bone OFFSETS belong to the SKELETON, not the clip. CSABs authored for one rig (the
-            // boy/adult Link clips) bake that rig's bone translations into per-bone translation tracks
-            // as STATIC (constant-valued) tracks. When such a clip drives a DIFFERENT-proportioned rig
-            // — child Link has no own idle/most clips and reuses the boy ones — those longer baked
-            // offsets override the child's shorter rest offsets and STRETCH the limb (the long/
-            // stretched right arm, #7/#8: child R-arm 283/593/548 -> boy 442/927/856). So for a
-            // non-root bone, IGNORE a static translation track and keep the rig's rest offset (a no-op
-            // for same-rig clips, where rest == the baked value). Genuinely ANIMATED translation
-            // (varying track, e.g. the idle pelvis bob) is still applied — it is real motion, not a
-            // skeletal offset. Root (parent<0) always keeps its translation (root placement/motion).
-            bool nonRoot = bn->parent >= 0;
-            if (node->tracks[0].present && !(nonRoot && node->tracks[0].constant))
-                t[0] = sampleTrack(node->tracks[0], fr, false);
-            if (node->tracks[1].present && !(nonRoot && node->tracks[1].constant))
-                t[1] = sampleTrack(node->tracks[1], fr, false);
-            if (node->tracks[2].present && !(nonRoot && node->tracks[2].constant))
-                t[2] = sampleTrack(node->tracks[2], fr, false);
-        }
+        float s[3], r[3], t[3];
+        sampleLocalTRS(id, bn->parent >= 0, bn->trans, bn->rot, bn->scale, fr, t, r, s);
         // Procedural OverrideLimbDraw delta: add the extra LOCAL rotation (radians) for this bone
         // on top of the animated pose, in the SAME T·Rz·Ry·Rx·S frame the tracks use.
         if (boneRotDelta && id >= 0 && id < deltaCount) {
@@ -220,6 +291,66 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
         return W;
     };
     for (const auto& bn : bones) world(bn.id);
+}
+
+void Csab::animatedBoneWorldMorph(const Cmb& model, float frameIn, const Csab& outgoing,
+                                  float frameOut, float weight,
+                                  std::vector<std::array<float, 16>>& out, const float* boneRotDelta,
+                                  int deltaCount) const {
+    const auto& bones = model.bones();
+    const auto& bind = model.boneMatrices();
+    out.assign(bind.size(), matId());
+    std::vector<char> done(bind.size(), 0);
+    std::vector<const CmbBone*> byId(bind.size(), nullptr);
+    for (const auto& bn : bones) if (bn.id >= 0 && (size_t)bn.id < byId.size()) byId[bn.id] = &bn;
+    float frIn = animFrame(frameIn);
+    float frOut = outgoing.animFrame(frameOut);
+    if (weight < 0.0f) weight = 0.0f; if (weight > 1.0f) weight = 1.0f;
+
+    // resolve a bone's MORPHED world matrix: blend incoming/outgoing LOCAL TRS by `weight`, then
+    // recurse through parents (parents are already morphed, so the blend stays local-rotation-true).
+    std::function<Mat4(int)> world = [&](int id) -> Mat4 {
+        if (id < 0 || (size_t)id >= out.size() || !byId[id]) return matId();
+        if (done[id]) return out[id];
+        const CmbBone* bn = byId[id];
+        bool nonRoot = bn->parent >= 0;
+        float si[3], ri[3], ti[3], so[3], ro[3], to[3];
+        sampleLocalTRS(id, nonRoot, bn->trans, bn->rot, bn->scale, frIn, ti, ri, si);
+        outgoing.sampleLocalTRS(id, nonRoot, bn->trans, bn->rot, bn->scale, frOut, to, ro, so);
+        // pose = lerp(incoming, outgoing, weight). weight=1 -> outgoing (frozen), weight=0 ->
+        // incoming. Rotation blends along the geodesic (quaternion slerp of the two local rotation
+        // matrices); translation/scale lerp linearly.
+        float s[3], t[3];
+        for (int k = 0; k < 3; k++) {
+            s[k] = lerpf(si[k], so[k], weight);
+            t[k] = lerpf(ti[k], to[k], weight);
+        }
+        Mat4 R = quatToMat(quatSlerp(matToQuat(eulerMat(ri)), matToQuat(eulerMat(ro)), weight));
+        // Procedural OverrideLimbDraw delta (head-track/cucco) post-multiplied onto the blended
+        // rotation. Exact for the common no-concurrent-morph case; a small approximation only while a
+        // tracking actor also happens to be mid-transition (deltas are small there).
+        if (boneRotDelta && id >= 0 && id < deltaCount) {
+            float d[3] = { boneRotDelta[id * 3 + 0], boneRotDelta[id * 3 + 1], boneRotDelta[id * 3 + 2] };
+            R = matMul(R, eulerMat(d));
+        }
+        Mat4 L = matMul(matT(t[0], t[1], t[2]), matMul(R, matS(s[0], s[1], s[2])));
+        Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
+        out[id] = W;
+        done[id] = 1;
+        return W;
+    };
+    for (const auto& bn : bones) world(bn.id);
+}
+
+void Csab::skinMatricesMorph(const Cmb& model, float frameIn, const Csab& outgoing, float frameOut,
+                             float weight, std::vector<std::array<float, 16>>& out,
+                             const float* boneRotDelta, int deltaCount) const {
+    std::vector<std::array<float, 16>> aw;
+    animatedBoneWorldMorph(model, frameIn, outgoing, frameOut, weight, aw, boneRotDelta, deltaCount);
+    const auto& bind = model.boneMatrices();
+    out.assign(bind.size(), matId());
+    for (size_t id = 0; id < bind.size(); id++)
+        out[id] = matMul(aw[id], matInverse(bind[id]));
 }
 
 void Csab::skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,

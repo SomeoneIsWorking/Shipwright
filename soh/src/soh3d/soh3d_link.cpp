@@ -453,11 +453,12 @@ extern "C" int SoH3D_TryDrawPlayer(PlayState* play, Actor* actor) {
             // skelAnime.curFrame (verified pinned at 0 across an entire run). Phase-locking to that
             // dead clock froze the run CSAB at frame 0 -> static pose sliding over the ground. Drive
             // the leg cycle by ground speed instead (free-run; the CSAB wraps the frame internally).
-            SoH3D_UpdateAnimAuto(modelId, csab, player->actor.speedXZ * gSoH3dLinkLocoGain, 0.0f, 0.0f);
+            SoH3D_UpdateAnimAuto(modelId, csab, player->actor.speedXZ * gSoH3dLinkLocoGain, 0.0f, 0.0f,
+                                 player->skelAnime.morphWeight);
         } else {
             // Idle / one-shot anims: curFrame is valid here, so keep the N64-progress phase-lock.
             SoH3D_UpdateAnimAuto(modelId, csab, gSoH3dAnimRate, player->skelAnime.curFrame,
-                                 player->skelAnime.animLength);
+                                 player->skelAnime.animLength, player->skelAnime.morphWeight);
         }
     }
     // Pose-scan QA: sample the per-frame discontinuity now that lastSkin is set (once per drawn frame).

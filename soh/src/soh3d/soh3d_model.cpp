@@ -2294,6 +2294,27 @@ extern "C" float SoH3D_PoseDiscontinuity(int modelId, int* outBone) {
 }
 extern "C" void SoH3D_PoseScanReset(int modelId) { posePrev().erase(modelId); }
 
+// Look up the per-model procedural bone-rotation deltas (cucco flap / head-track), if any.
+static void getBoneRotDeltas(int modelId, const float** outDrot, int* outDcount) {
+    *outDrot = nullptr; *outDcount = 0;
+    auto it = boneRotDeltas().find(modelId);
+    if (it != boneRotDeltas().end() && !it->second.empty()) {
+        *outDrot = it->second.data();
+        *outDcount = (int)it->second.size() / 3;
+    }
+}
+
+// Common tail for the CSAB sample paths: cache for grounding, then upload bind + skin to GL. The
+// GL layer recovers the animated bone-world transform (skin*bind) and interpolates the pose RIGIDLY
+// between logic frames — interpolating the skin matrices directly shatters large per-frame rotations.
+static void uploadSkin(int modelId, LoadedModel* lm, std::vector<std::array<float, 16>>& sm) {
+    cacheSkinForGround(modelId, sm); // posed-feet grounding for the player path (#29b)
+    const auto& bind = lm->cmb->boneMatrices();
+    SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
+    // vector<array<float,16>> is contiguous -> hand the renderer a flat float buffer.
+    SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
+}
+
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
     if (!animName || !*animName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     LoadedModel* lm = loadModel(modelId);
@@ -2304,22 +2325,32 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 
     std::vector<std::array<float, 16>> sm;
     const float* drot = nullptr; int dcount = 0;
-    {
-        auto it = boneRotDeltas().find(modelId);
-        if (it != boneRotDeltas().end() && !it->second.empty()) {
-            drot = it->second.data();
-            dcount = (int)it->second.size() / 3;
-        }
-    }
+    getBoneRotDeltas(modelId, &drot, &dcount);
     anim->skinMatrices(*lm->cmb, frame, sm, drot, dcount);
-    cacheSkinForGround(modelId, sm); // posed-feet grounding for the player path (#29b)
-    // Upload the constant bind matrices (cached, no-op after the first call) so the GL layer can
-    // recover the animated bone-world transform (skin*bind) and interpolate the pose RIGIDLY between
-    // logic frames — interpolating the skin matrices directly shatters large per-frame rotations.
-    const auto& bind = lm->cmb->boneMatrices();
-    SoH3D_GL_SetBoneBind(modelId, bind.empty() ? nullptr : bind.front().data(), (int)bind.size());
-    // vector<array<float,16>> is contiguous -> hand the renderer a flat float buffer.
-    SoH3D_GL_SetBones(modelId, sm.empty() ? nullptr : sm.front().data(), (int)sm.size());
+    uploadSkin(modelId, lm, sm);
+}
+
+// MORPH variant of SoH3D_UpdateAnim: cross-fade the INCOMING clip (inName@fIn) toward the frozen
+// OUTGOING clip (outName@fOut) by `weight` (= N64 morphWeight, 1->0 over the transition). Same
+// model, same upload tail. If the outgoing CSAB can't be resolved, falls back to a plain incoming
+// sample (no morph) rather than dropping the pose.
+static void SoH3D_UpdateAnimMorph(int modelId, const char* inName, float fIn, const char* outName,
+                                  float fOut, float weight) {
+    if (!inName || !*inName) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    LoadedModel* lm = loadModel(modelId);
+    if (!lm || !lm->ok || !lm->cmb || !lm->zar) return;
+    SoH3D::Csab* in = getCsab(lm, inName);
+    if (!in) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
+    SoH3D::Csab* out = (outName && *outName) ? getCsab(lm, outName) : nullptr;
+    const float* drot = nullptr; int dcount = 0;
+    getBoneRotDeltas(modelId, &drot, &dcount);
+    std::vector<std::array<float, 16>> sm;
+    if (out) {
+        in->skinMatricesMorph(*lm->cmb, fIn, *out, fOut, weight, sm, drot, dcount);
+    } else {
+        in->skinMatrices(*lm->cmb, fIn, sm, drot, dcount); // outgoing unresolved -> no blend
+    }
+    uploadSkin(modelId, lm, sm);
 }
 
 // Drive an auto-replaced model by its OWN OoT3D CSAB (animName). Two playhead modes:
@@ -2332,40 +2363,78 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 //     `rate` frames/draw. N64 idles are often 2-frame fidget stubs with no meaningful progress to
 //     lock to (see memory n64-idle-stub-no-phaselock), so we free-run the full OoT3D idle instead.
 // animName==NULL -> bind pose. The CSAB wraps the frame internally (Csab::animFrame REPEAT).
+//
+// MORPH (#8/#86, keystone fix #2): `morphWeight` is the live N64 skelAnime->morphWeight (1.0 on the
+// transition frame, ramping linearly to 0). When a transition is detected (the resolved CSAB name
+// changes while morphWeight>0) we FREEZE the outgoing clip+frame and, while morphWeight>0, cross-fade
+// the new clip toward that frozen pose — exactly the N64 SkelAnime morph model (docs/anim_system.md
+// "THE MORPH"). Without this the auto/CSAB path hard-cuts every transition (1-frame arm/limb pops).
+// gSoH3dMorph (REPL `morph 0|1`, env SOH3D_MORPH default on) gates it for A/B verification.
+int gSoH3dMorph = -1;
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
-                          float n64AnimLength) {
+                          float n64AnimLength, float morphWeight) {
     static std::unordered_map<int, float> frames;
     static std::unordered_map<int, std::string> lastCsab; // per-model: which CSAB the playhead is on
+    static std::unordered_map<int, float> lastFrame;      // last incoming frame rendered (freeze src)
+    static std::unordered_map<int, std::string> morphOut; // frozen outgoing CSAB during a morph
+    static std::unordered_map<int, float> morphOutFrame;  // frozen outgoing frame
     if (!animName || !*animName) {
-        frames.erase(modelId); lastCsab.erase(modelId);
+        frames.erase(modelId); lastCsab.erase(modelId); lastFrame.erase(modelId);
+        morphOut.erase(modelId); morphOutFrame.erase(modelId);
         SoH3D_UpdateAnim(modelId, nullptr, 0); return;
     }
-    // PHASE-LOCK to the N64 anim's progress when it has a real (non-stub) length.
-    if (n64AnimLength > 4.0f && n64CurFrame >= 0.0f) {
-        LoadedModel* lm = loadModel(modelId);
-        float dur = 0.0f;
-        if (lm && lm->ok && lm->cmb && lm->zar) {
-            SoH3D::Csab* c = getCsab(lm, animName);
-            if (c) dur = (float)c->duration();
-        }
-        if (dur > 0.0f) {
-            float phase = n64CurFrame / n64AnimLength;
-            phase -= std::floor(phase); // wrap into [0,1)
-            float f = phase * dur;
-            frames[modelId] = f;      // keep the free-run playhead in sync for a later mode switch
-            lastCsab[modelId] = animName;
-            SoH3D_UpdateAnim(modelId, animName, f);
-            return;
-        }
-        // duration unavailable -> fall through to free-run
+    if (gSoH3dMorph < 0) {
+        const char* v = getenv("SOH3D_MORPH");
+        gSoH3dMorph = (v != NULL && v[0] == '0') ? 0 : 1;
     }
-    // FREE-RUN. Restart the playhead from 0 whenever the selected CSAB changes, so a one-shot (a
-    // wave, a hand-off) plays from its start instead of resuming at the previous anim's frame.
-    float& f = frames[modelId];
-    std::string& prev = lastCsab[modelId];
-    if (prev != animName) { f = 0.0f; prev = animName; }
-    SoH3D_UpdateAnim(modelId, animName, f);
-    f += rate;
+    if (!gSoH3dMorph) morphWeight = 0.0f;
+
+    // --- incoming frame f (phase-lock to the N64 anim's progress, else free-run) ---
+    LoadedModel* lm = loadModel(modelId);
+    float dur = 0.0f;
+    if (lm && lm->ok && lm->cmb && lm->zar) {
+        SoH3D::Csab* c = getCsab(lm, animName);
+        if (c) dur = (float)c->duration();
+    }
+    bool locked = (n64AnimLength > 4.0f && n64CurFrame >= 0.0f && dur > 0.0f);
+    auto lcIt = lastCsab.find(modelId);
+    bool csabChanged = (lcIt == lastCsab.end()) || (lcIt->second != animName);
+    float f;
+    if (locked) {
+        float phase = n64CurFrame / n64AnimLength;
+        phase -= std::floor(phase); // wrap into [0,1)
+        f = phase * dur;
+        frames[modelId] = f; // keep the free-run playhead in sync for a later mode switch
+    } else {
+        // FREE-RUN. Restart from 0 whenever the CSAB changes, so a one-shot (a wave, a hand-off)
+        // plays from its start instead of resuming at the previous anim's frame.
+        float& pf = frames[modelId];
+        if (csabChanged) pf = 0.0f;
+        f = pf;
+        pf += rate;
+    }
+
+    // --- morph bookkeeping: on a real transition, freeze the outgoing clip at its last frame ---
+    if (csabChanged) {
+        if (morphWeight > 0.0f && lcIt != lastCsab.end()) {
+            morphOut[modelId] = lcIt->second; // the clip we're leaving
+            auto lfIt = lastFrame.find(modelId);
+            morphOutFrame[modelId] = (lfIt != lastFrame.end()) ? lfIt->second : 0.0f;
+        } else {
+            morphOut.erase(modelId); morphOutFrame.erase(modelId); // hard cut / first anim
+        }
+    }
+    if (morphWeight <= 0.0f) { morphOut.erase(modelId); morphOutFrame.erase(modelId); }
+    lastCsab[modelId] = animName;
+    lastFrame[modelId] = f;
+
+    auto moIt = morphOut.find(modelId);
+    if (moIt != morphOut.end() && morphWeight > 0.0f) {
+        SoH3D_UpdateAnimMorph(modelId, animName, f, moIt->second.c_str(), morphOutFrame[modelId],
+                              morphWeight);
+    } else {
+        SoH3D_UpdateAnim(modelId, animName, f);
+    }
 }
 
 } // extern "C"

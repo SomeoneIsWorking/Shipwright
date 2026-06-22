@@ -38,7 +38,26 @@ class Csab {
     void animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
                            const float* boneRotDelta = nullptr, int deltaCount = 0) const;
 
+    // MORPH (anim-transition cross-fade, the N64 SkelAnime model — see docs/anim_system.md "THE
+    // MORPH"). Blends this (INCOMING) clip at `frameIn` toward the OUTGOING clip's frozen pose at
+    // `frameOut`, per-bone in LOCAL space: pose = lerp(incoming, outgoing, weight). `weight` is the
+    // N64 `skelAnime->morphWeight` (1.0 = fully outgoing on the transition frame, ramping linearly
+    // to 0.0 = fully incoming). Both clips drive the SAME model (same Cmb). boneRotDelta applies on
+    // top of the blended local rotation, identically to skinMatrices.
+    void skinMatricesMorph(const Cmb& model, float frameIn, const Csab& outgoing, float frameOut,
+                           float weight, std::vector<std::array<float, 16>>& out,
+                           const float* boneRotDelta = nullptr, int deltaCount = 0) const;
+    void animatedBoneWorldMorph(const Cmb& model, float frameIn, const Csab& outgoing, float frameOut,
+                                float weight, std::vector<std::array<float, 16>>& out,
+                                const float* boneRotDelta, int deltaCount) const;
+
   private:
+    // Sample a bone's animated LOCAL transform (TRS) at `fr` from this clip's tracks, falling back
+    // to the rest TRS where a track is absent (or is a static non-root translation bake — see the
+    // note in animatedBoneWorld). Shared by the single-clip and morph world builders.
+    void sampleLocalTRS(int boneId, bool nonRoot, const float restT[3], const float restR[3],
+                        const float restS[3], float fr, float t[3], float r[3], float s[3]) const;
+
     enum { CONSTANT = 0, LINEAR = 1, HERMITE = 2 };
     struct Keyframe { float time, value, tangentIn, tangentOut; };
     struct Track {

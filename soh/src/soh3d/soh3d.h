@@ -97,7 +97,7 @@ int SoH3D_SkelAnimeDrawRaw(PlayState* play, void** skeleton, Vec3s* jointTable);
 // whose inner SkelAnime_DrawFlex (the raw hook) has only the skeleton, not the SkelAnime — so
 // without this capture those actors (e.g. En_Ko Kokiri kids) never reach the phase-lock branch and
 // free-run at the global rate (#76: wrong/frozen anims). No-op when no replacement is pending.
-void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength);
+void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength, float morphWeight);
 
 // Generalised per-room scene divert, called from Room_Draw. If SoH3D is enabled and
 // the current scene has an OoT3D mapping (kSoH3dSceneNames) with a room CMB for
@@ -409,7 +409,7 @@ float SoH3D_PosedGroundOffset(int modelId, unsigned long long midMask); // model
 int SoH3D_PosedBoneWorldPos(int modelId, int boneId, float* outModelPos); // posed bone origin (model-local), #6 held-actor attach
 void SoH3D_UpdateAnim(int modelId, const char* animName, float frame);
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
-                          float n64AnimLength);
+                          float n64AnimLength, float morphWeight);
 void SoH3D_GL_SetMidMask(int modelId, unsigned long long mask);
 void SoH3D_GL_EmitPose(int modelId);
 // Walk a live N64 skeleton tree, cb per non-root limb (shared with the linkskeldump REPL).

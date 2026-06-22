@@ -114,7 +114,7 @@ float SoH3D_AutoModelBoneLenSum(int modelId, int boneCap); // Σ|trans| of non-r
 const char* SoH3D_AutoModelDefaultAnim(int modelId);     // default (idle) OoT3D CSAB base name
 int SoH3D_AutoModelHasCsab(int modelId, const char* base); // 1 if the model's own zar holds this CSAB (#73)
 void SoH3D_UpdateAnimAuto(int modelId, const char* animName, float rate, float n64CurFrame,
-                          float n64AnimLength); // play OoT3D's own CSAB, phase-locked to the N64 anim
+                          float n64AnimLength, float morphWeight); // play OoT3D's own CSAB, phase-locked + morph-blended to the N64 anim
 void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated by caller)
 // Per-OoT3D-bone local-rotation delta (radians) added on top of the CSAB pose; used to replay a
 // PROCEDURAL per-limb rotation the N64 actor applies in an OverrideLimbDraw (the cucco wing-flap,
@@ -204,6 +204,11 @@ static const char* gSoH3dPendingAnimOtr = NULL;
 // choke point has no playhead -> animLength stays 0 -> free-run.
 static float gSoH3dPendingN64CurFrame = 0.0f;
 static float gSoH3dPendingN64AnimLength = 0.0f;
+// Live N64 morphWeight (anim-transition cross-fade, 1->0) for the deferred actor, captured from the
+// SkelAnime at the choke point. The auto branch passes it to SoH3D_UpdateAnimAuto so the CSAB path
+// blends transitions instead of hard-cutting them (keystone fix #2; #8/#86). 0 = no morph (raw path,
+// which has no SkelAnime, defaults here).
+static float gSoH3dPendingMorphWeight = 0.0f;
 
 // --- Procedural OverrideLimbDraw replay (#23 cucco wing-flap) -------------------------------------
 // Some N64 actors animate a few limbs PROCEDURALLY in their SkelAnime overrideLimbDraw callback
@@ -455,7 +460,7 @@ static void SoH3D_ApplyProcOverride(PlayState* play, int modelId, Vec3s* jointTa
     }
 }
 
-void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength) {
+void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength, float morphWeight) {
     if (gSoH3dAnimDebug) {
         static int dbg = 0;
         if ((dbg++ % 60) == 0) {
@@ -472,6 +477,7 @@ void SoH3D_SetCurAnim(void* animation, float curFrame, float animLength) {
         // the global rate, which is the #76 root cause (Kokiri kids: too-fast / frozen-at-frame-0).
         gSoH3dPendingN64CurFrame = curFrame;
         gSoH3dPendingN64AnimLength = animLength;
+        gSoH3dPendingMorphWeight = morphWeight; // auto-path morph cross-fade for func_80034BA0/CC4 actors
     }
 }
 
@@ -1720,6 +1726,7 @@ int SoH3D_TryDrawActor(PlayState* play, Actor* actor) {
     // animLength stays 0 -> the auto branch free-runs (no stale phase-lock from a prior actor).
     gSoH3dPendingN64CurFrame = 0.0f;
     gSoH3dPendingN64AnimLength = 0.0f;
+    gSoH3dPendingMorphWeight = 0.0f; // reset per actor (raw-only path has no SkelAnime -> no morph)
     // Param-keyed field-keep actors: one keep object shared across param variants, so the model
     // depends on (actor, params) — can't live in the actorId-only sModelTable. The OoT3D models
     // come from zelda_field_keep.zar (glModelIds 2,4,5,6; see kModels in soh3d_model.cpp).
@@ -2222,7 +2229,7 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         SoH3D_ApplyProcOverride(play, gSoH3dPendingModel, jointTable, limbCount);
         gSoH3dPendingOverride = NULL; // consumed; the next actor's choke point sets it afresh
         SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate, gSoH3dPendingN64CurFrame,
-                             gSoH3dPendingN64AnimLength);
+                             gSoH3dPendingN64AnimLength, gSoH3dPendingMorphWeight);
         // Shared multi-variant CMBs (En_Ko Kokiri kids) bake several heads on distinct mesh_ids;
         // select the one this actor's ENKO_TYPE wants. Set BEFORE EmitModelDraw's EmitPose so the
         // mask pairs with this draw item (the GL pass snapshots pendingMidMask at emit time).
@@ -2263,6 +2270,7 @@ int SoH3D_SkelAnimeDraw(PlayState* play, SkelAnime* skelAnime) {
     // Capture the live N64 playhead so the auto branch can phase-lock the OoT3D CSAB to it.
     gSoH3dPendingN64CurFrame = skelAnime->curFrame;
     gSoH3dPendingN64AnimLength = skelAnime->animLength;
+    gSoH3dPendingMorphWeight = skelAnime->morphWeight; // for the auto-path morph cross-fade (#8/#86)
     return SoH3D_DoRetarget(play, skelAnime->skeleton, skelAnime->jointTable, skelAnime->limbCount);
 }
 
@@ -4099,6 +4107,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dProcOverride = (atoi(sub) != 0);
         }
         SoH3D_ReplReply(outPath, "wingflap=%d force=%d", gSoH3dProcOverride, gSoH3dWingForce);
+    } else if (strcmp(cmd, "morph") == 0) {
+        // Keystone fix #2 (#8/#86) — anim-transition cross-fade in the CSAB auto/own-anim path.
+        // `morph <0|1>` toggles it (A/B the transition pop vs the smooth blend); alone reports state.
+        extern int gSoH3dMorph;
+        int iv;
+        if (sscanf(line, "%*s %d", &iv) == 1) {
+            gSoH3dMorph = (iv != 0);
+        }
+        SoH3D_ReplReply(outPath, "morph=%d", gSoH3dMorph);
     } else if (strcmp(cmd, "cuccopose") == 0) {
         // #5 — hold every cucco in its agitated wing-spread pose (EnNiw_Update -> func_80AB5BF8 2)
         // for deterministic A/B of the spread flap (N64 via `enable 0` vs OoT3D replay). `cuccopose

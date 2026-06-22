@@ -187,6 +187,23 @@ static Quat quatSlerp(Quat a, Quat b, float t) {
 static Mat4 eulerMat(const float r[3]) { // Rz·Ry·Rx, matching the local-compose order
     return matMul(matMul(matRz(r[2]), matRy(r[1])), matRx(r[0]));
 }
+// Embed a row-major 3x3 (9 floats) into a Mat4. Identity translation/w-row.
+static Mat4 mat3to4(const float* m9) {
+    Mat4 m = matId();
+    m[0] = m9[0]; m[1] = m9[1]; m[2] = m9[2];
+    m[4] = m9[3]; m[5] = m9[4]; m[6] = m9[5];
+    m[8] = m9[6]; m[9] = m9[7]; m[10] = m9[8];
+    return m;
+}
+// Post-multiply the per-bone OoT3D-native override rotation onto a bone's local rotation matrix,
+// replicating the actor OverrideLimbDraw's MTXMODE_APPLY (rotation applied AFTER the bone's animated
+// rotation, in the bone's local frame). bonePostRot is 9 floats per bone id (row-major 3x3), or null.
+static Mat4 applyPostRot(Mat4 R, const float* bonePostRot, int postCount, int id) {
+    if (bonePostRot && id >= 0 && id < postCount) {
+        return matMul(R, mat3to4(bonePostRot + id * 9));
+    }
+    return R;
+}
 static float pointCubic(const float cf[4], float t) {
     return ((cf[0] * t + cf[1]) * t + cf[2]) * t + cf[3];
 }
@@ -259,7 +276,8 @@ void Csab::sampleLocalTRS(int boneId, bool nonRoot, const float restT[3], const 
 }
 
 void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
-                             const float* boneRotDelta, int deltaCount) const {
+                             const float* boneRotDelta, int deltaCount, const float* bonePostRot,
+                             int postCount) const {
     const auto& bones = model.bones();
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
@@ -282,9 +300,8 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
             r[1] += boneRotDelta[id * 3 + 1];
             r[2] += boneRotDelta[id * 3 + 2];
         }
-        Mat4 L = matMul(matT(t[0], t[1], t[2]),
-                        matMul(matMul(matRz(r[2]), matRy(r[1])), matRx(r[0])));
-        L = matMul(L, matS(s[0], s[1], s[2]));
+        Mat4 R = applyPostRot(eulerMat(r), bonePostRot, postCount, id);
+        Mat4 L = matMul(matT(t[0], t[1], t[2]), matMul(R, matS(s[0], s[1], s[2])));
         Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
         out[id] = W;
         done[id] = 1;
@@ -296,7 +313,7 @@ void Csab::animatedBoneWorld(const Cmb& model, float frame, std::vector<std::arr
 void Csab::animatedBoneWorldMorph(const Cmb& model, float frameIn, const Csab& outgoing,
                                   float frameOut, float weight,
                                   std::vector<std::array<float, 16>>& out, const float* boneRotDelta,
-                                  int deltaCount) const {
+                                  int deltaCount, const float* bonePostRot, int postCount) const {
     const auto& bones = model.bones();
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
@@ -333,6 +350,7 @@ void Csab::animatedBoneWorldMorph(const Cmb& model, float frameIn, const Csab& o
             float d[3] = { boneRotDelta[id * 3 + 0], boneRotDelta[id * 3 + 1], boneRotDelta[id * 3 + 2] };
             R = matMul(R, eulerMat(d));
         }
+        R = applyPostRot(R, bonePostRot, postCount, id);
         Mat4 L = matMul(matT(t[0], t[1], t[2]), matMul(R, matS(s[0], s[1], s[2])));
         Mat4 W = (bn->parent < 0) ? L : matMul(world(bn->parent), L);
         out[id] = W;
@@ -344,9 +362,11 @@ void Csab::animatedBoneWorldMorph(const Cmb& model, float frameIn, const Csab& o
 
 void Csab::skinMatricesMorph(const Cmb& model, float frameIn, const Csab& outgoing, float frameOut,
                              float weight, std::vector<std::array<float, 16>>& out,
-                             const float* boneRotDelta, int deltaCount) const {
+                             const float* boneRotDelta, int deltaCount, const float* bonePostRot,
+                             int postCount) const {
     std::vector<std::array<float, 16>> aw;
-    animatedBoneWorldMorph(model, frameIn, outgoing, frameOut, weight, aw, boneRotDelta, deltaCount);
+    animatedBoneWorldMorph(model, frameIn, outgoing, frameOut, weight, aw, boneRotDelta, deltaCount,
+                           bonePostRot, postCount);
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
     for (size_t id = 0; id < bind.size(); id++)
@@ -354,9 +374,10 @@ void Csab::skinMatricesMorph(const Cmb& model, float frameIn, const Csab& outgoi
 }
 
 void Csab::skinMatrices(const Cmb& model, float frame, std::vector<std::array<float, 16>>& out,
-                        const float* boneRotDelta, int deltaCount) const {
+                        const float* boneRotDelta, int deltaCount, const float* bonePostRot,
+                        int postCount) const {
     std::vector<std::array<float, 16>> aw;
-    animatedBoneWorld(model, frame, aw, boneRotDelta, deltaCount);
+    animatedBoneWorld(model, frame, aw, boneRotDelta, deltaCount, bonePostRot, postCount);
     const auto& bind = model.boneMatrices();
     out.assign(bind.size(), matId());
     for (size_t id = 0; id < bind.size(); id++)

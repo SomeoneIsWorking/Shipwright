@@ -2,6 +2,7 @@
 #include "soh3d.h"
 #include "soh3d_collision.h" // C-ABI bridge for OoT3D scene collision (soh3d_model.cpp)
 #include "soh3d_link.h"      // Link (player) replacement policy split out of this file
+#include "soh3d_anim_override.h" // skeletal-actor draw-override port (head/torso track, facial, DLs)
 #include "overlays/actors/ovl_En_Ge1/z_en_ge1.h" // EnGe1 (read live SkelAnime state)
 #include "overlays/actors/ovl_En_Ko/z_en_ko.h"   // EnKo ENKO_TYPE_* (shared-CMB head-variant select)
 #include "objects/object_ge1/object_ge1.h"       // dgGerudoWhite*Anim OTR-path strings
@@ -121,6 +122,10 @@ void SoH3D_DumpModelBones(int modelId); // oracle: print OoT3D skeleton (gated b
 // z_en_niw.c, lives here — not in any anim). Cleared then re-set each auto draw. (soh3d_model.cpp)
 void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float ry, float rz);
 void SoH3D_ClearBoneRotDeltas(int modelId);
+// Per-bone post-rotation matrix (row-major 3x3) post-multiplied onto the bone's animated local
+// rotation by the CSAB skinner — the OoT3D OverrideLimbDraw MTXMODE_APPLY channel (head/torso track).
+void SoH3D_SetBonePostRot(int modelId, int boneId, const float* mat9);
+void SoH3D_ClearBonePostRots(int modelId);
 
 // SoH sceneNum -> OoT3D scene folder name (defined below).
 static const char* SoH3D_SceneName(PlayState* play);
@@ -2227,6 +2232,9 @@ static int SoH3D_DoRetarget(PlayState* play, void** skeleton, Vec3s* jointTable,
         // Replay any procedural OverrideLimbDraw rotation (cucco wing-flap) onto the OoT3D bones
         // BEFORE the CSAB is sampled (SoH3D_UpdateAnim reads the deltas this sets). #23.
         SoH3D_ApplyProcOverride(play, gSoH3dPendingModel, jointTable, limbCount);
+        // Port the OoT3D actor draw-overrides (head/torso tracking, #93) onto the OoT3D bones via the
+        // post-rotation channel. Reads the live interactInfo the faithful actor logic computed.
+        SoH3D_ApplyActorOverrides(gSoH3dPendingModel, gSoH3dPendingActor);
         gSoH3dPendingOverride = NULL; // consumed; the next actor's choke point sets it afresh
         SoH3D_UpdateAnimAuto(gSoH3dPendingModel, csab, gSoH3dAnimRate, gSoH3dPendingN64CurFrame,
                              gSoH3dPendingN64AnimLength, gSoH3dPendingMorphWeight);
@@ -4116,6 +4124,15 @@ static void SoH3D_ReplExec(PlayState* play, char* line, const char* outPath) {
             gSoH3dMorph = (iv != 0);
         }
         SoH3D_ReplReply(outPath, "morph=%d", gSoH3dMorph);
+    } else if (strcmp(cmd, "track") == 0) {
+        // Keystone fix #1 (#93) — OoT3D head/torso tracking port (soh3d_anim_override). `track <0|1>`
+        // toggles it (A/B head-tracking vs straight-ahead); alone reports state.
+        extern int gSoH3dTrack;
+        int iv;
+        if (sscanf(line, "%*s %d", &iv) == 1) {
+            gSoH3dTrack = (iv != 0);
+        }
+        SoH3D_ReplReply(outPath, "track=%d", gSoH3dTrack);
     } else if (strcmp(cmd, "cuccopose") == 0) {
         // #5 — hold every cucco in its agitated wing-spread pose (EnNiw_Update -> func_80AB5BF8 2)
         // for deterministic A/B of the spread flap (N64 via `enable 0` vs OoT3D replay). `cuccopose

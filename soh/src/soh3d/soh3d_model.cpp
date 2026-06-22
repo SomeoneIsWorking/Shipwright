@@ -2122,6 +2122,28 @@ extern "C" void SoH3D_SetBoneRotDelta(int modelId, int boneId, float rx, float r
     v[boneId * 3 + 2] = rz;
 }
 
+// Per-model per-bone POST-rotation matrix (row-major 3x3, 9 floats/bone) post-multiplied onto the
+// bone's animated local rotation by the CSAB skinner — the OoT3D actor OverrideLimbDraw MTXMODE_APPLY
+// channel (En_Ko/En_Sa head/torso tracking). Distinct from boneRotDeltas (euler pre-add, cucco flap):
+// a post-multiply in the bone's local frame matches OoT3D's matrix-apply and propagates to children.
+static std::unordered_map<int, std::vector<float>>& bonePostRots() {
+    static std::unordered_map<int, std::vector<float>> m;
+    return m;
+}
+extern "C" void SoH3D_ClearBonePostRots(int modelId) { bonePostRots().erase(modelId); }
+extern "C" void SoH3D_SetBonePostRot(int modelId, int boneId, const float* mat9) {
+    if (boneId < 0 || !mat9) return;
+    LoadedModel* lm = loadModel(modelId);
+    int n = (lm && lm->ok && lm->cmb) ? (int)lm->cmb->boneMatrices().size() : 0;
+    if (boneId >= n) return;
+    auto& v = bonePostRots()[modelId];
+    if ((int)v.size() != n * 9) {
+        v.assign(n * 9, 0.0f);
+        for (int b = 0; b < n; b++) { v[b*9+0] = v[b*9+4] = v[b*9+8] = 1.0f; } // identity per bone
+    }
+    for (int k = 0; k < 9; k++) v[boneId * 9 + k] = mat9[k];
+}
+
 // #5 debug: dump per-bone vert influence + spatial extent so the wing bones can be identified by
 // geometry (the parsed CMB has no bone names). Prints, per bone: id, parent, #verts weighted to it,
 // and the mean local position of those verts (a wing bone's verts sit far out on one side in Z/X).
@@ -2294,13 +2316,22 @@ extern "C" float SoH3D_PoseDiscontinuity(int modelId, int* outBone) {
 }
 extern "C" void SoH3D_PoseScanReset(int modelId) { posePrev().erase(modelId); }
 
-// Look up the per-model procedural bone-rotation deltas (cucco flap / head-track), if any.
+// Look up the per-model procedural bone-rotation deltas (cucco flap, euler pre-add), if any.
 static void getBoneRotDeltas(int modelId, const float** outDrot, int* outDcount) {
     *outDrot = nullptr; *outDcount = 0;
     auto it = boneRotDeltas().find(modelId);
     if (it != boneRotDeltas().end() && !it->second.empty()) {
         *outDrot = it->second.data();
         *outDcount = (int)it->second.size() / 3;
+    }
+}
+// Look up the per-model per-bone post-rotation matrices (head/torso track, MTXMODE_APPLY), if any.
+static void getBonePostRots(int modelId, const float** outPost, int* outCount) {
+    *outPost = nullptr; *outCount = 0;
+    auto it = bonePostRots().find(modelId);
+    if (it != bonePostRots().end() && !it->second.empty()) {
+        *outPost = it->second.data();
+        *outCount = (int)it->second.size() / 9;
     }
 }
 
@@ -2325,8 +2356,10 @@ void SoH3D_UpdateAnim(int modelId, const char* animName, float frame) {
 
     std::vector<std::array<float, 16>> sm;
     const float* drot = nullptr; int dcount = 0;
+    const float* post = nullptr; int pcount = 0;
     getBoneRotDeltas(modelId, &drot, &dcount);
-    anim->skinMatrices(*lm->cmb, frame, sm, drot, dcount);
+    getBonePostRots(modelId, &post, &pcount);
+    anim->skinMatrices(*lm->cmb, frame, sm, drot, dcount, post, pcount);
     uploadSkin(modelId, lm, sm);
 }
 
@@ -2343,12 +2376,14 @@ static void SoH3D_UpdateAnimMorph(int modelId, const char* inName, float fIn, co
     if (!in) { SoH3D_GL_SetBones(modelId, nullptr, 0); return; }
     SoH3D::Csab* out = (outName && *outName) ? getCsab(lm, outName) : nullptr;
     const float* drot = nullptr; int dcount = 0;
+    const float* post = nullptr; int pcount = 0;
     getBoneRotDeltas(modelId, &drot, &dcount);
+    getBonePostRots(modelId, &post, &pcount);
     std::vector<std::array<float, 16>> sm;
     if (out) {
-        in->skinMatricesMorph(*lm->cmb, fIn, *out, fOut, weight, sm, drot, dcount);
+        in->skinMatricesMorph(*lm->cmb, fIn, *out, fOut, weight, sm, drot, dcount, post, pcount);
     } else {
-        in->skinMatrices(*lm->cmb, fIn, sm, drot, dcount); // outgoing unresolved -> no blend
+        in->skinMatrices(*lm->cmb, fIn, sm, drot, dcount, post, pcount); // outgoing unresolved -> no blend
     }
     uploadSkin(modelId, lm, sm);
 }
